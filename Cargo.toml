@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+
+[workspace.dependencies]
+clap = { version = "4.5" }
+tokio = { version = "1.0" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2.0.12"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+strip = true
+opt-level = "z"   # Optimize for size.
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.wasm-release]
+inherits = "release"
+codegen-units = 1
+debug = false
+lto = true
+opt-level = "s"
+panic = "abort"

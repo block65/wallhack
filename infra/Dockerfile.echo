@@ -1,0 +1,21 @@
+# Use a slim Python base image based on Alpine Linux
+FROM python:3.11-alpine
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the Python script into the container
+COPY echo_server.py .
+
+# Make port(s) available to the world outside this container
+# This is documentation; you still need to use -p when running the container.
+# EXPOSE 7777/tcp
+# EXPOSE 7777/udp
+
+# Command to run the application
+# The -u flag ensures that Python output is sent straight to stdout/stderr without being buffered,
+# which is good for Docker logging.
+#
+# Example: Run both TCP and UDP on port 7777.
+# Adjust the ports as needed in the CMD or when running 'docker run'.
+CMD ["python", "-u", "echo_server.py", "--tcp-port", "7777", "--udp-port", "8888", "--http-port", "8080"]

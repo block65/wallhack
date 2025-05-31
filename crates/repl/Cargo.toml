@@ -1,0 +1,30 @@
+[package]
+name = "repl"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["color"]
+color = ["dep:anstyle"]
+
+[dependencies]
+anstyle = { version = "1.0.10", optional = true }
+anyhow = "1.0.98"
+clap.features = ["derive"]
+clap.workspace = true
+clap-verbosity-flag = { version = "3.0.2", features = ["tracing"] }
+clap_complete = "4.5.47"
+console-subscriber = "0.4.1"
+derive_more = { version = "2.0.1", features = ["display"] }
+hickory-resolver = "0.25.2"
+wallhack = { path = "../wallhack" }
+quinn = "0.11.7"
+rustyline = { version = "16.0.0", features = ["derive"] }
+shlex = "1.3.0"
+thiserror = "2.0.12"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

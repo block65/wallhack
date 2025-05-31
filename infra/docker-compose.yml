@@ -1,0 +1,38 @@
+name: wallhack
+
+networks:
+  victim:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.100.2.0/24
+
+services:
+  agent-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-server
+    networks:
+      - default
+      - victim
+    ports:
+      - "6565:6565/udp"
+    entrypoint: ["/srv/agent"]
+    environment:
+      - RUST_LOG=wallhack=trace,wallhack::host=trace,wallhack::agent=trace
+    command:
+      - "-vvvv"
+      - "listen"
+      - "0.0.0.0:6565"
+      - "--key=key.pem"
+      - "--cert=cert.pem"
+
+  loot:
+    build:
+      context: .
+      dockerfile: Dockerfile.echo
+    container_name: loot
+    networks:
+      victim:
+        ipv4_address: 10.100.2.66

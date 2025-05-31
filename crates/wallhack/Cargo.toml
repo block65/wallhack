@@ -1,0 +1,63 @@
+[package]
+name = "wallhack"
+version = "0.1.0"
+edition = "2024"
+categories = ["network-programming"]
+
+[features]
+default = ["host", "datagram_icmp", "rcgen", "tokio"]
+tokio = ["tappers/tokio"]
+rcgen = ["dep:rcgen"]
+host = ["tun", "tap", "tokio/signal"]
+tun = ["dep:tappers", "dep:smoltcp"]
+tap = ["dep:tappers", "dep:smoltcp"]
+datagram_icmp = ["dep:socket2"]
+
+
+[dependencies]
+agent_adapter = { path = "../agent-adapter" }
+protobuf = { path = "../protobuf" }
+anyhow = "1.0.98"
+async-trait = "0.1.88"
+bytes.default-features = false
+bytes.version = "1.10.1"
+dashmap = "6.1.0"
+prost = { version = "0.13.5" }
+quinn = "0.11.7"
+rand = "0.9.1"
+rcgen = { version = "0.13.2", optional = true }
+rustls = { version = "0.23.26", default-features = false, features = ["ring"] }
+rustls-pemfile = "2.2.0"
+smoltcp = { version = "0.12", default-features = false, features = [
+  "log",
+  "std",
+  "alloc",
+  "socket-tcp",
+  "socket-udp",
+  "socket-icmp",
+  "medium-ip",
+  "medium-ethernet",
+  "phy-tuntap_interface",
+  "proto-ipv4",
+  "proto-ipv6",
+], optional = true }
+socket2.optional = true
+socket2.version = "0.5.9"
+tappers = { path = "/home/max/Projects/personal/tappers", optional = true, features = [
+  "tokio",
+] }
+thiserror = "2.0.12"
+tokio.features = ["rt", "macros", "rt-multi-thread", "net", "io-util"]
+tokio.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+test-log = { version = "0.2.17", features = ["trace"] }
+
+[dev-dependencies]
+test-log = { version = "0.2.17", features = ["trace"] }
+tokio-test = "0.4.4"
+
+[lints]
+workspace = true
+# rust.unsafe_code = "forbid"

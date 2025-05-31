@@ -1,0 +1,14 @@
+/infra/tmp
+/tmp
+.archive
+**/.archive
+
+*.pem
+*.key
+*.local
+
+/target
+
+tarpaulin-report.html
+* copy.*
+* copy
