@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package tunnel.command.v2;
+
+message IpAddress {
+  oneof ip_address {
+    IpV4Address ipv4 = 1;
+    IpV6Address ipv6 = 2;
+  }
+}
+
+message IpV4Address { bytes ip = 1; }
+
+message IpV6Address { bytes ip = 1; }
+
+message SocketV6Address {
+  IpV6Address ip = 1;
+  uint32 port = 2;
+  uint32 flowinfo = 3;
+  uint32 scope_id = 4;
+}
+
+message SocketV4Address {
+  IpV4Address ip = 1;
+  uint32 port = 2;
+}
+
+message SocketAddress {
+  IpAddress ip = 1;
+  uint32 port = 2;
+}
+
+message SocketAddressPair {
+  oneof pair {
+    SocketV4AddressPair ipv4 = 2;
+    SocketV6AddressPair ipv6 = 3;
+  }
+}
+
+message SocketV6AddressPair {
+  SocketV6Address src_addr = 1;
+  SocketV6Address dst_addr = 2;
+}
+
+message SocketV4AddressPair {
+  SocketV4Address src_addr = 1;
+  SocketV4Address dst_addr = 2;
+}
+
+enum IpVersion {
+  IP_VERSION_UNSPECIFIED = 0;
+  IPV4 = 4;
+  IPV6 = 6;
+}
+
+enum ResponseStatus {
+  RESPONSE_STATUS_UNSPECIFIED = 0;
+  SUCCESS = 1;
+  // FAILURE = 2;
+  // TIMEOUT = 3;
+  UNSUPPORTED = 4;
+  CONNECTION_REFUSED = 5;
+  HOST_UNREACHABLE = 6;
+  // NETWORK_ERROR = 7;
+  // INVALID_STATE = 8;
+  // PERMISSION_DENIED = 9;
+  // COMMAND_FAILED = 10;
+}
+
+message HostInstruction {
+
+  oneof instruction {
+    // TcpConnectRequestInstruction tcp_connect_request = 1;
+    TcpConnectInstruction tcp_connect = 2;
+    TcpSendInstruction tcp_send = 3;
+    TcpCloseInstruction tcp_close = 4;
+    UdpSendInstruction udp_send = 5;
+    TcpListenInstruction tcp_listen = 6;
+    TcpListenCloseInstruction tcp_listen_close = 7;
+    IcmpSendInstruction icmp_send = 8;
+  }
+}
+
+// message TcpConnectRequestInstruction { SocketAddressPair pair = 1; }
+
+message TcpConnectInstruction { SocketAddressPair pair = 1; }
+
+message TcpSendInstruction {
+  SocketAddressPair pair = 1;
+  bytes data = 3;
+}
+
+message TcpCloseInstruction { SocketAddressPair pair = 1; }
+
+message TcpListenInstruction { SocketAddressPair pair = 1; }
+
+message TcpListenCloseInstruction { SocketAddressPair pair = 1; }
+
+message UdpSendInstruction {
+  SocketAddressPair pair = 1;
+  bytes data = 2;
+}
+
+message IcmpSendInstruction {
+  SocketAddressPair pair = 1;
+  oneof icmp_message {
+    IcmpEchoRequest icmp_echo_request = 2;
+    RawPacket raw_packet = 3;
+  }
+}
+
+message IcmpEchoRequest {
+  uint32 seq_no = 1;
+  uint32 ident = 2;
+  bytes data = 3;
+}
+
+message AgentResponse {
+
+  SocketAddressPair pair = 1;
+
+  oneof response {
+    TcpResponse tcp_response = 2;
+    UdpResponse udp_response = 3;
+    IcmpResponse icmp_response = 4;
+    RuntimeErrorResponse runtime_error = 5;
+  }
+}
+
+message TcpResponse {
+  oneof response {
+    // TcpConnectOkResponse connect_ok = 4;
+    TcpConnectedResponse connected = 5;
+    TcpSendOkResponse send_ok = 6;
+    TcpDataRecvResponse data_recv = 7;
+    TcpConnectionClosedResponse connection_closed = 8;
+    TcpConnectionRefusedResponse connection_refused = 9;
+    TcpListenerListeningResponse listening = 11;
+    TcpListenerConnectResponse listener_connect = 12;
+    TcpListenerClosedResponse listener_closed = 13;
+  }
+}
+
+message UdpResponse {
+  oneof response { UdpDataRecvResponse data_recv = 12; }
+}
+
+message IcmpResponse {
+  oneof response { IcmpDataRecvResponse data_recv = 13; }
+}
+
+message RuntimeErrorResponse { string reason = 1; }
+
+// message TcpConnectOkResponse {
+//   uint32 seq_no = 1; // Initial Sequence Number for the TCP connection
+// }
+
+// SYN-ACK
+message TcpConnectedResponse { /* uint32 _seq_no = 1; */ }
+
+// Pure ACK
+message TcpSendOkResponse {}
+
+message TcpDataRecvResponse { bytes data = 1; }
+
+// FIN-ACK
+message TcpConnectionClosedResponse {}
+
+// RST
+message TcpConnectionRefusedResponse {}
+
+message TcpListenerOkResponse {}
+
+message TcpListenerListeningResponse {}
+
+message TcpListenerConnectResponse {}
+
+message TcpListenerClosedResponse {}
+
+message UdpDataRecvResponse { bytes data = 1; }
+
+message IcmpDataRecvResponse {
+  uint32 echo_ident = 1; // will be 0 for non-echo packets
+  bytes data = 10;
+}
+
+message RawPacket { bytes data = 1; }
+
+message TunnelMessage {
+  oneof message {
+    HostInstruction host_instruction = 1;
+    AgentResponse agent_response = 2;
+    // RawPacket raw_packet = 3;
+  }
+}

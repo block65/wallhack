@@ -1,0 +1,41 @@
+[package]
+name = "agent_adapter"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["tracing"]
+# integration_tests = []
+tracing = ["tokio/tracing"]
+
+[dependencies]
+anyhow = "1.0.98"
+protobuf = { path = "../protobuf" }
+dashmap = "6.1.0"
+rand = "0.9.1"
+smoltcp = { version = "0.12.0", default-features = false, features = [
+  "proto-ipv4",
+  "proto-ipv6",
+] }
+socket2 = "0.5.9"
+thiserror = "2.0.12"
+tokio.features = [
+  "rt-multi-thread",
+  "net",
+  "sync",
+  "macros",
+  "time",
+  "tracing",
+  "signal",
+]
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+console-subscriber = "0.4.1"
+test-log = "0.2.17"
+tracing-subscriber.workspace = true
+
+[lints]
+# workspace = true
+rust.unsafe_code = "warn"

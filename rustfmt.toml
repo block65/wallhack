@@ -1,0 +1,4 @@
+reorder_imports = true
+hard_tabs = true
+max_width = 100 # rust is like node for callback hell, 80 is almost unachievable
+imports_granularity = "Crate"
