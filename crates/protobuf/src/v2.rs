@@ -312,7 +312,7 @@ impl Display for TcpResponse {
 			Some(tcp_response::Response::Connected(_)) => {
 				write!(f, "connected")
 			}
-			Some(tcp_response::Response::SendOk(_)) => {
+			Some(tcp_response::Response::Ok(_)) => {
 				write!(f, "send:ok")
 			}
 			Some(tcp_response::Response::ConnectionClosed(_)) => {
@@ -508,6 +508,9 @@ impl Display for TunnelMessage {
 			Some(tunnel_message::Message::AgentResponse(response)) => {
 				write!(f, "{response}")
 			}
+			Some(tunnel_message::Message::RawPacket(raw_packet)) => {
+				write!(f, "{:02x?}", raw_packet.data.len())
+			}
 			None => {
 				write!(f, "<none>")
 			}
@@ -523,6 +526,9 @@ impl Display for tunnel_message::Message {
 			}
 			tunnel_message::Message::AgentResponse(response) => {
 				write!(f, "response:{response}")
+			}
+			tunnel_message::Message::RawPacket(raw_packet) => {
+				write!(f, "raw:{:02x?}", raw_packet.data.len())
 			}
 		}
 	}

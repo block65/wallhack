@@ -57,11 +57,16 @@ async fn host_client(args: ConnectArgs, tun_name: Option<String>) -> Result<()> 
 
 	// this is essentially a reconnect loop
 	loop {
-		let (instr, resp) = client.connect(ClientRole::Host).await?;
-		repl::info!("connection established");
+		let connect_result = client.connect(ClientRole::Host).await?;
+
+		repl::info!(
+			"connection established with {}",
+			connect_result.client_ident()
+		);
 
 		let orchestrator = HostOrchestrator::new(adapter.clone());
 
+		let (instr, resp) = connect_result.channels();
 		match orchestrator.drive((instr, resp.subscribe())).await {
 			Ok(()) => {
 				repl::info!("Orchestrator finished successfully");
@@ -130,6 +135,7 @@ async fn host_server(args: ListenArgs, tun_name: Option<String>) -> Result<()> {
 }
 
 async fn run(cli: HostCli) -> Result<()> {
+	#[cfg(debug_assertions)]
 	console_subscriber::init();
 
 	// let filter = tracing_subscriber::EnvFilter::from_default_env();

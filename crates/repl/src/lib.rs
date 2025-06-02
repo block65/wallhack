@@ -1,3 +1,4 @@
+#![warn(unused_extern_crates)]
 mod cli_args;
 mod completer;
 mod helper;

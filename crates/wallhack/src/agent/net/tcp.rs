@@ -5,8 +5,8 @@ use super::adapter::SyscallAgentAdapter;
 use agent_adapter::{
 	SocketSet,
 	adapter::{
-		RuntimeError, SendResponse, TcpCloseResponse, TcpConnectResponse, TcpListenCloseResponse,
-		TcpListenResponse,
+		RuntimeError, SendResponse, TcpCloseResponse, TcpListenCloseResponse, TcpListenResponse,
+		TcpStreamResponse,
 	},
 	session::Session,
 	session_key::SessionKey,
@@ -37,7 +37,7 @@ impl SyscallAgentAdapter {
 	pub async fn tcp_connect_impl(
 		&self,
 		set: SocketSet,
-	) -> Result<TcpConnectResponse, RuntimeError> {
+	) -> Result<TcpStreamResponse, RuntimeError> {
 		tracing::debug!("Received connect {}", set);
 
 		let (_, dst_addr) = set.into();
@@ -48,13 +48,13 @@ impl SyscallAgentAdapter {
 				let key = SessionKey::Tcp(set);
 				self.sessions
 					.insert(key, Session::Tcp(sessions::tcp::TcpSession::new(stream)));
-				Ok(TcpConnectResponse::Connected { set })
+				Ok(TcpStreamResponse::Connected { set })
 			}
 			Err(e) => match e.kind() {
-				io::ErrorKind::ConnectionRefused => Ok(TcpConnectResponse::Refused { set }),
+				io::ErrorKind::ConnectionRefused => Ok(TcpStreamResponse::Refused { set }),
 				io::ErrorKind::ConnectionReset
 				| io::ErrorKind::ConnectionAborted
-				| io::ErrorKind::BrokenPipe => Ok(TcpConnectResponse::Reset { set }),
+				| io::ErrorKind::BrokenPipe => Ok(TcpStreamResponse::Reset { set }),
 				_ => Err(e.into()),
 			},
 		}

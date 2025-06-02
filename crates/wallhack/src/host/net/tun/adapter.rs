@@ -1,7 +1,7 @@
 use super::{
-	icmp::{IcmpFlow, IcmpFlowHashKey, emit_icmp_segment},
+	icmp::{IcmpFlow, IcmpFlowHashKey, icmp_repr},
 	ip_packet::{self, IpPacket},
-	tcp::{BuildOutcome, TcpFlow, TcpFlowHashKey, emit_tcp_segment},
+	tcp::{TcpFlow, TcpFlowHashKey},
 	udp::{UdpFlow, UdpFlowHashKey, emit_udp_segment},
 };
 use crate::host::{adapter::HostAdapter, net::tun::tcp::TcpFlowState};
@@ -14,12 +14,12 @@ use rand::Rng;
 use smoltcp::{
 	phy::ChecksumCapabilities,
 	wire::{
-		Icmpv4Packet, Icmpv4Repr, Icmpv6Packet, Icmpv6Repr, IpProtocol, Ipv4Packet, Ipv6Packet,
-		TcpControl, TcpPacket, TcpSeqNumber, UdpPacket,
+		IcmpRepr, Icmpv4Packet, Icmpv4Repr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpProtocol,
+		Ipv4Packet, Ipv6Packet, TcpControl, TcpPacket, TcpSeqNumber, UdpPacket,
 	},
 };
 use std::{env, net::SocketAddrV4, ops::Add, sync::Arc};
-use tappers::DeviceState;
+use tun::{AsyncDevice, Device};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -54,12 +54,16 @@ pub enum Error {
 	// smoltcp::wire::Error
 	#[error("smoltcp error: {0}")]
 	Smoltcp(#[from] smoltcp::wire::Error),
+
+	//tun::Error
+	#[error("tun error: {0:?}")]
+	Tun(#[from] tun::Error),
 }
 
 #[derive(Clone)]
 pub struct TunAdapter {
 	pub name: String,
-	inner: Arc<tappers::tokio::AsyncTun>,
+	inner: Arc<tun::AsyncDevice>,
 	tcp_flows: DashMap<TcpFlowHashKey, TcpFlow>,
 	udp_flows: DashMap<UdpFlowHashKey, UdpFlow>,
 	icmp_flows: DashMap<IcmpFlowHashKey, IcmpFlow>,
@@ -90,45 +94,24 @@ fn random_iface_name() -> String {
 }
 
 impl TunAdapter {
-	pub fn try_new<S: AsRef<str>>(maybe_if_name: Option<S>) -> Result<Self, Error> {
+	pub fn try_new(maybe_if_name: Option<String>) -> Result<Self, Error> {
 		let if_name = if let Some(name) = maybe_if_name {
-			name.as_ref().to_string()
+			name
 		} else {
 			random_iface_name()
 		};
 
-		let iface = tappers::Interface::new(if_name.clone()).map_err(|e| Error::Interface {
-			source: e,
-			name: if_name.clone(),
-		})?;
+		tracing::trace!("tun interface is {:?}", if_name);
 
-		tracing::trace!("tun interface is {:?}", iface.name());
+		let mut config = tun::Configuration::default();
+		config.tun_name(if_name.clone());
 
-		let mut tun = tappers::tokio::AsyncTun::new_named(iface).map_err(|e| {
-			if let Some(os_error) = e.raw_os_error()
-				&& os_error == 22
-			{
-				return Error::InvalidArgument { source: e };
-			}
-			Error::Interface {
-				source: e,
-				name: if_name.clone(),
-			}
-		})?;
-
-		match tun.state()? {
-			DeviceState::Up => {
-				tracing::trace!("tun interface {:?} is already up", iface.name());
-			}
-			DeviceState::Down => {
-				tracing::trace!("tun interface {:?} is down, bring it up", iface.name());
-				tun.set_up()?;
-			}
-		}
+		let dev = Device::new(&config)?;
+		let async_dev = AsyncDevice::new(dev)?;
 
 		Ok(Self {
 			name: if_name,
-			inner: Arc::new(tun),
+			inner: Arc::new(async_dev),
 			tcp_flows: DashMap::new(),
 			udp_flows: DashMap::new(),
 			icmp_flows: DashMap::new(),
@@ -242,22 +225,16 @@ impl TunAdapter {
 						})
 						.into(),
 					);
-				}
+				} else
+				// push data
+				if tcp_packet.psh() && tcp_packet.ack() {
+					let data_len = tcp_packet.payload().len();
 
-				// A packet with a payload (data).
-				if tcp_packet.psh() && tcp_packet.ack() && !tcp_packet.payload().is_empty() {
-					tracing::trace!("IPV4 TCP PSH from {set}. Updating state and issuing TcpSend.");
-
-					// MAYBE TODO?
-					//Host's TCP stack receives the segment. It checks that the seq (1001)
-					//matches its ack_for_client_seq (or
-					//PerClientConnectionState.ack_for_client_seq).
+					tracing::trace!("IPV4 TCP PSH from {set} with {data_len} bytes. TcpSend.");
 
 					// This is the next seq we expect from the TCP stack.
 					flow.ack_for_client_seq =
 						tcp_packet.seq_number().add(tcp_packet.payload().len());
-
-					// if we are struggling here, we could adjust the host buffer value
 
 					messages_to_send.push(
 						v2::host_instruction::Instruction::TcpSend(v2::TcpSendInstruction {
@@ -266,69 +243,67 @@ impl TunAdapter {
 						})
 						.into(),
 					);
-				}
-
-				// A FIN packet from the client indicates they are done sending.
+				} else
+				// A FINACK from the host adapter indicates they got the data and are
+				// closing the connection.
 				if tcp_packet.fin() && tcp_packet.ack() {
 					tracing::trace!(
-						"IPV4 TCP FIN from {set}. Updating state. Client SEQ: {:?}",
-						tcp_packet.seq_number()
+						"IPV4 TCP FINACK from {set}. Client SEQ: {:?}, Current flow state: {:?}",
+						tcp_packet.seq_number(),
+						flow.connection_state
 					);
 
-					flow.ack_for_client_seq = tcp_packet.seq_number().add(1); // Increment seq for FIN
-					flow.connection_state = TcpFlowState::CloseWait;
+					// Always ACK the client's FIN by setting the expected next sequence
+					// number.
+					flow.ack_for_client_seq = tcp_packet.seq_number().add(1);
 
-					// immediate ACK of the FIN
-					let agent_response_message = v2::AgentResponse {
+					// We always send an ACK for the client's FIN. The `SendOk` response
+					// type will generate a pure ACK packet.
+					let ack_for_client_fin_msg = v2::AgentResponse {
 						pair: Some(set.into()),
 						response: Some(v2::agent_response::Response::TcpResponse(
 							v2::TcpResponse {
-								response: Some(v2::tcp_response::Response::SendOk(
-									v2::TcpSendOkResponse {},
+								response: Some(v2::tcp_response::Response::Ok(
+									v2::TcpOkResponse {},
 								)),
 							},
 						)),
 					};
-					messages_to_send.push(agent_response_message.into());
+					messages_to_send.push(ack_for_client_fin_msg.into());
 
-					// Message 2: HostInstruction for the agent to close
 					let close_instruction_payload =
 						v2::host_instruction::Instruction::TcpClose(v2::TcpCloseInstruction {
 							pair: Some(set.into()),
 						});
-
 					messages_to_send.push(
 						v2::HostInstruction {
 							instruction: Some(close_instruction_payload),
 						}
 						.into(),
 					);
-				}
-
-				if tcp_packet.rst() {
-					tracing::trace!("IPV4 TCP RST from {set}. Removing flow.");
+				} else if tcp_packet.rst() {
 					// RST tears down the connection immediately. No instruction needed.
+					tracing::trace!("IPV4 TCP RST from {set}. Removing flow.");
 					self.tcp_flows.remove(&set);
-				}
-
-				if tcp_packet.ack() && flow.connection_state == TcpFlowState::LastAck {
-					tracing::trace!("IPV4 TCP ACK from {set} in LastAck state. Removing flow.");
+				} else if tcp_packet.ack() && flow.connection_state == TcpFlowState::FinWait2 {
 					// Last ACK is sent after a FIN, and we can remove the flow.
+					tracing::trace!("IPV4 TCP ACK from {set} in LastAck state. Removing flow.");
 					self.tcp_flows.remove(&set);
+				} else {
+					// Any other packet (e.g., a pure ACK) requires no instruction for the
+					// agent. We just let it pass without action. The TCP flow state is
+					// not updated by pure ACKs in this logic, which is a simplification
+					// we are keeping for now.
+					tracing::debug!(
+						"IPV4 TCP packet from {set} requires no action: flags: SYN={}, ACK={}, FIN={}, RST={}, PSH={}, URG={}",
+						tcp_packet.syn(),
+						tcp_packet.ack(),
+						tcp_packet.fin(),
+						tcp_packet.rst(),
+						tcp_packet.psh(),
+						tcp_packet.urg()
+					);
 				}
-
-				// Any other packet (e.g., a pure ACK) requires no instruction for the agent.
-				// We just let it pass without action. The TCP flow state is not updated by
-				// pure ACKs in this logic, which is a simplification we are keeping for now.
-				tracing::debug!(
-					"IPV4 TCP packet from {set} requires no action: flags: FIN={}, SYN={}, RST={}, PSH={}, ACK={}, URG={}",
-					tcp_packet.fin(),
-					tcp_packet.syn(),
-					tcp_packet.rst(),
-					tcp_packet.psh(),
-					tcp_packet.ack(),
-					tcp_packet.urg()
-				);
 			}
 			_ => {
 				tracing::warn!("Unsupported IPv4 protocol: {:?}", ipv4_packet.next_header());
@@ -431,6 +406,31 @@ impl TunAdapter {
 	}
 }
 
+enum Repr<'a> {
+	Tcp(smoltcp::wire::TcpRepr<'a>),
+	Icmp(smoltcp::wire::IcmpRepr<'a>),
+	Udp(smoltcp::wire::UdpRepr),
+}
+
+macro_rules! tcp_repr_default {
+	($flow:expr, $src_port:expr, $dst_port:expr, $control:expr, $payload:expr) => {{
+		Repr::Tcp(smoltcp::wire::TcpRepr {
+			control: $control,
+			seq_number: $flow.host_current_seq,
+			ack_number: Some($flow.ack_for_client_seq),
+			window_len: $flow.host_advertised_window,
+			window_scale: None,
+			max_seg_size: None,
+			sack_permitted: false,
+			sack_ranges: [None; 3],
+			payload: $payload,
+			src_port: $src_port,
+			dst_port: $dst_port,
+			timestamp: None,
+		})
+	}};
+}
+
 impl HostAdapter for TunAdapter {
 	type Error = Error;
 
@@ -460,15 +460,18 @@ impl HostAdapter for TunAdapter {
 		Ok(messages)
 	}
 
-	async fn emit_response(
+	async fn handle_response(
 		&self,
 		set: SocketSet,
 		response: v2::agent_response::Response,
 	) -> Result<(), Self::Error> {
-		let mut packet_buf = vec![0u8; 1500];
-		let mut inner_buf = vec![0u8; 1500];
+		let (src_port, dst_port) = set.ports();
 
-		let outcome = match response {
+		let mut reprs = vec![];
+
+		let mut received_data_storage = Vec::new();
+
+		match response {
 			// TcpResponse
 			v2::agent_response::Response::TcpResponse(tcp_response) => {
 				let v2::TcpResponse { response } = tcp_response;
@@ -478,8 +481,8 @@ impl HostAdapter for TunAdapter {
 					return Ok(());
 				};
 
-				// should always be an existing flow when processing a response mutable
-				// by default because we will mostly always change it
+				// should always be an existing TCP flow when processing a response
+				// mutable by default because we will mostly always change it
 				let Some(mut flow) = self.tcp_flows.get_mut(&set) else {
 					tracing::warn!("No TCP flow found for set: {:?}", set);
 					return Ok(());
@@ -490,47 +493,83 @@ impl HostAdapter for TunAdapter {
 					v2::tcp_response::Response::Connected(v2::TcpConnectedResponse {}) => {
 						flow.host_current_seq = TcpSeqNumber(rand::random::<i32>());
 
-						let outcome =
-							emit_tcp_segment(&flow, set, TcpControl::Syn, &[], &mut inner_buf);
+						let repr =
+							tcp_repr_default!(flow, src_port, dst_port, TcpControl::Syn, &[]);
 
-						if outcome.is_some() {
-							flow.host_current_seq += 1; // Increment seq for SYN
-						}
-						outcome
+						// update flow as required
+						flow.host_current_seq += 1;
+
+						reprs.push(repr);
 					}
 
-					// SendOk - indicates a successful send operation on the agent
-					v2::tcp_response::Response::SendOk(_) => {
-						emit_tcp_segment(&flow, set, TcpControl::None, &[], &mut inner_buf)
+					// Ok - indicates a successful operation on the agent, or a pure ACK
+					v2::tcp_response::Response::Ok(_) => {
+						let repr =
+							tcp_repr_default!(&flow, src_port, dst_port, TcpControl::None, &[]);
+
+						// update flow as required
+						flow.host_current_seq = flow.host_current_seq.add(1);
+
+						reprs.push(repr);
 					}
 
 					// DataRecv - indicates data was received on the agent
 					v2::tcp_response::Response::DataRecv(res) => {
-						let data_payload = &res.data;
+						received_data_storage = res.data;
+						let len = received_data_storage.len();
+						let repr = tcp_repr_default!(
+							&flow,
+							dst_port, // swapping for reply
+							src_port,
+							TcpControl::None,
+							&received_data_storage
+						);
 
-						flow.host_current_seq = flow.host_current_seq.add(data_payload.len());
+						// update flow as required
+						flow.host_current_seq = flow.host_current_seq.add(len);
 
-						emit_tcp_segment(&flow, set, TcpControl::Psh, data_payload, &mut inner_buf)
+						reprs.push(repr);
 					}
 
 					// ConnectionClosed - indicates the connection was closed on the agent
 					v2::tcp_response::Response::ConnectionClosed(_) => {
-						flow.host_current_seq = flow.host_current_seq.add(1); // Increment seq for FIN
-						flow.connection_state = TcpFlowState::LastAck;
+						// ack
+						reprs.push(tcp_repr_default!(
+							&flow,
+							dst_port, // swapping for reply
+							src_port,
+							TcpControl::None,
+							&[]
+						));
 
-						let outcome =
-							emit_tcp_segment(&flow, set, TcpControl::Fin, &[], &mut inner_buf);
+						// update flow as required
+						flow.connection_state = TcpFlowState::FinWait2;
 
-						if outcome.is_some() {
-							self.tcp_flows.remove(&set);
-							tracing::debug!("TCP flow for {:?} removed.", set);
-						}
-						outcome
+						reprs.push(tcp_repr_default!(
+							&flow,
+							dst_port, // swapping for reply
+							src_port,
+							TcpControl::Fin,
+							&[]
+						));
+
+						// update flow as required
+						flow.host_current_seq = flow.host_current_seq.add(1);
 					}
 
 					// ConnectionRefused - indicates the connection was refused on agent
 					v2::tcp_response::Response::ConnectionRefused(_) => {
-						emit_tcp_segment(&flow, set, TcpControl::Rst, &[], &mut inner_buf)
+						// emit_tcp_segment(&flow, set, TcpControl::Rst, &[], &mut inner_buf)
+
+						let repr = tcp_repr_default!(
+							&flow,
+							dst_port, // swapping for reply
+							src_port,
+							TcpControl::Rst,
+							&[]
+						);
+
+						reprs.push(repr);
 					}
 
 					// TODO: Handle other TCP responses
@@ -538,7 +577,7 @@ impl HostAdapter for TunAdapter {
 					v2::tcp_response::Response::ListenerClosed(_) => todo!("Handle ListenerClosed"),
 					v2::tcp_response::Response::ListenerConnect(_) => {
 						// Placeholder, actual handling might differ
-						None
+						// None
 					}
 				}
 			}
@@ -556,22 +595,22 @@ impl HostAdapter for TunAdapter {
 					return Ok(());
 				};
 
-				let Some(icmp_pkt) = Icmpv4Packet::new_checked(&data).ok() else {
-					tracing::warn!("Failed to parse ICMPv4 packet from data: {:?}", data);
-					return Ok(());
-				};
-
+				#[allow(clippy::cast_possible_truncation)]
 				let key = IcmpFlowHashKey {
 					pair: set,
-					echo_ident: icmp_pkt.echo_ident(),
+					ident: echo_ident as u16,
 				};
 
 				let flow = self
 					.icmp_flows
 					.entry(key.clone())
-					.or_insert_with(|| IcmpFlow { echo_ident });
+					.or_insert_with(|| IcmpFlow { ident: echo_ident });
 
-				emit_icmp_segment(&flow, set, &data, &mut inner_buf)
+				received_data_storage = data;
+
+				if let Some(repr) = icmp_repr(&flow, set, &received_data_storage) {
+					reprs.push(Repr::Icmp(repr));
+				}
 			}
 
 			//  UdpResponse
@@ -589,7 +628,9 @@ impl HostAdapter for TunAdapter {
 
 				match response {
 					v2::udp_response::Response::DataRecv(res) => {
-						emit_udp_segment(set, &res.data, &mut inner_buf)
+						received_data_storage = res.data;
+						let repr = smoltcp::wire::UdpRepr { src_port, dst_port };
+						reprs.push(Repr::Udp(repr));
 					}
 				}
 			}
@@ -597,103 +638,103 @@ impl HostAdapter for TunAdapter {
 			// Runtime errors
 			v2::agent_response::Response::RuntimeError(res) => {
 				tracing::warn!("RuntimeError from agent {:?}", res);
-				None
+				// None
 			}
 		};
 
-		let Some(outcome) = outcome else {
-			tracing::warn!("No valid outcome");
-			return Ok(());
-		};
+		let mut packet_buf = [0u8; 1500];
 
-		let (payload_len, next_header) = match outcome {
-			BuildOutcome::Tcp(len) => (len, IpProtocol::Tcp),
-			BuildOutcome::Icmp(len) => (len, IpProtocol::Icmp),
-			BuildOutcome::Udp(len) => (len, IpProtocol::Udp),
-		};
+		for repr in reprs {
+			let (payload_len, next_header) = match repr {
+				Repr::Tcp(repr) => (repr.buffer_len(), IpProtocol::Tcp),
+				Repr::Udp(repr) => (repr.header_len(), IpProtocol::Udp),
+				Repr::Icmp(repr) => match repr {
+					IcmpRepr::Ipv4(repr) => (repr.buffer_len(), IpProtocol::Icmp),
+					IcmpRepr::Ipv6(repr) => (repr.buffer_len(), IpProtocol::Icmpv6),
+				},
+			};
 
-		if payload_len == 0 && next_header != IpProtocol::Tcp {
-			// Allow zero payload for TCP ACKs/FINs etc.
-			tracing::warn!(
-				"No payload to send for outcome, next_header: {:?}",
-				next_header
+			if payload_len == 0 && next_header != IpProtocol::Tcp {
+				// Allow zero payload for TCP ACKs/FINs etc.
+				tracing::warn!(
+					"No payload to send for outcome, next_header: {:?}",
+					next_header
+				);
+				return Ok(());
+			}
+
+			let ip_packet_len = match set {
+				SocketSet::Ipv4((src, dst)) => {
+					let ipv4_repr = smoltcp::wire::Ipv4Repr {
+						src_addr: *dst.ip(), // Swapping for reply
+						dst_addr: *src.ip(),
+						next_header,
+						payload_len,
+						hop_limit: 64,
+					};
+
+					let ip_header_len = ipv4_repr.buffer_len();
+					let ip_packet_len = ip_header_len + payload_len;
+
+					if packet_buf.len() < ip_packet_len {
+						tracing::warn!(
+							"Packet buffer too small for IPv4. Needed: {}, Available: {}",
+							ip_packet_len,
+							packet_buf.len()
+						);
+						return Ok(());
+					}
+
+					let mut ip_packet_writer =
+						smoltcp::wire::Ipv4Packet::new_unchecked(&mut packet_buf[..ip_header_len]);
+					ipv4_repr.emit(&mut ip_packet_writer, &ChecksumCapabilities::default());
+
+					// Copy the payload into the packet buffer
+					packet_buf[ip_header_len..ip_packet_len]
+						.copy_from_slice(&received_data_storage);
+
+					ip_packet_len
+				}
+				SocketSet::Ipv6((src, dst)) => {
+					let ipv6_repr = smoltcp::wire::Ipv6Repr {
+						src_addr: *dst.ip(), // Swapping for reply
+						dst_addr: *src.ip(),
+						next_header,
+						payload_len,
+						hop_limit: 64,
+					};
+
+					let ip_header_len = ipv6_repr.buffer_len();
+					let current_ip_packet_len = ip_header_len + payload_len;
+
+					if packet_buf.len() < current_ip_packet_len {
+						tracing::warn!(
+							"Packet buffer too small for IPv6. Needed: {}, Available: {}",
+							current_ip_packet_len,
+							packet_buf.len()
+						);
+						return Ok(());
+					}
+
+					let mut ip_packet_writer =
+						smoltcp::wire::Ipv6Packet::new_unchecked(&mut packet_buf[..ip_header_len]);
+					ipv6_repr.emit(&mut ip_packet_writer);
+
+					packet_buf[ip_header_len..current_ip_packet_len]
+						.copy_from_slice(&received_data_storage);
+
+					current_ip_packet_len
+				}
+			};
+
+			tracing::trace!(
+				"Sending {} bytes: {:02X?}",
+				ip_packet_len,
+				&packet_buf[..ip_packet_len]
 			);
-			return Ok(());
+
+			self.inner.send(&packet_buf[..ip_packet_len]).await?;
 		}
-
-		let ip_packet_len = match set {
-			SocketSet::Ipv4((src, dst)) => {
-				let ipv4_repr = smoltcp::wire::Ipv4Repr {
-					src_addr: *dst.ip(), // Swapping for reply
-					dst_addr: *src.ip(),
-					next_header,
-					payload_len,
-					hop_limit: 64,
-				};
-
-				let ip_header_len = ipv4_repr.buffer_len();
-				let current_ip_packet_len = ip_header_len + payload_len;
-
-				if packet_buf.len() < current_ip_packet_len {
-					tracing::warn!(
-						"Packet buffer too small for IPv4. Needed: {}, Available: {}",
-						current_ip_packet_len,
-						packet_buf.len()
-					);
-					return Ok(());
-				}
-
-				let mut ip_packet_writer =
-					smoltcp::wire::Ipv4Packet::new_unchecked(&mut packet_buf[..ip_header_len]);
-				ipv4_repr.emit(&mut ip_packet_writer, &ChecksumCapabilities::default());
-
-				// Copy the payload from inner_buf to the packet buffer after the IP
-				// header
-				packet_buf[ip_header_len..current_ip_packet_len]
-					.copy_from_slice(&inner_buf[..payload_len]);
-
-				current_ip_packet_len
-			}
-			SocketSet::Ipv6((src, dst)) => {
-				let ipv6_repr = smoltcp::wire::Ipv6Repr {
-					src_addr: *dst.ip(), // Swapping for reply
-					dst_addr: *src.ip(),
-					next_header,
-					payload_len,
-					hop_limit: 64,
-				};
-
-				let ip_header_len = ipv6_repr.buffer_len();
-				let current_ip_packet_len = ip_header_len + payload_len;
-
-				if packet_buf.len() < current_ip_packet_len {
-					tracing::warn!(
-						"Packet buffer too small for IPv6. Needed: {}, Available: {}",
-						current_ip_packet_len,
-						packet_buf.len()
-					);
-					return Ok(());
-				}
-
-				let mut ip_packet_writer =
-					smoltcp::wire::Ipv6Packet::new_unchecked(&mut packet_buf[..ip_header_len]);
-				ipv6_repr.emit(&mut ip_packet_writer);
-
-				packet_buf[ip_header_len..current_ip_packet_len]
-					.copy_from_slice(&inner_buf[..payload_len]);
-
-				current_ip_packet_len
-			}
-		};
-
-		tracing::trace!(
-			"Sending {} bytes: {:02X?}",
-			ip_packet_len,
-			&packet_buf[..ip_packet_len]
-		);
-
-		self.inner.send(&packet_buf[..ip_packet_len]).await?;
-
 		Ok(())
 	}
 }

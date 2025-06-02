@@ -131,7 +131,7 @@ message TcpResponse {
   oneof response {
     // TcpConnectOkResponse connect_ok = 4;
     TcpConnectedResponse connected = 5;
-    TcpSendOkResponse send_ok = 6;
+    TcpOkResponse ok = 6;
     TcpDataRecvResponse data_recv = 7;
     TcpConnectionClosedResponse connection_closed = 8;
     TcpConnectionRefusedResponse connection_refused = 9;
@@ -159,7 +159,7 @@ message RuntimeErrorResponse { string reason = 1; }
 message TcpConnectedResponse { /* uint32 _seq_no = 1; */ }
 
 // Pure ACK
-message TcpSendOkResponse {}
+message TcpOkResponse {}
 
 message TcpDataRecvResponse { bytes data = 1; }
 
@@ -190,6 +190,6 @@ message TunnelMessage {
   oneof message {
     HostInstruction host_instruction = 1;
     AgentResponse agent_response = 2;
-    // RawPacket raw_packet = 3;
+    RawPacket raw_packet = 3;
   }
 }

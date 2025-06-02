@@ -89,17 +89,22 @@ impl RxSession for IcmpSession {
 		let dst_addr2: socket2::SockAddr = dst_addr.into();
 
 		loop {
+			tracing::debug!("waiting to send some data to {:?}", dst_addr);
+
 			let mut guard = self.socket.writable().await?;
+
+			// Attempt to send the data
+			tracing::debug!("Attempting to send data to {:?}", dst_addr);
 
 			match guard.try_io(|inner| inner.get_ref().send_to(buf, &dst_addr2)) {
 				Ok(Ok(bytes_sent)) => {
-					tracing::trace!("Successfully sent {} bytes to {:?}", bytes_sent, dst_addr);
+					tracing::debug!("Successfully sent {} bytes to {:?}", bytes_sent, dst_addr);
 					return Ok(SessionStatus::DataIo { size: bytes_sent });
 				}
 				Ok(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {
 					// The socket wasn't actually ready (spurious wakeup or EAGAIN). Clear
 					// the readiness state and loop again to wait for readiness.
-					tracing::trace!("Send operation would block, retrying.");
+					tracing::warn!("Send operation would block, retrying.");
 					guard.clear_ready();
 					// Optional: Yield to allow other tasks to run, preventing potential
 					// busy-looping if the socket remains not ready for a while.
@@ -129,7 +134,7 @@ impl RxSession for IcmpSession {
 		let mut wtf_recv_buffer = [MaybeUninit::<u8>::uninit(); 1500];
 
 		loop {
-			tracing::trace!("Waiting for (more) data from socket");
+			tracing::debug!("Waiting for (more) data from socket");
 			let mut guard = self.socket.readable().await?;
 
 			match guard.try_io(|inner| inner.get_ref().recv(&mut wtf_recv_buffer)) {
@@ -139,14 +144,14 @@ impl RxSession for IcmpSession {
 						std::slice::from_raw_parts(wtf_recv_buffer.as_ptr().cast::<u8>(), n)
 					};
 
-					tracing::trace!("received {} bytes into {:?}", n, wtf_initialized_part);
+					tracing::debug!("received {} bytes into {:?}", n, wtf_initialized_part);
 
 					// TODO: WTF
 					buf_wtf[..n].copy_from_slice(wtf_initialized_part);
 					return Ok(SessionStatus::DataIo { size: n });
 				}
 				Ok(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-					tracing::trace!(error=%e, "Receive operation would block, retrying");
+					tracing::warn!(error=%e, "Receive operation would block, retrying");
 					guard.clear_ready();
 					// continue;
 				}

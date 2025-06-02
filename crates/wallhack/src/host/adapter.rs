@@ -8,7 +8,7 @@ pub trait HostAdapter: Send + Sync {
 		buf: &mut [u8],
 	) -> impl std::future::Future<Output = Result<Vec<v2::tunnel_message::Message>, Self::Error>> + Send;
 
-	fn emit_response(
+	fn handle_response(
 		&self,
 		set: SocketSet,
 		response: v2::agent_response::Response,

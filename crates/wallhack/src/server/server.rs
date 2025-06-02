@@ -15,15 +15,15 @@ pub type Channels = (
 
 pub struct AcceptResult {
 	channels: Channels,
-	client_ident: String,
+	peer_ident: String,
 }
 
 impl AcceptResult {
 	#[must_use]
-	pub fn new(channels: Channels, client_ident: String) -> Self {
+	pub fn new(channels: Channels, peer_ident: String) -> Self {
 		Self {
 			channels,
-			client_ident,
+			peer_ident,
 		}
 	}
 
@@ -34,7 +34,7 @@ impl AcceptResult {
 
 	#[must_use]
 	pub fn client_ident(&self) -> &str {
-		&self.client_ident
+		&self.peer_ident
 	}
 }
 

@@ -72,7 +72,10 @@ async fn agent_client(args: ConnectArgs) -> Result<(), Error> {
 
 	let mut client = client::quic::QuicClient::try_new(client_config)?;
 
-	let (instr, responses) = client.connect(ClientRole::Agent).await?;
+	let connect_result = client.connect(ClientRole::Agent).await?;
+	repl::info!("connected to {}", connect_result.client_ident());
+
+	let (instr, responses) = connect_result.channels();
 
 	let adapter = SyscallAgentAdapter::new();
 	let orchestrator = agent::Orchestrator::new(std::sync::Arc::new(adapter));
@@ -121,6 +124,7 @@ async fn agent_server(args: ListenArgs) -> Result<(), Error> {
 }
 
 async fn run(cli: AgentCli) -> Result<(), Error> {
+	#[cfg(debug_assertions)]
 	console_subscriber::init();
 
 	// let filter = tracing_subscriber::EnvFilter::from_default_env();

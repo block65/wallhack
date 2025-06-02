@@ -2,7 +2,7 @@ use protobuf::{
 	SocketSet,
 	v2::{
 		self, RuntimeErrorResponse, TcpConnectionClosedResponse, TcpConnectionRefusedResponse,
-		TcpListenerClosedResponse, TcpListenerListeningResponse, TcpResponse, TcpSendOkResponse,
+		TcpListenerClosedResponse, TcpListenerListeningResponse, TcpOkResponse, TcpResponse,
 		agent_response, tcp_response,
 	},
 };
@@ -35,31 +35,31 @@ pub enum RuntimeError {
 }
 
 #[derive(Debug)]
-pub enum TcpConnectResponse {
+pub enum TcpStreamResponse {
 	// None { set: SocketSet },
 	Connected { set: SocketSet },
 	Refused { set: SocketSet },
 	Reset { set: SocketSet },
 }
 
-impl From<TcpConnectResponse> for agent_response::Response {
-	fn from(response: TcpConnectResponse) -> Self {
+impl From<TcpStreamResponse> for agent_response::Response {
+	fn from(response: TcpStreamResponse) -> Self {
 		match response {
-			TcpConnectResponse::Connected { .. } => {
+			TcpStreamResponse::Connected { .. } => {
 				agent_response::Response::TcpResponse(v2::TcpResponse {
 					response: Some(tcp_response::Response::Connected(
 						v2::TcpConnectedResponse {},
 					)),
 				})
 			}
-			TcpConnectResponse::Refused { .. } => {
+			TcpStreamResponse::Refused { .. } => {
 				agent_response::Response::TcpResponse(TcpResponse {
 					response: Some(tcp_response::Response::ConnectionRefused(
 						TcpConnectionRefusedResponse {},
 					)),
 				})
 			}
-			TcpConnectResponse::Reset { .. } => {
+			TcpStreamResponse::Reset { .. } => {
 				agent_response::Response::TcpResponse(v2::TcpResponse {
 					response: Some(tcp_response::Response::ConnectionClosed(
 						TcpConnectionClosedResponse {},
@@ -70,10 +70,10 @@ impl From<TcpConnectResponse> for agent_response::Response {
 	}
 }
 
-impl From<TcpConnectResponse> for v2::AgentResponse {
-	fn from(response: TcpConnectResponse) -> Self {
+impl From<TcpStreamResponse> for v2::AgentResponse {
+	fn from(response: TcpStreamResponse) -> Self {
 		match response {
-			TcpConnectResponse::Connected { set } => v2::AgentResponse {
+			TcpStreamResponse::Connected { set } => v2::AgentResponse {
 				response: Some(agent_response::Response::TcpResponse(v2::TcpResponse {
 					response: Some(tcp_response::Response::Connected(
 						v2::TcpConnectedResponse {},
@@ -81,7 +81,7 @@ impl From<TcpConnectResponse> for v2::AgentResponse {
 				})),
 				pair: Some(set.into()),
 			},
-			TcpConnectResponse::Refused { set } => v2::AgentResponse {
+			TcpStreamResponse::Refused { set } => v2::AgentResponse {
 				response: Some(agent_response::Response::TcpResponse(v2::TcpResponse {
 					response: Some(tcp_response::Response::ConnectionRefused(
 						TcpConnectionRefusedResponse {},
@@ -89,7 +89,7 @@ impl From<TcpConnectResponse> for v2::AgentResponse {
 				})),
 				pair: Some(set.into()),
 			},
-			TcpConnectResponse::Reset { set } => v2::AgentResponse {
+			TcpStreamResponse::Reset { set } => v2::AgentResponse {
 				response: Some(v2::agent_response::Response::TcpResponse(v2::TcpResponse {
 					response: Some(tcp_response::Response::ConnectionClosed(
 						TcpConnectionClosedResponse {},
@@ -122,7 +122,7 @@ impl From<SendResponse> for agent_response::Response {
 	fn from(value: SendResponse) -> Self {
 		match value {
 			SendResponse::Ok { .. } => agent_response::Response::TcpResponse(TcpResponse {
-				response: Some(tcp_response::Response::SendOk(TcpSendOkResponse {})),
+				response: Some(tcp_response::Response::Ok(TcpOkResponse {})),
 			}),
 			SendResponse::Reset { .. } => agent_response::Response::TcpResponse(TcpResponse {
 				response: Some(tcp_response::Response::ConnectionClosed(
@@ -141,7 +141,7 @@ impl From<SendResponse> for v2::AgentResponse {
 		match response {
 			SendResponse::Ok { set, .. } => v2::AgentResponse {
 				response: Some(agent_response::Response::TcpResponse(TcpResponse {
-					response: Some(tcp_response::Response::SendOk(TcpSendOkResponse {})),
+					response: Some(tcp_response::Response::Ok(TcpOkResponse {})),
 				})),
 				pair: Some(set.into()),
 			},
@@ -309,7 +309,7 @@ pub trait AgentAdapter: Send + Sync + 'static {
 	fn tcp_connect(
 		&self,
 		set: SocketSet,
-	) -> impl std::future::Future<Output = Result<TcpConnectResponse, RuntimeError>> + Send;
+	) -> impl std::future::Future<Output = Result<TcpStreamResponse, RuntimeError>> + Send;
 
 	fn tcp_send(
 		&self,

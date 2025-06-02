@@ -88,8 +88,8 @@ impl Server for QuicServer {
 		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(10);
 
 		// Task 1: Handles incoming streams from the client (Common for both roles)
-		// This connection will be used to accept incoming streams
-		// and send the messages out onto the right channel
+		// This connection will be used to accept incoming streams and send the
+		// messages out onto the right channel
 		let connection0 = connection.clone();
 		let responses0 = responses.clone();
 		let instructions0 = instructions.clone();
@@ -141,6 +141,9 @@ impl Server for QuicServer {
 										"Error sending HostInstruction to internal channel (receiver dropped?)"
 									);
 								}
+							}
+							Some(tunnel_message::Message::RawPacket(msg)) => {
+								tracing::warn!("Unhandled message type: {:?}", msg);
 							}
 							None => {
 								tracing::warn!("Received TunnelMessage with no message type.");
@@ -230,13 +233,14 @@ impl Server for QuicServer {
 							}
 						}
 
-						tracing::trace!("sending message: {}", tunnel_message);
+						// tracing::trace!("sending tunnel message: {}", tunnel_message);
 
 						match peer_send.write_all(&buf).await {
 							Ok(()) => tracing::trace!("Response sent to peer"),
 							Err(e @ WriteError::Stopped(_)) => {
 								tracing::error!("Sending response was stopped: {}", e);
-								// This indicates the stream was stopped by the peer, might not need to break loop for connection
+								// This indicates the stream was stopped by the peer, might not
+								// need to break loop for connection
 								continue;
 							}
 							Err(e) => {
@@ -244,8 +248,9 @@ impl Server for QuicServer {
 								break; // Other write errors might indicate connection issues
 							}
 						}
+
+						// Gracefully close the stream
 						if let Err(e) = peer_send.finish() {
-							// Gracefully close the stream
 							tracing::warn!("Failed to finish uni stream for response: {}", e);
 						}
 					}
@@ -254,9 +259,9 @@ impl Server for QuicServer {
 			}
 			ServerRole::Host => {
 				tracing::info!("Spawning task to send instructions to peer.");
-				// Task 3: Handles outgoing HostInstruction messages (Host Role)
+
 				let connection2 = connection.clone();
-				let mut instructions2 = instructions.subscribe(); // Host's orchestrator will send to `instructions_send`
+				let mut instructions2 = instructions.subscribe();
 
 				tracing::trace!(
 					"Subscribed to instructions channel for Host Role: rcvr count {}",
@@ -287,11 +292,7 @@ impl Server for QuicServer {
 							}
 						};
 
-						let span = tracing::span!(
-							tracing::Level::TRACE,
-							"quic_server_send_instr",
-							// cid = host_instruction.correlation_id
-						);
+						let span = tracing::span!(tracing::Level::TRACE, "quic_server_send_instr",);
 						let _enter = span.enter();
 
 						tracing::trace!(
@@ -323,7 +324,8 @@ impl Server for QuicServer {
 							}
 							Err(e @ WriteError::Stopped(_)) => {
 								tracing::error!("Sending instruction was stopped: {}", e);
-								// Stream stopped by peer, might not need to break loop for connection
+								// Stream stopped by peer, might not need to break loop for
+								// connection
 								continue;
 							}
 							Err(e) => {

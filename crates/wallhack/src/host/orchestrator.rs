@@ -80,12 +80,9 @@ where
 							let _enter = span.enter();
 
 							match message {
-								// HostInstruction
 								tunnel_message::Message::HostInstruction(msg) => {
 									instructions.send(msg)?;
 								}
-
-								// AgentResponse
 								tunnel_message::Message::AgentResponse(response) => {
 									let Some((pair, response)) =
 										response.pair.zip(response.response)
@@ -104,11 +101,12 @@ where
 										}
 									};
 
-									match net0.emit_response(set, response).await {
+									match net0.handle_response(set, response).await {
 										Ok(()) => tracing::trace!("Sent data to TUN interface."),
 										Err(e) => tracing::error!("tun error: {}", e),
 									}
 								}
+								tunnel_message::Message::RawPacket(_) => todo!(),
 							}
 						}
 					}
@@ -136,35 +134,31 @@ where
 
 				match responses.recv().await {
 					Ok(msg) => {
-						tracing::trace!("Received {msg}");
+						tracing::trace!("Channel received {msg}");
 
 						let span = tracing::span!(tracing::Level::TRACE, "responses", msg = %msg);
-
 						let _enter = span.enter();
 
 						let Some((pair, response)) = msg.pair.zip(msg.response) else {
-							tracing::warn!("Received response without pair or response data");
+							tracing::warn!("Response without pair and/or data");
 							continue;
 						};
 
 						let set = match SocketSet::try_from(pair) {
-							Ok(lol) => lol,
+							Ok(s) => s,
 							Err(e) => {
 								tracing::error!("Failed to convert pair: {}", e);
-								continue;
+								continue; // skip loop
 							}
 						};
 
-						match net1.emit_response(set, response).await {
+						match net1.handle_response(set, response).await {
 							Ok(()) => tracing::trace!("Sent data to TUN interface."),
 							Err(e) => tracing::error!("tun error: {}", e),
 						}
 					}
 					Err(e) => {
-						tracing::error!(
-							"Agent channel recv error: {}. Agent->TUN loop stopping.",
-							e
-						);
+						tracing::error!("Agent channel recv error: {e}",);
 						// break Err(Error::RecvError(e));
 					}
 				}

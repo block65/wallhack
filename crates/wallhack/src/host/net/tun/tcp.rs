@@ -9,13 +9,14 @@ pub enum TcpFlowState {
 	None,
 	SynReceived,
 	Established,
+	Listen,
+	// Close related
 	FinWait1,
 	FinWait2,
 	TimeWait,
-	CloseWait,
-	Closing,
-	LastAck,
-	Listen,
+	// CloseWait,
+	// Closing,
+	// LastAck,
 }
 
 #[derive(Debug, Clone)]
@@ -43,9 +44,11 @@ pub struct TcpFlow {
 impl Default for TcpFlow {
 	fn default() -> Self {
 		TcpFlow {
-			client_advertised_window: 65535,
 			connection_state: TcpFlowState::None,
-			..Default::default()
+			ack_for_client_seq: TcpSeqNumber(0),
+			host_current_seq: TcpSeqNumber(0),
+			host_advertised_window: 65535,
+			client_advertised_window: 65535,
 		}
 	}
 }
@@ -58,7 +61,7 @@ pub enum BuildOutcome {
 	Udp(usize),
 }
 
-// Helper function to build and emit a TCP segment
+// Helper function to build and emit a TCP segment into a packet buffer.
 pub fn emit_tcp_segment(
 	flow: &TcpFlow,
 	socket_set: SocketSet,

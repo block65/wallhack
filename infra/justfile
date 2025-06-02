@@ -1,25 +1,16 @@
 export COMPOSE_BAKE := "true"
 export RUSTFLAGS := "--cfg tokio_unstable -Awarnings" 
-# export RUST_BACKTRACE := "1"
-
-host-connect:
-  # cargo run --release --bin host -- -t noclip0 connect 127.0.0.1:6565
-  RUST_LOG="wallhack=trace,wallhack::host=trace,wallhack::agent=trace" \
-    cargo run -q --bin host -- \
-      -vvvv \
-      -t noclip0 \
-      connect 127.0.0.1:6565
 
 
 ssl:
   openssl req -x509 -newkey rsa:4096 -keyout tmp/key.pem -out tmp/cert.pem -sha256 -days 365 -nodes -subj "/CN=wallhack"
 
-build:
+prep:
   cargo build -p wallhack 
   cargo build -p repl
   cp ../target/debug/{agent,host} ./tmp
 
-docker: build
+dev: prep
   docker compose -f docker-compose.yml stop
-  docker compose -f docker-compose.yml up -d
-  docker compose -f docker-compose.yml restart agent-server
+  # docker compose -f docker-compose.yml restart agent-server
+  docker compose -f docker-compose.yml up

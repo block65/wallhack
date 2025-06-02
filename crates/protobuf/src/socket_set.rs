@@ -18,6 +18,16 @@ pub enum SocketSet {
 	Ipv6((std::net::SocketAddrV6, std::net::SocketAddrV6)),
 }
 
+impl SocketSet {
+	#[must_use]
+	pub fn ports(self) -> (u16, u16) {
+		match self {
+			SocketSet::Ipv4((src, dst)) => (src.port(), dst.port()),
+			SocketSet::Ipv6((src, dst)) => (src.port(), dst.port()),
+		}
+	}
+}
+
 impl Display for SocketSet {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {

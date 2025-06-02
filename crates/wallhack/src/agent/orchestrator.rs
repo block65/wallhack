@@ -10,7 +10,7 @@ use tokio::sync::broadcast;
 
 use agent_adapter::{
 	SocketSet,
-	adapter::{AgentAdapter, RuntimeError, SendResponse, TcpConnectResponse},
+	adapter::{AgentAdapter, RuntimeError, SendResponse, TcpStreamResponse},
 	sessions::{self, common::RxSession},
 };
 
@@ -80,7 +80,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 
 					let fut = async move {
 						match adapter0.tcp_connect(set).await {
-							Ok(TcpConnectResponse::Connected { set }) => {
+							Ok(TcpStreamResponse::Connected { set }) => {
 								tracing::trace!(
 									"Agent connected to remote for {set}, sending Connected response"
 								);
@@ -203,7 +203,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 							}
 
 							// ConnectionReset
-							Ok(TcpConnectResponse::Reset { set }) => {
+							Ok(TcpStreamResponse::Reset { set }) => {
 								tracing::warn!("Agent connection to remote for {set} reset");
 								if let Err(e) = responses0.send(AgentResponse {
 									pair: Some(set.into()),
@@ -211,7 +211,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 										v2::TcpResponse {
 											response: Some(
 												v2::tcp_response::Response::ConnectionClosed(
-													v2::TcpConnectionClosedResponse {}, // Assuming default constructible
+													v2::TcpConnectionClosedResponse {},
 												),
 											),
 										},
@@ -224,7 +224,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 							}
 
 							// ConnectionRefused
-							Ok(TcpConnectResponse::Refused { set }) => {
+							Ok(TcpStreamResponse::Refused { set }) => {
 								tracing::warn!("Agent connection to remote for {set} refused");
 								if let Err(e) = responses0.send(AgentResponse {
 									pair: Some(set.into()),
@@ -292,6 +292,24 @@ impl<A: AgentAdapter> Orchestrator<A> {
 				Some(Instruction::TcpClose(TcpCloseInstruction { pair })) => {
 					let set: SocketSet = extract_socket_pair!(pair, host_instr.instruction);
 					adapter0.tcp_close(set)?;
+
+					responses0.send(AgentResponse {
+						pair: Some(set.into()),
+						response: Some(agent_response::Response::TcpResponse(v2::TcpResponse {
+							response: Some(v2::tcp_response::Response::ConnectionClosed(
+								v2::TcpConnectionClosedResponse {},
+							)),
+						})),
+					})?;
+
+					responses0.send(AgentResponse {
+						pair: Some(set.into()),
+						response: Some(agent_response::Response::TcpResponse(v2::TcpResponse {
+							response: Some(v2::tcp_response::Response::ConnectionClosed(
+								v2::TcpConnectionClosedResponse {},
+							)),
+						})),
+					})?;
 				}
 
 				// UdpSendInstruction

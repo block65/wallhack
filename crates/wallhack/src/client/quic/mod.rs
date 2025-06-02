@@ -11,7 +11,7 @@ use prost::Message;
 use protobuf::v2::{AgentResponse, HostInstruction, TunnelMessage, tunnel_message};
 use tokio::sync::broadcast::error::RecvError;
 
-use super::client::Client;
+use super::client::{Client, ConnectResult};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -86,16 +86,7 @@ impl Client for QuicClient {
 		})
 	}
 
-	async fn connect(
-		&mut self,
-		role: ClientRole,
-	) -> Result<
-		(
-			tokio::sync::broadcast::Sender<HostInstruction>,
-			tokio::sync::broadcast::Sender<AgentResponse>,
-		),
-		Self::Error,
-	> {
+	async fn connect(&mut self, role: ClientRole) -> Result<ConnectResult, Self::Error> {
 		tracing::debug!(
 			"{:?} connecting to {} with server name {:?}",
 			role,
@@ -306,7 +297,10 @@ impl Client for QuicClient {
 			tracing::trace!("Sender task for QUIC client finished.");
 		});
 
-		Ok((instructions, responses))
+		Ok(ConnectResult::new(
+			(instructions, responses),
+			conn.remote_address().to_string(),
+		))
 	}
 
 	fn stop(&self) -> Result<(), Self::Error> {

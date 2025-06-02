@@ -1,8 +1,8 @@
 use agent_adapter::{
 	SocketSet,
 	adapter::{
-		AgentAdapter, RuntimeError, SendResponse, TcpCloseResponse, TcpConnectResponse,
-		TcpListenCloseResponse, TcpListenResponse,
+		AgentAdapter, RuntimeError, SendResponse, TcpCloseResponse, TcpListenCloseResponse,
+		TcpListenResponse, TcpStreamResponse,
 	},
 	session::Session,
 	session_key::SessionKey,
@@ -53,7 +53,7 @@ impl AgentAdapter for SyscallAgentAdapter {
 	// 	self.tcp_connect_req_impl(set)
 	// }
 
-	async fn tcp_connect(&self, set: SocketSet) -> Result<TcpConnectResponse, RuntimeError> {
+	async fn tcp_connect(&self, set: SocketSet) -> Result<TcpStreamResponse, RuntimeError> {
 		self.tcp_connect_impl(set).await
 	}
 

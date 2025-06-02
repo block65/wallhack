@@ -14,14 +14,20 @@ tokio = { version = "1.0" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2.0.12"
+console-subscriber = "0.4.1"
 
 [profile.dev]
 opt-level = 0
 
 [profile.release]
 strip = true
-opt-level = "z"   # Optimize for size.
+opt-level = 3 # all
 lto = true
+
+# agent has to be as small as possible
+[profile.agent-release]
+inherits = "release"
+opt-level = "z"      # Optimize for size.
 codegen-units = 1
 panic = "abort"
 

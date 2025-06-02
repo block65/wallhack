@@ -1,5 +1,5 @@
 /infra/tmp
-/tmp
+tmp
 .archive
 **/.archive
 
@@ -7,7 +7,7 @@
 *.key
 *.local
 
-/target
+target
 
 tarpaulin-report.html
 * copy.*

@@ -1,34 +1,28 @@
 use protobuf::SocketSet;
-use smoltcp::{
-	phy::ChecksumCapabilities,
-	wire::{Icmpv4Message, Icmpv4Packet, Icmpv4Repr},
-};
-
-use super::tcp::BuildOutcome;
+use smoltcp::wire::{IcmpRepr, Icmpv4Message, Icmpv4Packet, Icmpv4Repr};
 
 #[derive(Debug, Clone)]
 pub struct IcmpFlow {
-	pub echo_ident: u32,
+	pub ident: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IcmpFlowHashKey {
 	pub pair: SocketSet,
-	pub echo_ident: u16,
+	pub ident: u16,
 }
 
-pub fn emit_icmp_segment(
+pub fn icmp_repr<'a>(
 	flow: &IcmpFlow,
 	socket_set: SocketSet,
-	icmp_data: &[u8],
-	buf: &mut [u8],
-) -> Option<BuildOutcome> {
+	icmp_data: &'a Vec<u8>,
+) -> Option<IcmpRepr<'a>> {
 	match socket_set {
 		SocketSet::Ipv4(_) => {
 			// the caller should check, we assume its valid by now
-			let icmp_pkt = Icmpv4Packet::new_unchecked(icmp_data);
+			let parsed = Icmpv4Packet::new_unchecked(icmp_data);
 
-			let icmp_repr = match icmp_pkt.msg_type() {
+			let icmp_repr = match parsed.msg_type() {
 				// Icmpv4Message::DstUnreachable => todo!(),
 				// Icmpv4Message::Redirect => todo!(),
 				// Icmpv4Message::EchoRequest => todo!(),
@@ -41,26 +35,44 @@ pub fn emit_icmp_segment(
 				// Icmpv4Message::Unknown(_) => todo!(),
 				Icmpv4Message::EchoReply => Icmpv4Repr::EchoReply {
 					#[allow(clippy::cast_possible_truncation)]
-					ident: flow.echo_ident as u16, // icmp_pkt.echo_ident(), // WARN: this will be the one from the OS agent side
-					seq_no: icmp_pkt.echo_seq_no(),
-					data: icmp_pkt.data(),
+					ident: flow.ident as u16,
+					seq_no: parsed.echo_seq_no(),
+					data: parsed.data(),
 				},
 				Icmpv4Message::Unknown(_) => {
-					tracing::warn!("unknown ICMPv4 message type: {:?}", icmp_pkt.msg_type());
+					tracing::warn!("unknown ICMPv4 message type: {:?}", parsed.msg_type());
 					return None;
 				}
 				_ => todo!(),
 			};
-
-			let icmp_buffer_len = icmp_repr.buffer_len();
-
-			let mut icmp_pkt_out = Icmpv4Packet::new_unchecked(&mut buf[..icmp_buffer_len]);
-			icmp_repr.emit(&mut icmp_pkt_out, &ChecksumCapabilities::default());
-
-			Some(BuildOutcome::Icmp(icmp_buffer_len))
+			Some(IcmpRepr::Ipv4(icmp_repr))
 		}
 		SocketSet::Ipv6(_) => {
-			tracing::warn!("ICMPv6 not yet implemented");
+			// let parsed = Ipv6Packet::new_unchecked(icmp_data);
+
+			// let icmp_repr = match parsed.flow_label() {
+			// 	// Icmpv6Message::DstUnreachable => todo!(),
+			// 	// Icmpv6Message::Redirect => todo!(),
+			// 	// Icmpv6Message::EchoRequest => todo!(),
+			// 	// Icmpv6Message::RouterAdvert => todo!(),
+			// 	// Icmpv6Message::RouterSolicit => todo!(),
+			// 	// Icmpv6Message::TimeExceeded => todo!(),
+			// 	// Icmpv6Message::ParamProblem => todo!(),
+			// 	// Icmpv6Message::Timestamp => todo!(),
+			// 	// Icmpv6Message::TimestampReply => todo!(),
+			// 	// Icmpv6Message::Unknown(_) => todo!(),
+			// 	Icmpv6Message::EchoReply => Icmpv6Repr::EchoReply {
+			// 		ident: flow.ident as u16,
+			// 		seq_no: parsed.(),
+			// 		data: parsed.data(),
+			// 	},
+			// 	Icmpv6Message::Unknown(_) => {
+			// 		tracing::warn!("unknown ICMPv6 message type: {:?}", parsed.msg_type());
+			// 		return None;
+			// 	}
+			// 	_ => todo!(),
+			// };
+			// Some(IcmpRepr::Ipv6(icmp_repr))
 			None
 		}
 	}

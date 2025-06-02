@@ -1,6 +1,7 @@
 #![feature(ip_from)]
 #![feature(ip_as_octets)]
 #![feature(maybe_uninit_slice)]
+#![warn(unused_extern_crates)]
 #![warn(clippy::pedantic)]
 // I will decide how many lines is good or bad during dev
 #![allow(clippy::too_many_lines)]
