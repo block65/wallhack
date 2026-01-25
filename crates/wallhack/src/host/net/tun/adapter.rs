@@ -1,8 +1,8 @@
 use super::{
-	icmp::{IcmpFlow, IcmpFlowHashKey, icmp_repr},
+	icmp::{IcmpFlow, IcmpFlowHashKey},
 	ip_packet::{self, IpPacket},
 	tcp::{TcpFlow, TcpFlowHashKey},
-	udp::{UdpFlow, UdpFlowHashKey, emit_udp_segment},
+	udp::{UdpFlow, UdpFlowHashKey},
 };
 use crate::host::{adapter::HostAdapter, net::tun::tcp::TcpFlowState};
 use dashmap::DashMap;
@@ -14,11 +14,17 @@ use rand::Rng;
 use smoltcp::{
 	phy::ChecksumCapabilities,
 	wire::{
-		IcmpRepr, Icmpv4Packet, Icmpv4Repr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpProtocol,
-		Ipv4Packet, Ipv6Packet, TcpControl, TcpPacket, TcpSeqNumber, UdpPacket,
+		IcmpRepr, Icmpv4Message, Icmpv4Packet, Icmpv4Repr, Icmpv6Message, Icmpv6Packet, Icmpv6Repr,
+		IpAddress, IpProtocol, Ipv4Packet, Ipv4Repr, Ipv6Packet, Ipv6Repr, TcpControl, TcpPacket,
+		TcpRepr, TcpSeqNumber, UdpPacket, UdpRepr,
 	},
 };
-use std::{env, net::SocketAddrV4, ops::Add, sync::Arc};
+use std::{
+	env,
+	net::{Ipv4Addr, SocketAddrV4},
+	ops::Add,
+	sync::Arc,
+};
 use tun::{AsyncDevice, Device};
 
 #[derive(thiserror::Error, Debug)]
@@ -51,7 +57,7 @@ pub enum Error {
 	#[error("conversion error: {0}")]
 	Conversion(#[from] protobuf::ConversionError),
 
-	// smoltcp::wire::Error
+	// Error
 	#[error("smoltcp error: {0}")]
 	Smoltcp(#[from] smoltcp::wire::Error),
 
@@ -407,14 +413,23 @@ impl TunAdapter {
 }
 
 enum Repr<'a> {
-	Tcp(smoltcp::wire::TcpRepr<'a>),
-	Icmp(smoltcp::wire::IcmpRepr<'a>),
-	Udp(smoltcp::wire::UdpRepr),
+	Tcp {
+		repr: TcpRepr<'a>,
+		payload: Option<Vec<u8>>,
+	},
+	Icmp {
+		repr: IcmpRepr<'a>,
+		data: Vec<u8>,
+	},
+	Udp {
+		repr: UdpRepr,
+		payload: Vec<u8>,
+	},
 }
 
 macro_rules! tcp_repr_default {
-	($flow:expr, $src_port:expr, $dst_port:expr, $control:expr, $payload:expr) => {{
-		Repr::Tcp(smoltcp::wire::TcpRepr {
+	($flow:expr, $src_port:expr, $dst_port:expr, $control:expr) => {
+		TcpRepr {
 			control: $control,
 			seq_number: $flow.host_current_seq,
 			ack_number: Some($flow.ack_for_client_seq),
@@ -423,12 +438,12 @@ macro_rules! tcp_repr_default {
 			max_seg_size: None,
 			sack_permitted: false,
 			sack_ranges: [None; 3],
-			payload: $payload,
+			payload: &[],
 			src_port: $src_port,
 			dst_port: $dst_port,
 			timestamp: None,
-		})
-	}};
+		}
+	};
 }
 
 impl HostAdapter for TunAdapter {
@@ -452,8 +467,7 @@ impl HostAdapter for TunAdapter {
 		}?;
 
 		tracing::trace!(
-			"ip packet handlers gave us {} messages
-		",
+			"ip packet handlers yielded {} tunnel messages",
 			messages.len(),
 		);
 
@@ -467,9 +481,7 @@ impl HostAdapter for TunAdapter {
 	) -> Result<(), Self::Error> {
 		let (src_port, dst_port) = set.ports();
 
-		let mut reprs = vec![];
-
-		let mut received_data_storage = Vec::new();
+		let mut reprs: Vec<Repr<'_>> = vec![];
 
 		match response {
 			// TcpResponse
@@ -493,8 +505,10 @@ impl HostAdapter for TunAdapter {
 					v2::tcp_response::Response::Connected(v2::TcpConnectedResponse {}) => {
 						flow.host_current_seq = TcpSeqNumber(rand::random::<i32>());
 
-						let repr =
-							tcp_repr_default!(flow, src_port, dst_port, TcpControl::Syn, &[]);
+						let repr = Repr::Tcp {
+							repr: tcp_repr_default!(flow, src_port, dst_port, TcpControl::Syn),
+							payload: None,
+						};
 
 						// update flow as required
 						flow.host_current_seq += 1;
@@ -504,8 +518,10 @@ impl HostAdapter for TunAdapter {
 
 					// Ok - indicates a successful operation on the agent, or a pure ACK
 					v2::tcp_response::Response::Ok(_) => {
-						let repr =
-							tcp_repr_default!(&flow, src_port, dst_port, TcpControl::None, &[]);
+						let repr = Repr::Tcp {
+							repr: tcp_repr_default!(&flow, src_port, dst_port, TcpControl::None),
+							payload: None,
+						};
 
 						// update flow as required
 						flow.host_current_seq = flow.host_current_seq.add(1);
@@ -515,15 +531,16 @@ impl HostAdapter for TunAdapter {
 
 					// DataRecv - indicates data was received on the agent
 					v2::tcp_response::Response::DataRecv(res) => {
-						received_data_storage = res.data;
-						let len = received_data_storage.len();
-						let repr = tcp_repr_default!(
-							&flow,
-							dst_port, // swapping for reply
-							src_port,
-							TcpControl::None,
-							&received_data_storage
-						);
+						let len = res.data.len();
+						let repr = Repr::Tcp {
+							repr: tcp_repr_default!(
+								&flow,
+								src_port, // swapping for reply
+								dst_port,
+								TcpControl::None //ack
+							),
+							payload: Some(res.data),
+						};
 
 						// update flow as required
 						flow.host_current_seq = flow.host_current_seq.add(len);
@@ -534,24 +551,28 @@ impl HostAdapter for TunAdapter {
 					// ConnectionClosed - indicates the connection was closed on the agent
 					v2::tcp_response::Response::ConnectionClosed(_) => {
 						// ack
-						reprs.push(tcp_repr_default!(
-							&flow,
-							dst_port, // swapping for reply
-							src_port,
-							TcpControl::None,
-							&[]
-						));
+						reprs.push(Repr::Tcp {
+							repr: tcp_repr_default!(
+								&flow,
+								src_port, // swapping for reply
+								dst_port,
+								TcpControl::None
+							),
+							payload: None,
+						});
 
 						// update flow as required
 						flow.connection_state = TcpFlowState::FinWait2;
 
-						reprs.push(tcp_repr_default!(
-							&flow,
-							dst_port, // swapping for reply
-							src_port,
-							TcpControl::Fin,
-							&[]
-						));
+						reprs.push(Repr::Tcp {
+							repr: tcp_repr_default!(
+								&flow,
+								src_port, // swapping for reply
+								dst_port,
+								TcpControl::Fin
+							),
+							payload: None,
+						});
 
 						// update flow as required
 						flow.host_current_seq = flow.host_current_seq.add(1);
@@ -559,15 +580,18 @@ impl HostAdapter for TunAdapter {
 
 					// ConnectionRefused - indicates the connection was refused on agent
 					v2::tcp_response::Response::ConnectionRefused(_) => {
-						// emit_tcp_segment(&flow, set, TcpControl::Rst, &[], &mut inner_buf)
+						// emit_tcp_segment(&flow, set, TcpControl::Rst, &[], &mut
+						// inner_buf)
 
-						let repr = tcp_repr_default!(
-							&flow,
-							dst_port, // swapping for reply
-							src_port,
-							TcpControl::Rst,
-							&[]
-						);
+						let repr = Repr::Tcp {
+							repr: tcp_repr_default!(
+								&flow,
+								dst_port, // swapping for reply
+								src_port,
+								TcpControl::Rst
+							),
+							payload: None,
+						};
 
 						reprs.push(repr);
 					}
@@ -576,8 +600,7 @@ impl HostAdapter for TunAdapter {
 					v2::tcp_response::Response::Listening(_) => todo!("Handle Listening"),
 					v2::tcp_response::Response::ListenerClosed(_) => todo!("Handle ListenerClosed"),
 					v2::tcp_response::Response::ListenerConnect(_) => {
-						// Placeholder, actual handling might differ
-						// None
+						todo!("ListenerConnect not implemented yet");
 					}
 				}
 			}
@@ -591,26 +614,81 @@ impl HostAdapter for TunAdapter {
 					data,
 				})) = response
 				else {
-					tracing::warn!("No DataRecv ICMP response found in IcmpResponse");
+					tracing::warn!("No response found in IcmpResponse");
 					return Ok(());
 				};
 
 				#[allow(clippy::cast_possible_truncation)]
 				let key = IcmpFlowHashKey {
 					pair: set,
-					ident: echo_ident as u16,
+					echo_ident: echo_ident as u16,
 				};
 
 				let flow = self
 					.icmp_flows
 					.entry(key.clone())
-					.or_insert_with(|| IcmpFlow { ident: echo_ident });
+					.or_insert_with(|| IcmpFlow { echo_ident });
 
-				received_data_storage = data;
+				let repr: IcmpRepr = match set {
+					SocketSet::Ipv4(_) => {
+						let icmpv4_pkt = Icmpv4Packet::new_unchecked(&data);
 
-				if let Some(repr) = icmp_repr(&flow, set, &received_data_storage) {
-					reprs.push(Repr::Icmp(repr));
-				}
+						let icmpv4_repr = match icmpv4_pkt.msg_type() {
+							// Icmpv4Message::DstUnreachable => todo!(),
+							// Icmpv4Message::Redirect => todo!(),
+							// Icmpv4Message::EchoRequest => todo!(),
+							// Icmpv4Message::RouterAdvert => todo!(),
+							// Icmpv4Message::RouterSolicit => todo!(),
+							// Icmpv4Message::TimeExceeded => todo!(),
+							// Icmpv4Message::ParamProblem => todo!(),
+							// Icmpv4Message::Timestamp => todo!(),
+							// Icmpv4Message::TimestampReply => todo!(),
+							// Icmpv4Message::Unknown(_) => todo!(),
+							Icmpv4Message::EchoReply => Icmpv4Repr::EchoReply {
+								#[allow(clippy::cast_possible_truncation)]
+								ident: flow.echo_ident as u16,
+								seq_no: icmpv4_pkt.echo_seq_no(),
+								data: &[],
+							},
+							Icmpv4Message::Unknown(_) => {
+								tracing::warn!(
+									"unknown ICMPv4 message type: {:?}",
+									icmpv4_pkt.msg_type()
+								);
+								return Err(Error::Unsupported(
+									"unknown ICMPv4 message type".into(),
+								));
+							}
+							_ => todo!(),
+						};
+
+						IcmpRepr::Ipv4(icmpv4_repr)
+					}
+					SocketSet::Ipv6(_) => {
+						let icmpv6_pkt = Icmpv6Packet::new_unchecked(data);
+
+						let icmpv6_repr = match icmpv6_pkt.msg_type() {
+							Icmpv6Message::EchoReply => Icmpv6Repr::EchoReply {
+								#[allow(clippy::cast_possible_truncation)]
+								ident: flow.echo_ident as u16,
+								seq_no: icmpv6_pkt.echo_seq_no(),
+								data: &[],
+							},
+							Icmpv6Message::Unknown(_) => {
+								tracing::warn!(
+									"unknown Icmpv4Message: {:?}",
+									icmpv6_pkt.msg_type()
+								);
+								return Err(Error::Unsupported("unknown Icmpv4Message".into()));
+							}
+							_ => todo!(),
+						};
+
+						IcmpRepr::Ipv6(icmpv6_repr)
+					}
+				};
+
+				reprs.push(Repr::Icmp { repr, data: vec![] });
 			}
 
 			//  UdpResponse
@@ -628,9 +706,13 @@ impl HostAdapter for TunAdapter {
 
 				match response {
 					v2::udp_response::Response::DataRecv(res) => {
-						received_data_storage = res.data;
-						let repr = smoltcp::wire::UdpRepr { src_port, dst_port };
-						reprs.push(Repr::Udp(repr));
+						reprs.push(Repr::Udp {
+							repr: UdpRepr {
+								src_port: dst_port,
+								dst_port: src_port,
+							},
+							payload: res.data,
+						});
 					}
 				}
 			}
@@ -640,92 +722,12 @@ impl HostAdapter for TunAdapter {
 				tracing::warn!("RuntimeError from agent {:?}", res);
 				// None
 			}
-		};
+		}
 
 		let mut packet_buf = [0u8; 1500];
 
-		for repr in reprs {
-			let (payload_len, next_header) = match repr {
-				Repr::Tcp(repr) => (repr.buffer_len(), IpProtocol::Tcp),
-				Repr::Udp(repr) => (repr.header_len(), IpProtocol::Udp),
-				Repr::Icmp(repr) => match repr {
-					IcmpRepr::Ipv4(repr) => (repr.buffer_len(), IpProtocol::Icmp),
-					IcmpRepr::Ipv6(repr) => (repr.buffer_len(), IpProtocol::Icmpv6),
-				},
-			};
-
-			if payload_len == 0 && next_header != IpProtocol::Tcp {
-				// Allow zero payload for TCP ACKs/FINs etc.
-				tracing::warn!(
-					"No payload to send for outcome, next_header: {:?}",
-					next_header
-				);
-				return Ok(());
-			}
-
-			let ip_packet_len = match set {
-				SocketSet::Ipv4((src, dst)) => {
-					let ipv4_repr = smoltcp::wire::Ipv4Repr {
-						src_addr: *dst.ip(), // Swapping for reply
-						dst_addr: *src.ip(),
-						next_header,
-						payload_len,
-						hop_limit: 64,
-					};
-
-					let ip_header_len = ipv4_repr.buffer_len();
-					let ip_packet_len = ip_header_len + payload_len;
-
-					if packet_buf.len() < ip_packet_len {
-						tracing::warn!(
-							"Packet buffer too small for IPv4. Needed: {}, Available: {}",
-							ip_packet_len,
-							packet_buf.len()
-						);
-						return Ok(());
-					}
-
-					let mut ip_packet_writer =
-						smoltcp::wire::Ipv4Packet::new_unchecked(&mut packet_buf[..ip_header_len]);
-					ipv4_repr.emit(&mut ip_packet_writer, &ChecksumCapabilities::default());
-
-					// Copy the payload into the packet buffer
-					packet_buf[ip_header_len..ip_packet_len]
-						.copy_from_slice(&received_data_storage);
-
-					ip_packet_len
-				}
-				SocketSet::Ipv6((src, dst)) => {
-					let ipv6_repr = smoltcp::wire::Ipv6Repr {
-						src_addr: *dst.ip(), // Swapping for reply
-						dst_addr: *src.ip(),
-						next_header,
-						payload_len,
-						hop_limit: 64,
-					};
-
-					let ip_header_len = ipv6_repr.buffer_len();
-					let current_ip_packet_len = ip_header_len + payload_len;
-
-					if packet_buf.len() < current_ip_packet_len {
-						tracing::warn!(
-							"Packet buffer too small for IPv6. Needed: {}, Available: {}",
-							current_ip_packet_len,
-							packet_buf.len()
-						);
-						return Ok(());
-					}
-
-					let mut ip_packet_writer =
-						smoltcp::wire::Ipv6Packet::new_unchecked(&mut packet_buf[..ip_header_len]);
-					ipv6_repr.emit(&mut ip_packet_writer);
-
-					packet_buf[ip_header_len..current_ip_packet_len]
-						.copy_from_slice(&received_data_storage);
-
-					current_ip_packet_len
-				}
-			};
+		for repr_item in reprs {
+			let ip_packet_len = to_ip_packet_bytes(set, &repr_item, &mut packet_buf)?;
 
 			tracing::trace!(
 				"Sending {} bytes: {:02X?}",
@@ -738,3 +740,127 @@ impl HostAdapter for TunAdapter {
 		Ok(())
 	}
 }
+
+fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Result<usize, Error> {
+	// Calculate the L4 segment length (header + data) and the L4 protocol
+	// (next_header for IP).
+	let (segment_len, next_header) = match repr {
+		// for TCP, the repr contains the TcpRepr and an optional payload.
+		Repr::Tcp { repr, payload } => (repr.buffer_len(), IpProtocol::Tcp),
+
+		// for UDP, the repr contains the UdpRepr but the payload is separate.
+		Repr::Udp { repr, payload } => (repr.header_len() + payload.len(), IpProtocol::Udp),
+
+		Repr::Icmp { data: _, repr } => match repr {
+			IcmpRepr::Ipv4(icmp_repr) => (icmp_repr.buffer_len(), IpProtocol::Icmp),
+			IcmpRepr::Ipv6(icmp_repr) => (icmp_repr.buffer_len(), IpProtocol::Icmpv6),
+		},
+	};
+
+	let ip_packet_total_len = match set {
+		SocketSet::Ipv4((original_src_sock, original_dst_sock)) => {
+			// For the reply packet, IP source is original_dst_sock.addr, IP dest is
+			// original_src_sock.addr.
+			let ip_repr = Ipv4Repr {
+				src_addr: *original_dst_sock.ip(),
+				dst_addr: *original_src_sock.ip(),
+				next_header,
+				payload_len: segment_len,
+				hop_limit: 64, // A common default value for hop limit.
+			};
+
+			// Emit the IPv4 header.
+			let mut ipv4_packet = Ipv4Packet::new_unchecked(packet_buf);
+			ip_repr.emit(&mut ipv4_packet, &ChecksumCapabilities::default());
+			let ip_header_len = ipv4_packet.header_len() as usize;
+
+			let l4_buf = &mut packet_buf[ip_header_len..ip_header_len + segment_len];
+
+			match repr {
+				Repr::Tcp {
+					repr: tcp_repr,
+					payload,
+				} => {
+					// Placeholder: Actual TCP emission logic. tcp_repr.emit(l4_buf, ...);
+					// For now, assuming it fills l4_buf correctly. This part needs to be
+					// implemented based on how TcpRepr is structured.
+					tracing::warn!(
+						"TCP emission in to_ip_packet_bytes not fully implemented with Repr::Tcp"
+					);
+				}
+				Repr::Udp {
+					repr: header,
+					payload,
+				} => {
+					// Emit the UDP header and payload.
+					let udp_packet = UdpPacket::new_unchecked(l4_buf);
+					header.emit(
+						&mut udp_packet,
+						&IpAddress::Ipv4(Ipv4Addr::from_octets(original_dst_sock.ip().octets())),
+						&IpAddress::Ipv4(Ipv4Addr::from_octets(original_src_sock.ip().octets())),
+						payload.len(),
+						|buf| buf.copy_from_slice(payload),
+						&ChecksumCapabilities::default(),
+					);
+				}
+				Repr::Icmp { repr, data } => {
+					let icmpv4_repr = match repr {
+						IcmpRepr::Ipv4(icmp_repr) => icmp_repr,
+						IcmpRepr::Ipv6(_) => {
+							return Err(Error::Unsupported(
+								"ICMPv6 is not supported in this context".into(),
+							));
+						}
+					};
+				}
+			}
+			ip_header_len + segment_len
+		}
+		SocketSet::Ipv6((original_src_sock, original_dst_sock)) => {
+			// For the reply packet, IP source is original_dst_sock.addr, IP dest is
+			// original_src_sock.addr.
+			let ip_repr = Ipv6Repr {
+				src_addr: *original_dst_sock.ip(),
+				dst_addr: *original_src_sock.ip(),
+				next_header,
+				payload_len: segment_len,
+				hop_limit: 64, // A common default value for hop limit.
+			};
+
+			// Emit the IPv6 header.
+			let mut ipv6_packet = Ipv6Packet::new_unchecked(packet_buf);
+			ip_repr.emit(&mut ipv6_packet); // Ipv6Repr::emit doesn't take checksum_caps
+			let ip_header_len = ipv6_packet.header_len();
+
+			let l4_buf = &mut packet_buf[ip_header_len..ip_header_len + segment_len];
+
+			match repr {
+				Repr::Tcp(tcp_repr) => {
+					tracing::warn!(
+						"TCP emission for IPv6 in to_ip_packet_bytes not fully implemented"
+					);
+				}
+				Repr::Udp(udp_data) => {
+					let src_ip = IpAddress::from(original_dst_sock.addr);
+					let dst_ip = IpAddress::from(original_src_sock.addr);
+					udp_data.header.emit(
+						l4_buf,
+						&src_ip,
+						&dst_ip,
+						&udp_data.payload,
+						&ChecksumCapabilities::default(),
+					);
+				}
+				Repr::Icmp(icmp_repr_enum) => {
+					tracing::warn!(
+						"ICMP emission for IPv6 in to_ip_packet_bytes not fully implemented"
+					);
+				}
+			}
+			ip_header_len + segment_len
+		}
+	};
+	Ok(ip_packet_total_len)
+}
+
+// WARNING: This file contains AI-generated edits
