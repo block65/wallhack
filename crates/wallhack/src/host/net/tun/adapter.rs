@@ -27,6 +27,21 @@ use std::{
 };
 use tun::{AsyncDevice, Device};
 
+enum Repr<'a> {
+	Tcp {
+		repr: TcpRepr<'a>,
+		payload: Option<Vec<u8>>,
+	},
+	Icmp {
+		repr: IcmpRepr<'a>,
+		data: Vec<u8>,
+	},
+	Udp {
+		repr: UdpRepr,
+		payload: Vec<u8>,
+	},
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
 	#[error("io error - {0}")]
@@ -412,21 +427,6 @@ impl TunAdapter {
 	}
 }
 
-enum Repr<'a> {
-	Tcp {
-		repr: TcpRepr<'a>,
-		payload: Option<Vec<u8>>,
-	},
-	Icmp {
-		repr: IcmpRepr<'a>,
-		data: Vec<u8>,
-	},
-	Udp {
-		repr: UdpRepr,
-		payload: Vec<u8>,
-	},
-}
-
 macro_rules! tcp_repr_default {
 	($flow:expr, $src_port:expr, $dst_port:expr, $control:expr) => {
 		TcpRepr {
@@ -481,7 +481,7 @@ impl HostAdapter for TunAdapter {
 	) -> Result<(), Self::Error> {
 		let (src_port, dst_port) = set.ports();
 
-		let mut reprs: Vec<Repr<'_>> = vec![];
+		let mut packets: Vec<Repr> = vec![];
 
 		match response {
 			// TcpResponse
@@ -513,7 +513,7 @@ impl HostAdapter for TunAdapter {
 						// update flow as required
 						flow.host_current_seq += 1;
 
-						reprs.push(repr);
+						packets.push(repr);
 					}
 
 					// Ok - indicates a successful operation on the agent, or a pure ACK
@@ -526,7 +526,7 @@ impl HostAdapter for TunAdapter {
 						// update flow as required
 						flow.host_current_seq = flow.host_current_seq.add(1);
 
-						reprs.push(repr);
+						packets.push(repr);
 					}
 
 					// DataRecv - indicates data was received on the agent
@@ -545,13 +545,13 @@ impl HostAdapter for TunAdapter {
 						// update flow as required
 						flow.host_current_seq = flow.host_current_seq.add(len);
 
-						reprs.push(repr);
+						packets.push(repr);
 					}
 
 					// ConnectionClosed - indicates the connection was closed on the agent
 					v2::tcp_response::Response::ConnectionClosed(_) => {
 						// ack
-						reprs.push(Repr::Tcp {
+						packets.push(Repr::Tcp {
 							repr: tcp_repr_default!(
 								&flow,
 								src_port, // swapping for reply
@@ -564,7 +564,7 @@ impl HostAdapter for TunAdapter {
 						// update flow as required
 						flow.connection_state = TcpFlowState::FinWait2;
 
-						reprs.push(Repr::Tcp {
+						packets.push(Repr::Tcp {
 							repr: tcp_repr_default!(
 								&flow,
 								src_port, // swapping for reply
@@ -593,7 +593,7 @@ impl HostAdapter for TunAdapter {
 							payload: None,
 						};
 
-						reprs.push(repr);
+						packets.push(repr);
 					}
 
 					// TODO: Handle other TCP responses
@@ -688,7 +688,7 @@ impl HostAdapter for TunAdapter {
 					}
 				};
 
-				reprs.push(Repr::Icmp { repr, data: vec![] });
+				packets.push(Repr::Icmp { repr, data: vec![] });
 			}
 
 			//  UdpResponse
@@ -706,7 +706,7 @@ impl HostAdapter for TunAdapter {
 
 				match response {
 					v2::udp_response::Response::DataRecv(res) => {
-						reprs.push(Repr::Udp {
+						packets.push(Repr::Udp {
 							repr: UdpRepr {
 								src_port: dst_port,
 								dst_port: src_port,
@@ -726,11 +726,11 @@ impl HostAdapter for TunAdapter {
 
 		let mut packet_buf = [0u8; 1500];
 
-		for repr_item in reprs {
+		for repr_item in packets {
 			let ip_packet_len = to_ip_packet_bytes(set, &repr_item, &mut packet_buf)?;
 
 			tracing::trace!(
-				"Sending {} bytes: {:02X?}",
+				"Sending IP packet of {} bytes: {:02X?}",
 				ip_packet_len,
 				&packet_buf[..ip_packet_len]
 			);
@@ -746,7 +746,7 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 	// (next_header for IP).
 	let (segment_len, next_header) = match repr {
 		// for TCP, the repr contains the TcpRepr and an optional payload.
-		Repr::Tcp { repr, payload } => (repr.buffer_len(), IpProtocol::Tcp),
+		Repr::Tcp { repr, payload: _ } => (repr.buffer_len(), IpProtocol::Tcp),
 
 		// for UDP, the repr contains the UdpRepr but the payload is separate.
 		Repr::Udp { repr, payload } => (repr.header_len() + payload.len(), IpProtocol::Udp),
@@ -761,7 +761,7 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 		SocketSet::Ipv4((original_src_sock, original_dst_sock)) => {
 			// For the reply packet, IP source is original_dst_sock.addr, IP dest is
 			// original_src_sock.addr.
-			let ip_repr = Ipv4Repr {
+			let ipv4_repr = Ipv4Repr {
 				src_addr: *original_dst_sock.ip(),
 				dst_addr: *original_src_sock.ip(),
 				next_header,
@@ -770,8 +770,9 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 			};
 
 			// Emit the IPv4 header.
-			let mut ipv4_packet = Ipv4Packet::new_unchecked(packet_buf);
-			ip_repr.emit(&mut ipv4_packet, &ChecksumCapabilities::default());
+			let mut ipv4_packet = Ipv4Packet::new_unchecked(&mut *packet_buf);
+			ipv4_repr.emit(&mut ipv4_packet, &ChecksumCapabilities::default());
+
 			let ip_header_len = ipv4_packet.header_len() as usize;
 
 			let l4_buf = &mut packet_buf[ip_header_len..ip_header_len + segment_len];
@@ -779,13 +780,15 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 			match repr {
 				Repr::Tcp {
 					repr: tcp_repr,
-					payload,
+					payload: _,
 				} => {
-					// Placeholder: Actual TCP emission logic. tcp_repr.emit(l4_buf, ...);
-					// For now, assuming it fills l4_buf correctly. This part needs to be
-					// implemented based on how TcpRepr is structured.
-					tracing::warn!(
-						"TCP emission in to_ip_packet_bytes not fully implemented with Repr::Tcp"
+					// Emit TCP segment to the L4 buffer
+					let mut tcp_packet = TcpPacket::new_unchecked(l4_buf);
+					tcp_repr.emit(
+						&mut tcp_packet,
+						&IpAddress::Ipv4(*original_dst_sock.ip()),
+						&IpAddress::Ipv4(*original_src_sock.ip()),
+						&ChecksumCapabilities::default(),
 					);
 				}
 				Repr::Udp {
@@ -793,7 +796,7 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 					payload,
 				} => {
 					// Emit the UDP header and payload.
-					let udp_packet = UdpPacket::new_unchecked(l4_buf);
+					let mut udp_packet = UdpPacket::new_unchecked(l4_buf);
 					header.emit(
 						&mut udp_packet,
 						&IpAddress::Ipv4(Ipv4Addr::from_octets(original_dst_sock.ip().octets())),
@@ -803,7 +806,7 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 						&ChecksumCapabilities::default(),
 					);
 				}
-				Repr::Icmp { repr, data } => {
+				Repr::Icmp { repr, data: _ } => {
 					let icmpv4_repr = match repr {
 						IcmpRepr::Ipv4(icmp_repr) => icmp_repr,
 						IcmpRepr::Ipv6(_) => {
@@ -812,6 +815,9 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 							));
 						}
 					};
+					// Emit ICMPv4 packet to the L4 buffer
+					let mut icmp_packet = Icmpv4Packet::new_unchecked(l4_buf);
+					icmpv4_repr.emit(&mut icmp_packet, &ChecksumCapabilities::default());
 				}
 			}
 			ip_header_len + segment_len
@@ -828,32 +834,57 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 			};
 
 			// Emit the IPv6 header.
-			let mut ipv6_packet = Ipv6Packet::new_unchecked(packet_buf);
+			let mut ipv6_packet = Ipv6Packet::new_unchecked(&mut *packet_buf);
 			ip_repr.emit(&mut ipv6_packet); // Ipv6Repr::emit doesn't take checksum_caps
 			let ip_header_len = ipv6_packet.header_len();
 
 			let l4_buf = &mut packet_buf[ip_header_len..ip_header_len + segment_len];
 
 			match repr {
-				Repr::Tcp(tcp_repr) => {
-					tracing::warn!(
-						"TCP emission for IPv6 in to_ip_packet_bytes not fully implemented"
-					);
-				}
-				Repr::Udp(udp_data) => {
-					let src_ip = IpAddress::from(original_dst_sock.addr);
-					let dst_ip = IpAddress::from(original_src_sock.addr);
-					udp_data.header.emit(
-						l4_buf,
-						&src_ip,
-						&dst_ip,
-						&udp_data.payload,
+				Repr::Tcp {
+					repr: tcp_repr,
+					payload: _,
+				} => {
+					// Emit TCP segment to the L4 buffer
+					let mut tcp_packet = TcpPacket::new_unchecked(l4_buf);
+					tcp_repr.emit(
+						&mut tcp_packet,
+						&IpAddress::Ipv6(*original_dst_sock.ip()),
+						&IpAddress::Ipv6(*original_src_sock.ip()),
 						&ChecksumCapabilities::default(),
 					);
 				}
-				Repr::Icmp(icmp_repr_enum) => {
-					tracing::warn!(
-						"ICMP emission for IPv6 in to_ip_packet_bytes not fully implemented"
+				Repr::Udp {
+					repr: header,
+					payload,
+				} => {
+					// Emit the UDP header and payload.
+					let mut udp_packet = UdpPacket::new_unchecked(l4_buf);
+					header.emit(
+						&mut udp_packet,
+						&IpAddress::Ipv6(*original_dst_sock.ip()),
+						&IpAddress::Ipv6(*original_src_sock.ip()),
+						payload.len(),
+						|buf| buf.copy_from_slice(payload),
+						&ChecksumCapabilities::default(),
+					);
+				}
+				Repr::Icmp { repr, data: _ } => {
+					let icmpv6_repr = match repr {
+						IcmpRepr::Ipv6(icmp_repr) => icmp_repr,
+						IcmpRepr::Ipv4(_) => {
+							return Err(Error::Unsupported(
+								"ICMPv4 is not supported in IPv6 context".into(),
+							));
+						}
+					};
+					// Emit the ICMPv6 packet.
+					let mut icmp_packet = Icmpv6Packet::new_unchecked(l4_buf);
+					icmpv6_repr.emit(
+						original_dst_sock.ip(),
+						original_src_sock.ip(),
+						&mut icmp_packet,
+						&ChecksumCapabilities::default(),
 					);
 				}
 			}

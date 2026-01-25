@@ -35,7 +35,6 @@ build-linux-i686:
 clean:
     cross clean
 
-
 dev:
   RUST_LOG="wallhack=trace,wallhack::host=trace,wallhack::agent=trace" \
     cargo run --bin host -- \
