@@ -6,15 +6,15 @@ categories = ["network-programming"]
 
 [dependencies]
 agent_adapter = { path = "../agent-adapter" }
-anyhow = "1.0.98"
-dashmap = "6.1.0"
-prost = { version = "0.13.5" }
+anyhow = "1"
+dashmap = "6"
+prost = { version = "0.13" }
 protobuf = { path = "../protobuf" }
-quinn = "0.11.7"
-rand = "0.9.1"
-rcgen = "0.13.2"
-rustls = { version = "0.23.26", default-features = false, features = ["ring"] }
-rustls-pemfile = "2.2.0"
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
 smoltcp = { version = "0.12", default-features = false, features = [
   "std",
   "alloc",
@@ -27,22 +27,22 @@ smoltcp = { version = "0.12", default-features = false, features = [
   "proto-ipv4",
   "proto-ipv6",
 ] }
-socket2.version = "0.5.9"
-thiserror = "2.0.12"
+socket2.version = "0.5"
+thiserror = "2"
 tokio.features = ["rt", "macros", "rt-multi-thread", "net", "io-util"]
 tokio.workspace = true
 tracing.workspace = true
-tun = { version = "0.7.21", features = [
+tun = { version = "0.7", features = [
   "async",
   "tokio",
 ], default-features = false }
 
 [build-dependencies]
-test-log = { version = "0.2.17", features = ["trace"] }
+test-log = { version = "0.2", features = ["trace"] }
 
 [dev-dependencies]
-test-log = { version = "0.2.17", features = ["trace"] }
-tokio-test = "0.4.4"
+test-log = { version = "0.2", features = ["trace"] }
+tokio-test = "0.4"
 
 [lints]
 workspace = true

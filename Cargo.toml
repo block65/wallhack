@@ -9,12 +9,11 @@ unsafe_code = "forbid"
 pedantic = "warn"
 
 [workspace.dependencies]
-clap = { version = "4.5" }
 tokio = { version = "1.0" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = "2.0.12"
-console-subscriber = "0.4.1"
+thiserror = "2"
+console-subscriber = "0.4"
 
 [profile.dev]
 opt-level = 0
