@@ -1,7 +1,6 @@
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
 
-use repl::{CliCommands, ConnectArgs, HostCli, ListenArgs};
+use repl::{Command, HostConfig, parse_host};
 use wallhack::{
 	client::{
 		self,
@@ -16,24 +15,15 @@ use wallhack::{
 	},
 };
 
-pub fn print_completions<G: clap_complete::Generator>(generator: G, cmd: &mut clap::Command) {
-	clap_complete::generate(
-		generator,
-		cmd,
-		cmd.get_name().to_string(),
-		&mut std::io::stdout(),
-	);
-}
+async fn host_client(config: repl::ConnectConfig, tun_name: Option<String>) -> Result<()> {
+	repl::info!("connecting to {}", config.target);
 
-async fn host_client(args: ConnectArgs, tun_name: Option<String>) -> Result<()> {
-	repl::info!("connecting to {}", args.target);
+	repl::verbose!("resolving {}", config.target);
 
-	repl::verbose!("resolving {}", args.target);
-
-	let endpoint = repl::dns::resolve(args.target, args.dns_server).await?;
+	let endpoint = repl::dns::resolve(config.target, config.dns_server).await?;
 	repl::verbose!("resolved as {:#?}", endpoint);
 
-	let client_config = match args.tls {
+	let client_config = match config.tls {
 		Some(tls) => ClientConfig {
 			addr: endpoint,
 			hostname: tls.hostname,
@@ -84,10 +74,10 @@ async fn host_client(args: ConnectArgs, tun_name: Option<String>) -> Result<()> 
 	Ok(())
 }
 
-async fn host_server(args: ListenArgs, tun_name: Option<String>) -> Result<()> {
+async fn host_server(config: repl::ListenConfig, tun_name: Option<String>) -> Result<()> {
 	let mut server = server::quic::QuicServer::try_new(ServerConfig::default())?;
 
-	repl::info!("host server listening on {}", args.addr);
+	repl::info!("host server listening on {}", config.addr);
 
 	loop {
 		match server.accept(ServerRole::Host).await {
@@ -134,32 +124,16 @@ async fn host_server(args: ListenArgs, tun_name: Option<String>) -> Result<()> {
 	Ok(())
 }
 
-async fn run(cli: HostCli) -> Result<()> {
-	#[cfg(debug_assertions)]
+async fn run(config: HostConfig) -> Result<()> {
+	#[cfg(feature = "tokio-console")]
 	console_subscriber::init();
 
-	// let filter = tracing_subscriber::EnvFilter::from_default_env();
-	// tracing_subscriber::fmt()
-	// 	.compact()
-	// 	.with_env_filter(filter)
-	// 	.with_file(false)
-	// 	// .with_thread_ids(true)
-	// 	.with_target(true)
-	// 	.init();
-
-	// Handle completions generation (same as before)
-	if let Some(generator) = cli.globals.generator {
-		let mut cmd = HostCli::command();
-		print_completions(generator, &mut cmd);
-		return Ok(());
-	}
-
-	match cli.command {
-		CliCommands::Connect(args) => {
-			host_client(args, cli.tun).await?;
+	match config.command {
+		Command::Connect(args) => {
+			host_client(args, config.tun).await?;
 		}
-		CliCommands::Listen(args) => {
-			host_server(args, cli.tun).await?;
+		Command::Listen(args) => {
+			host_server(args, config.tun).await?;
 		}
 	}
 
@@ -168,9 +142,17 @@ async fn run(cli: HostCli) -> Result<()> {
 
 #[tokio::main]
 async fn main() {
-	let cli = HostCli::parse();
+	let cli = parse_host();
 
-	let fut = run(cli);
+	let config = match cli.into_config() {
+		Ok(config) => config,
+		Err(e) => {
+			eprintln!("Error: {e}");
+			std::process::exit(1);
+		}
+	};
+
+	let fut = run(config);
 
 	if let Err(err) = fut.await {
 		repl::error!("  Error: {err}");
@@ -183,6 +165,6 @@ async fn main() {
 			cause_level += 1;
 		}
 
-		std::process::exit(1); // Exit with a non-zero status code
+		std::process::exit(1);
 	}
 }

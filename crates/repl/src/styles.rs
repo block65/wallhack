@@ -1,12 +1,5 @@
 use anstyle::{AnsiColor, Style};
 
-#[cfg(feature = "color")]
-pub const CLAP_STYLES: clap::builder::Styles = clap::builder::Styles::styled()
-	.header(AnsiColor::Yellow.on_default())
-	.usage(AnsiColor::Green.on_default())
-	.literal(AnsiColor::Green.on_default())
-	.placeholder(AnsiColor::Green.on_default());
-
 pub struct OutputStyles {
 	_header: Style,
 	error: Style,
@@ -34,13 +27,13 @@ impl Default for OutputStyles {
 		#[cfg(not(feature = "color"))]
 		{
 			Self {
-				header: AnsiColor::White.on_default(),
+				_header: AnsiColor::White.on_default(),
 				error: AnsiColor::White.on_default(),
-				usage: AnsiColor::White.on_default(),
+				_usage: AnsiColor::White.on_default(),
 				literal: AnsiColor::White.on_default(),
-				placeholder: AnsiColor::White.on_default(),
+				_placeholder: AnsiColor::White.on_default(),
 				valid: AnsiColor::White.on_default(),
-				invalid: AnsiColor::White.on_default(),
+				_invalid: AnsiColor::White.on_default(),
 			}
 		}
 	}

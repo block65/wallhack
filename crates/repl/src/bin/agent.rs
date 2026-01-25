@@ -1,6 +1,4 @@
-use clap::{CommandFactory, Parser};
-
-use repl::{AgentCli, CliCommands, ConnectArgs, ListenArgs};
+use repl::{AgentConfig, Command, parse_agent};
 use wallhack::{
 	agent::{self, net::SyscallAgentAdapter},
 	client::{
@@ -17,43 +15,29 @@ use wallhack::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-	// wallhack::agent::orchestrator::Error
 	#[error("Orchestrator error: {0}")]
 	Orchestrator(#[from] agent::orchestrator::Error),
 
-	// wallhack::client::quic::Error
 	#[error("Client QUIC error: {0}")]
 	ClientQuic(#[from] client::quic::Error),
 
-	// wallhack::server::quic::Error
 	#[error("Server QUIC error: {0}")]
 	ServerQuic(#[from] server::quic::Error),
 
-	// repl::dns::ResolveError
 	#[error("DNS resolution error: {0}")]
 	DnsResolve(#[from] repl::dns::ResolveError),
 
-	// tracing_subscriber::filter::ParseError
 	#[error("Tracing subscriber filter parse error: {0}")]
 	TracingFilterParse(#[from] tracing_subscriber::filter::ParseError),
 }
 
-pub fn print_completions<G: clap_complete::Generator>(generator: G, cmd: &mut clap::Command) {
-	clap_complete::generate(
-		generator,
-		cmd,
-		cmd.get_name().to_string(),
-		&mut std::io::stdout(),
-	);
-}
+async fn agent_client(config: repl::ConnectConfig) -> Result<(), Error> {
+	repl::info!("resolving {}...", config.target);
 
-async fn agent_client(args: ConnectArgs) -> Result<(), Error> {
-	repl::info!("resolving {}...", args.target);
-
-	let endpoint = repl::dns::resolve(args.target, args.dns_server).await?;
+	let endpoint = repl::dns::resolve(config.target, config.dns_server).await?;
 	tracing::debug!("resolved endpoint: {:#?}", endpoint);
 
-	let client_config = match args.tls {
+	let client_config = match config.tls {
 		Some(tls) => ClientConfig {
 			addr: endpoint,
 			hostname: tls.hostname,
@@ -83,10 +67,10 @@ async fn agent_client(args: ConnectArgs) -> Result<(), Error> {
 	Ok(())
 }
 
-async fn agent_server(args: ListenArgs) -> Result<(), Error> {
+async fn agent_server(config: repl::ListenConfig) -> Result<(), Error> {
 	let mut server = server::quic::QuicServer::try_new(ServerConfig::default())?;
 
-	repl::info!("agent server listening on {}", args.addr);
+	repl::info!("agent server listening on {}", config.addr);
 
 	loop {
 		match server.accept(ServerRole::Agent).await {
@@ -123,38 +107,15 @@ async fn agent_server(args: ListenArgs) -> Result<(), Error> {
 	Ok(())
 }
 
-async fn run(cli: AgentCli) -> Result<(), Error> {
-	#[cfg(debug_assertions)]
+async fn run(config: AgentConfig) -> Result<(), Error> {
+	#[cfg(feature = "tokio-console")]
 	console_subscriber::init();
 
-	// let filter = tracing_subscriber::EnvFilter::from_default_env();
-	// tracing_subscriber::fmt()
-	// 	.compact()
-	// 	.with_env_filter(filter)
-	// 	.with_file(false)
-	// 	// .with_thread_ids(true)
-	// 	.with_target(true)
-	// 	.init();
-
-	// Handle completions generation (same as before)
-	if let Some(generator) = cli.globals.generator {
-		let mut cmd = AgentCli::command();
-		print_completions(generator, &mut cmd);
-		return Ok(());
-	}
-
-	// Handle completions generation (same as before)
-	if let Some(generator) = cli.globals.generator {
-		let mut cmd = AgentCli::command();
-		print_completions(generator, &mut cmd);
-		return Ok(());
-	}
-
-	match cli.command {
-		CliCommands::Connect(args) => {
+	match config.command {
+		Command::Connect(args) => {
 			agent_client(args).await?;
 		}
-		CliCommands::Listen(args) => {
+		Command::Listen(args) => {
 			agent_server(args).await?;
 		}
 	}
@@ -164,13 +125,20 @@ async fn run(cli: AgentCli) -> Result<(), Error> {
 
 #[tokio::main]
 async fn main() {
-	let cli = AgentCli::parse();
+	let cli = parse_agent();
 
-	let fut = run(cli);
+	let config = match cli.into_config() {
+		Ok(config) => config,
+		Err(e) => {
+			eprintln!("Error: {e}");
+			std::process::exit(1);
+		}
+	};
+
+	let fut = run(config);
 
 	if let Err(err) = fut.await {
-		repl::error!("Oopsies");
-		repl::error!("  Error: {err}");
+		repl::error!("Error: {err}");
 
 		let mut source = std::error::Error::source(&err);
 		let mut cause_level = 1;
@@ -180,6 +148,6 @@ async fn main() {
 			cause_level += 1;
 		}
 
-		std::process::exit(1); // Exit with a non-zero status code
+		std::process::exit(1);
 	}
 }

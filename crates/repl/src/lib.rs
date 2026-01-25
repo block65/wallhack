@@ -1,19 +1,20 @@
 #![warn(unused_extern_crates)]
-mod cli_args;
+
+pub mod config;
+pub mod cli;
+pub mod dns;
+pub mod output;
+
 mod completer;
 mod helper;
-// mod readline;
 mod repl_commands;
-
-// mod app;
-// mod session;
 
 #[cfg(feature = "color")]
 mod styles;
 
-pub mod dns;
-pub mod output;
-
-// pub use app::HostReplApplication;
-pub use cli_args::{AgentCli, CliCommands, ConnectArgs, HostCli, ListenArgs};
+// Re-exports for convenience
+pub use cli::{AgentCli, HostCli, parse_agent, parse_host};
+pub use config::{
+	AgentConfig, Command, ConnectConfig, GlobalConfig, HostConfig, ListenConfig, OutputFormat,
+};
 pub use styles::OutputStyles;

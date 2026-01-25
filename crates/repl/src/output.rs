@@ -4,13 +4,8 @@ use derive_more::Display;
 
 use crate::styles::OutputStyles;
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum OutputFormat {
-	/// Plain text for humans and LLMs
-	Plain,
-	/// JSON LD Output
-	Json,
-}
+// Re-export from config for backwards compatibility
+pub use crate::config::OutputFormat;
 
 pub static OUTPUT_CONFIG: LazyLock<RwLock<Output>> = LazyLock::new(|| {
 	RwLock::new(Output {

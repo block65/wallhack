@@ -2,6 +2,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use super::resolvable::ResolvableAddress;
 
+#[cfg(feature = "dns-resolver")]
 use hickory_resolver::{
 	Resolver,
 	config::{NameServerConfig, ResolverConfig},
@@ -11,6 +12,7 @@ use hickory_resolver::{
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+	#[cfg(feature = "dns-resolver")]
 	#[error("Resolver error: {0}")]
 	DnsResolution(#[from] hickory_resolver::ResolveError),
 
@@ -25,6 +27,9 @@ pub enum Error {
 
 	#[error("No records found for {0}")]
 	NoRecordsFound(String),
+
+	#[error("Custom DNS server requires the 'dns-resolver' feature")]
+	FeatureNotEnabled,
 }
 
 /// Resolves a hostname to a `SocketAddr` using either a custom DNS server or
@@ -35,7 +40,7 @@ pub enum Error {
 /// * `resolvable` - A `ResolvableAddress` containing the hostname and port to
 ///   resolve.
 /// * `dns_server` - An optional `SocketAddr` specifying a custom DNS server to
-///   use.
+///   use. Requires the `dns-resolver` feature.
 ///
 /// # Errors
 ///
@@ -43,14 +48,7 @@ pub enum Error {
 /// - The hostname cannot be parsed as an IP address or resolved via DNS.
 /// - The custom DNS server fails to resolve the hostname.
 /// - The system DNS resolver fails to resolve the hostname.
-///
-/// # Examples
-///
-/// ```
-/// // Example usage of the resolve function
-/// let resolvable = ResolvableAddress { hostname: "example.com".to_string(), port: 80 };
-/// let result = resolve(resolvable, None).await;
-/// ```
+/// - A custom DNS server is specified but the `dns-resolver` feature is disabled.
 pub async fn resolve(
 	resolvable: ResolvableAddress,
 	dns_server: Option<SocketAddr>,
@@ -65,37 +63,17 @@ pub async fn resolve(
 
 	// If not an IP, then it's a hostname that needs resolution
 	let resolved_ip: IpAddr = if let Some(dns_server_addr) = dns_server {
-		// Use custom DNS server
-		tracing::debug!("Using custom DNS server: {dns_server_addr}");
-
-		let mut resolver_config = ResolverConfig::default();
-
-		let nameserver_config = NameServerConfig {
-			socket_addr: dns_server_addr,
-			protocol: Protocol::Udp,
-			trust_negative_responses: true,
-			bind_addr: None,
-			tls_dns_name: None,
-			http_endpoint: None, // Not typically needed for client
-		};
-
-		resolver_config.add_name_server(nameserver_config);
-
-		let resolver = Resolver::builder_with_config(
-			ResolverConfig::default(),
-			TokioConnectionProvider::default(),
-		)
-		.build();
-
-		// Perform the lookup
-		let response = resolver.lookup_ip(host.as_str()).await?;
-		response.iter().next().ok_or_else(|| {
-			Error::NoRecordsFound(format!("No records found for hostname: {host}"))
-		})?
+		#[cfg(feature = "dns-resolver")]
+		{
+			resolve_with_custom_dns(host, dns_server_addr).await?
+		}
+		#[cfg(not(feature = "dns-resolver"))]
+		{
+			resolve_with_custom_dns(host, dns_server_addr)?
+		}
 	} else {
 		// Use system DNS resolver
 		tracing::debug!("Using system DNS resolver for: {}", resolvable.input);
-		// `to_socket_addrs` needs a string like "hostname:port"
 		let mut addrs_iter = resolvable.input.to_socket_addrs()?;
 		addrs_iter
 			.next()
@@ -104,4 +82,42 @@ pub async fn resolve(
 	};
 
 	Ok(SocketAddr::new(resolved_ip, port))
+}
+
+#[cfg(feature = "dns-resolver")]
+async fn resolve_with_custom_dns(host: &str, dns_server_addr: SocketAddr) -> Result<IpAddr, Error> {
+	tracing::debug!("Using custom DNS server: {dns_server_addr}");
+
+	let mut resolver_config = ResolverConfig::default();
+
+	let nameserver_config = NameServerConfig {
+		socket_addr: dns_server_addr,
+		protocol: Protocol::Udp,
+		trust_negative_responses: true,
+		bind_addr: None,
+		tls_dns_name: None,
+		http_endpoint: None,
+	};
+
+	resolver_config.add_name_server(nameserver_config);
+
+	let resolver = Resolver::builder_with_config(
+		ResolverConfig::default(),
+		TokioConnectionProvider::default(),
+	)
+	.build();
+
+	let response = resolver.lookup_ip(host).await?;
+	response
+		.iter()
+		.next()
+		.ok_or_else(|| Error::NoRecordsFound(format!("No records found for hostname: {host}")))
+}
+
+#[cfg(not(feature = "dns-resolver"))]
+fn resolve_with_custom_dns(
+	_host: &str,
+	_dns_server_addr: SocketAddr,
+) -> Result<IpAddr, Error> {
+	Err(Error::FeatureNotEnabled)
 }

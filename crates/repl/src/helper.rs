@@ -12,7 +12,7 @@ pub struct LineHelper {
 
 impl LineHelper {
 	pub fn new() -> Self {
-		let commands = Repl::get_command_names();
+		let commands = Repl::command_names().into_iter().map(String::from).collect();
 
 		Self {
 			completer: ClapCompleter::new(commands),
