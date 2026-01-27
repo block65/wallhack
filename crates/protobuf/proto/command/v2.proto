@@ -191,5 +191,13 @@ message TunnelMessage {
     HostInstruction host_instruction = 1;
     AgentResponse agent_response = 2;
     RawPacket raw_packet = 3;
+    AgentHello agent_hello = 4;
   }
+}
+
+// Sent by agent immediately after connecting to identify itself.
+// Entry uses agent_id for stable TUN naming (tun-<agent_id>).
+message AgentHello {
+  string agent_id = 1;      // Stable identifier (user-provided or auto-generated)
+  string version = 2;       // Agent version for compatibility checks
 }

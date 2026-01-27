@@ -19,6 +19,9 @@ pub enum Error {
 	#[error("IO error: {0}")]
 	SocketAddr(#[from] std::io::Error),
 
+	#[error("Address parse error: {0}")]
+	AddrParse(#[from] std::net::AddrParseError),
+
 	#[error("Invalid address: {0}")]
 	InvalidAddress(String),
 
@@ -115,9 +118,6 @@ async fn resolve_with_custom_dns(host: &str, dns_server_addr: SocketAddr) -> Res
 }
 
 #[cfg(not(feature = "dns-resolver"))]
-fn resolve_with_custom_dns(
-	_host: &str,
-	_dns_server_addr: SocketAddr,
-) -> Result<IpAddr, Error> {
+fn resolve_with_custom_dns(_host: &str, _dns_server_addr: SocketAddr) -> Result<IpAddr, Error> {
 	Err(Error::FeatureNotEnabled)
 }

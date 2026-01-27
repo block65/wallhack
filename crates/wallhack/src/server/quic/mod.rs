@@ -1,17 +1,20 @@
 use std::{sync::Arc, time::Duration};
 
-use prost::Message;
-use protobuf::v2::{AgentResponse, HostInstruction, TunnelMessage, tunnel_message};
-use quinn::{IdleTimeout, WriteError, crypto::rustls::QuicServerConfig};
+use protobuf::v2::{AgentResponse, HostInstruction};
+use quinn::{IdleTimeout, crypto::rustls::QuicServerConfig};
 
-use crate::server::{
-	server::ServerRole,
-	tls::{ALPN_QUIC_HTTP, configure_crypto},
+use crate::{
+	control::{handler::Handler, metrics::Metrics},
+	server::{
+		server::ServerRole,
+		tls::{ALPN_QUIC_HTTP, configure_crypto},
+	},
+	transport::{bridge, quic::QuicTransport},
 };
 
 use super::{
 	config::ServerConfig,
-	server::{AcceptResult, Server},
+	server::{AcceptResult, Server, ServerOptions},
 	tls,
 };
 
@@ -32,19 +35,19 @@ pub enum Error {
 	#[error("tls error: {0}")]
 	Tls(#[from] rustls::Error),
 
-	// quinn::VarIntBoundsExceeded
 	#[error("quinn bounds error: {0}")]
 	Quinn(#[from] quinn::VarIntBoundsExceeded),
 }
 
 pub struct QuicServer {
 	endpoint: quinn::Endpoint,
+	options: ServerOptions,
 }
 
 impl Server for QuicServer {
 	type Error = Error;
 
-	fn try_new(config: ServerConfig) -> Result<Self, Error> {
+	fn try_new(config: ServerConfig, options: ServerOptions) -> Result<Self, Error> {
 		let (cert_der, priv_key) = configure_crypto(config.tls)?;
 
 		let mut server_crypto = rustls::ServerConfig::builder()
@@ -58,10 +61,9 @@ impl Server for QuicServer {
 
 		let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
 
-		let timeout = IdleTimeout::try_from(Duration::from_secs(10))?;
+		let timeout = IdleTimeout::try_from(Duration::from_secs(60))?;
 		transport_config.max_idle_timeout(Some(timeout));
-		transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-		// transport_config.max_concurrent_uni_streams(1_u8.into());
+		transport_config.keep_alive_interval(Some(Duration::from_secs(10)));
 
 		tracing::trace!("Server Config {:?}", server_config);
 		tracing::debug!("will listen on {}", config.listen);
@@ -70,7 +72,7 @@ impl Server for QuicServer {
 
 		tracing::info!("local_addr {:?}", endpoint.local_addr());
 
-		Ok(Self { endpoint })
+		Ok(Self { endpoint, options })
 	}
 
 	async fn accept(&mut self, role: ServerRole) -> Result<Option<AcceptResult>, Error> {
@@ -83,269 +85,89 @@ impl Server for QuicServer {
 		};
 
 		let connection = incoming.await?;
+		let remote_addr = connection.remote_address().to_string();
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(10);
-		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(10);
+		// Wrap connection in transport abstraction
+		let transport = Arc::new(QuicTransport::new(connection));
 
-		// Task 1: Handles incoming streams from the client (Common for both roles)
-		// This connection will be used to accept incoming streams and send the
-		// messages out onto the right channel
-		let connection0 = connection.clone();
-		let responses0 = responses.clone();
-		let instructions0 = instructions.clone();
+		// Get or create shared metrics
+		let metrics = self
+			.options
+			.metrics
+			.clone()
+			.unwrap_or_else(|| Arc::new(Metrics::default()));
+
+		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(256);
+		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(256);
+
+		// Create oneshot channel for AgentHello
+		let (agent_hello_tx, agent_hello_rx) = tokio::sync::oneshot::channel();
+
+		// Task 0: Control stream handler
+		let transport_ctrl = Arc::clone(&transport);
+		let handler_config = self.options.handler_config.clone();
+		let metrics_ctrl = Arc::clone(&metrics);
 
 		tokio::spawn(async move {
-			tracing::trace!("spawning incoming client connection handler");
-			let mtu = 2000;
-
-			loop {
-				tracing::trace!("Awaiting next stream on this connection...");
-				let mut peer_recv = match connection0.accept_uni().await {
-					Ok(stream) => stream,
-					Err(e) => {
-						tracing::error!("While accepting a unidirectional stream: {}", e);
-						break; // Exit task on connection error
-					}
-				};
-
-				match peer_recv.read_to_end(mtu).await {
-					Ok(data) => {
-						if data.is_empty() {
-							tracing::info!("recv_stream closed by peer (0 bytes read)");
-							continue; // Or break if one stream closing means end of interaction for this task
-						}
-
-						tracing::trace!("Received data from peer: {:02X?}", data);
-
-						let msg = match TunnelMessage::decode(prost::bytes::Bytes::from(data)) {
-							Ok(result) => result,
-							Err(e) => {
-								tracing::error!("Decoder error: {}", e);
-								continue;
-							}
-						};
-
-						match msg.message {
-							Some(tunnel_message::Message::AgentResponse(resp)) => {
-								tracing::trace!("Received AgentResponse from peer {:?}", resp);
-								if responses0.send(resp).is_err() {
-									tracing::warn!(
-										"Error sending AgentResponse to internal channel (receiver dropped?)"
-									);
-								}
-							}
-							Some(tunnel_message::Message::HostInstruction(instr_msg)) => {
-								tracing::trace!("Received HostInstruction from peer");
-								if instructions0.send(instr_msg).is_err() {
-									tracing::warn!(
-										"Error sending HostInstruction to internal channel (receiver dropped?)"
-									);
-								}
-							}
-							Some(tunnel_message::Message::RawPacket(msg)) => {
-								tracing::warn!("Unhandled message type: {:?}", msg);
-							}
-							None => {
-								tracing::warn!("Received TunnelMessage with no message type.");
-							}
-						}
-					}
-					Err(e) => {
-						tracing::error!("Error reading from stream: {}", e);
-						// Decide if this error should break the loop or just log and
-						// continue For persistent connections, might want to continue. For
-						// stream-specific errors, continue. If it's a connection-level
-						// error disguised as a read error, then break.
-						// quinn::ReadToEndError can indicate connection loss.
-						match e {
-							quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(_)) => {
-								break;
-							}
-							quinn::ReadToEndError::Read(quinn::ReadError::Reset(_)) => break,
-							quinn::ReadToEndError::TooLong => {
-								tracing::error!("Stream data too long");
-							}
-							quinn::ReadToEndError::Read(e) => {
-								tracing::error!("Stream read error {e}");
-							}
-						}
-					}
-				}
+			let handler = Handler::new(handler_config, metrics_ctrl);
+			if let Err(e) = bridge::run_control_handler(&*transport_ctrl, &handler).await {
+				tracing::debug!("Control handler finished: {e}");
 			}
-			tracing::trace!("Incoming client connection handler task finished.");
 		});
 
+		// Task 1: Incoming data handler
+		let transport_data = Arc::clone(&transport);
+		let responses_tx = responses.clone();
+		let instructions_tx = instructions.clone();
+
+		tokio::spawn(async move {
+			if let Err(e) = bridge::run_incoming_data(
+				&*transport_data,
+				&instructions_tx,
+				&responses_tx,
+				Some(agent_hello_tx),
+			)
+			.await
+			{
+				tracing::debug!("Incoming data handler finished: {e}");
+			}
+		});
+
+		// Task 2: Outgoing handler based on role
 		match role {
 			ServerRole::Agent => {
 				tracing::info!("Spawning task to send responses to peer");
-				// Task 2: Handles outgoing AgentResponse messages (Agent Role)
-				let connection1 = connection.clone();
-				let mut responses1 = responses.subscribe(); // Agent's orchestrator will send to `responses_send`
+				let transport_out = Arc::clone(&transport);
+				let responses_tx = responses.clone();
 
 				tokio::spawn(async move {
-					tracing::trace!("spawning outgoing responses handler task (Agent Role)");
-					let mtu = 2000; // Max message size
-					let mut buf = Vec::with_capacity(mtu); // Reusable buffer
-
-					loop {
-						let response = match responses1.recv().await {
-							Ok(result) => result,
-							Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-								tracing::info!(
-									"Responses channel closed. Exiting outgoing responses task."
-								);
-								break;
-							}
-							Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-								tracing::warn!(
-									"Responses channel lagged by {}. Some responses missed.",
-									n
-								);
-								continue;
-							}
-						};
-
-						let span = tracing::span!(
-							tracing::Level::TRACE,
-							"quic_server_send_resp",
-							// cid = response.correlation_id
-						);
-
-						let _enter = span.enter();
-
-						tracing::trace!("sending AgentResponse to peer {}", response);
-
-						let mut peer_send = match connection1.open_uni().await {
-							Ok(peer) => peer,
-							Err(e) => {
-								tracing::error!("Error opening uni stream for response: {}", e);
-								break; // If we can't open a stream, likely a connection issue
-							}
-						};
-
-						let tunnel_message = TunnelMessage::from(response);
-						buf.clear(); // Reuse buffer
-						match tunnel_message.encode(&mut buf) {
-							Ok(()) => {}
-							Err(e) => {
-								tracing::error!("Error encoding response TunnelMessage: {}", e);
-								continue; // Skip this message
-							}
-						}
-
-						// tracing::trace!("sending tunnel message: {}", tunnel_message);
-
-						match peer_send.write_all(&buf).await {
-							Ok(()) => tracing::trace!("Response sent to peer"),
-							Err(e @ WriteError::Stopped(_)) => {
-								tracing::error!("Sending response was stopped: {}", e);
-								// This indicates the stream was stopped by the peer, might not
-								// need to break loop for connection
-								continue;
-							}
-							Err(e) => {
-								tracing::error!("Error sending response: {}", e);
-								break; // Other write errors might indicate connection issues
-							}
-						}
-
-						// Gracefully close the stream
-						if let Err(e) = peer_send.finish() {
-							tracing::warn!("Failed to finish uni stream for response: {}", e);
-						}
+					if let Err(e) =
+						bridge::run_outgoing_responses(&*transport_out, &responses_tx).await
+					{
+						tracing::debug!("Outgoing responses handler finished: {e}");
 					}
-					tracing::trace!("Outgoing responses handler task finished.");
 				});
 			}
 			ServerRole::Host => {
-				tracing::info!("Spawning task to send instructions to peer.");
-
-				let connection2 = connection.clone();
-				let mut instructions2 = instructions.subscribe();
-
-				tracing::trace!(
-					"Subscribed to instructions channel for Host Role: rcvr count {}",
-					instructions.receiver_count()
-				);
+				tracing::info!("Spawning task to send instructions to peer");
+				let transport_out = Arc::clone(&transport);
+				let instructions_tx = instructions.clone();
 
 				tokio::spawn(async move {
-					tracing::trace!("spawning outgoing instructions handler task (Host Role)");
-					let mtu = 2000; // Max message size
-					let mut buf = Vec::with_capacity(mtu); // Reusable buffer
-
-					loop {
-						tracing::debug!("waiting for instructions to send to agent");
-						let host_instruction = match instructions2.recv().await {
-							Ok(result) => result,
-							Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-								tracing::info!(
-									"Instructions channel closed. Exiting outgoing instructions task."
-								);
-								break;
-							}
-							Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-								tracing::warn!(
-									"Instructions channel lagged by {}. Some instructions missed.",
-									n
-								);
-								continue;
-							}
-						};
-
-						let span = tracing::span!(tracing::Level::TRACE, "quic_server_send_instr",);
-						let _enter = span.enter();
-
-						tracing::trace!(
-							"Sending HostInstruction of type {:?} to peer",
-							host_instruction.instruction
-						);
-						let mut peer_send = match connection2.open_uni().await {
-							Ok(peer) => peer,
-							Err(e) => {
-								tracing::error!("Error opening uni stream for instruction: {}", e);
-								break; // If we can't open a stream, likely a connection issue
-							}
-						};
-
-						let tunnel_message: TunnelMessage = host_instruction.into();
-						buf.clear(); // Reuse buffer
-						match tunnel_message.encode(&mut buf) {
-							Ok(()) => {}
-							Err(e) => {
-								tracing::error!("Error encoding instruction: {}", e);
-								continue; // Skip this message
-							}
-						}
-
-						tracing::trace!("sending message: {}", tunnel_message);
-						match peer_send.write_all(&buf).await {
-							Ok(()) => {
-								tracing::trace!("Instruction sent successfully over QUIC");
-							}
-							Err(e @ WriteError::Stopped(_)) => {
-								tracing::error!("Sending instruction was stopped: {}", e);
-								// Stream stopped by peer, might not need to break loop for
-								// connection
-								continue;
-							}
-							Err(e) => {
-								tracing::error!("Error sending instruction to QUIC: {}", e);
-								break; // Other write errors might indicate connection issues
-							}
-						}
-						if let Err(e) = peer_send.finish() {
-							// Gracefully close the stream
-							tracing::warn!("Failed to finish uni stream for instruction: {}", e);
-						}
+					if let Err(e) =
+						bridge::run_outgoing_instructions(&*transport_out, &instructions_tx).await
+					{
+						tracing::debug!("Outgoing instructions handler finished: {e}");
 					}
-					tracing::trace!("Outgoing instructions handler task (Host Role) finished.");
 				});
 			}
 		}
 
-		Ok(Some(AcceptResult::new(
+		Ok(Some(AcceptResult::with_agent_hello(
 			(instructions, responses),
-			connection.remote_address().to_string(),
+			remote_addr,
+			metrics,
+			agent_hello_rx,
 		)))
 	}
 

@@ -4,7 +4,12 @@ use icmp_send_instruction::IcmpMessage;
 
 use crate::helpers::{ConversionError, vec_to_sized_array};
 
-include!(concat!(env!("OUT_DIR"), "/tunnel.command.v2.rs"));
+// Suppress clippy warnings from auto-generated prost code
+#[allow(clippy::doc_markdown, clippy::must_use_candidate)]
+mod generated {
+	include!(concat!(env!("OUT_DIR"), "/tunnel.command.v2.rs"));
+}
+pub use generated::*;
 
 impl Display for IpV4Address {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -511,6 +516,9 @@ impl Display for TunnelMessage {
 			Some(tunnel_message::Message::RawPacket(raw_packet)) => {
 				write!(f, "{:02x?}", raw_packet.data.len())
 			}
+			Some(tunnel_message::Message::AgentHello(hello)) => {
+				write!(f, "hello:{}", hello.agent_id)
+			}
 			None => {
 				write!(f, "<none>")
 			}
@@ -529,6 +537,9 @@ impl Display for tunnel_message::Message {
 			}
 			tunnel_message::Message::RawPacket(raw_packet) => {
 				write!(f, "raw:{:02x?}", raw_packet.data.len())
+			}
+			tunnel_message::Message::AgentHello(hello) => {
+				write!(f, "hello:{}", hello.agent_id)
 			}
 		}
 	}

@@ -6,12 +6,12 @@ use tokio::time::Instant;
 use crate::{
 	ClientConfig,
 	client::{client::ClientRole, tls_config},
+	transport::{bridge, quic::QuicTransport},
 };
 use prost::Message;
-use protobuf::v2::{AgentResponse, HostInstruction, TunnelMessage, tunnel_message};
-use tokio::sync::broadcast::error::RecvError;
+use protobuf::v2::{AgentHello, AgentResponse, HostInstruction, TunnelMessage, tunnel_message};
 
-use super::client::{Client, ConnectResult};
+use super::client::{Client, ConnectResult, ConnectionTasks};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -53,6 +53,7 @@ pub struct QuicClient {
 	addr: std::net::SocketAddr,
 	hostname: String,
 	endpoint: quinn::Endpoint,
+	agent_id: Option<String>,
 }
 
 impl Client for QuicClient {
@@ -62,8 +63,8 @@ impl Client for QuicClient {
 		let tls_config = tls_config::client_config(args.mtls)?;
 
 		let mut transport_config = quinn::TransportConfig::default();
-		transport_config.max_idle_timeout(Some(IdleTimeout::from(VarInt::MAX))); // Never timeout
-		// transport_config.enable_segmentation_offload(false);
+		transport_config.max_idle_timeout(Some(IdleTimeout::from(VarInt::MAX)));
+		transport_config.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
 
 		let mut client_config: quinn::ClientConfig =
 			quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_config)?));
@@ -83,6 +84,7 @@ impl Client for QuicClient {
 			addr: args.addr,
 			hostname,
 			endpoint,
+			agent_id: args.agent_id,
 		})
 	}
 
@@ -102,208 +104,92 @@ impl Client for QuicClient {
 
 		tracing::debug!("connected after {:#?}", start.elapsed());
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(32);
-		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(32);
+		let remote_addr = conn.remote_address().to_string();
 
-		let connection0 = conn.clone();
-		let instructions0 = instructions.clone();
-		let responses0 = responses.clone();
+		// Wrap connection in transport abstraction
+		let transport = Arc::new(QuicTransport::new(conn));
 
-		tokio::spawn(async move {
-			let mtu = 2000;
-			loop {
-				tracing::trace!("Waiting for next uni stream from peer");
+		// Send AgentHello if we have an agent_id (exit nodes)
+		if let Some(ref agent_id) = self.agent_id {
+			tracing::debug!("Sending AgentHello with id: {}", agent_id);
+			let hello = TunnelMessage {
+				message: Some(tunnel_message::Message::AgentHello(AgentHello {
+					agent_id: agent_id.clone(),
+					version: env!("CARGO_PKG_VERSION").to_string(),
+				})),
+			};
+			let mut buf = Vec::new();
+			hello.encode(&mut buf).expect("failed to encode AgentHello");
 
-				let mut stream = match connection0.accept_uni().await {
-					Ok(s) => s,
-					Err(e) => {
-						tracing::error!("Failed to accept uni stream: {e}. Closing task.");
-						break; // Connection issue, exit task
-					}
-				};
-				match stream.read_to_end(mtu).await {
-					Ok(data) => {
-						if data.is_empty() {
-							tracing::warn!("stream closed by peer with 0 bytes.");
-							continue;
-						}
-						let msg = match TunnelMessage::decode(prost::bytes::Bytes::from(data)) {
-							Ok(m) => m,
-							Err(e) => {
-								tracing::error!("Failed to decode TunnelMessage: {e}");
-								continue;
-							}
-						};
-						match msg.message {
-							Some(tunnel_message::Message::AgentResponse(resp)) => {
-								tracing::trace!("Received AgentResponse {resp}");
-								if responses0.send(resp).is_err() {
-									tracing::warn!(
-										"no app listener for responses. Channel might be closed. Correct role?"
-									);
-									break;
-								}
-								tracing::trace!(
-									"Response sent to {} receivers",
-									responses0.receiver_count()
-								);
-							}
-							Some(tunnel_message::Message::HostInstruction(instr)) => {
-								tracing::trace!("Received HostInstruction {:?}", instr.instruction);
-								if instructions0.send(instr).is_err() {
-									tracing::warn!(
-										"no app listener for instructions. Channel might be closed. Correct role?"
-									);
-									break;
-								}
-								tracing::trace!(
-									"Instruction sent to {} receivers",
-									instructions0.receiver_count()
-								);
-							}
-							_ => {
-								tracing::warn!(
-									"Received TunnelMessage with unexpected type: {:?}",
-									msg.message
-								);
-							}
-						}
-					}
-					Err(e) => {
-						tracing::error!("Failed to read from stream: {e}");
-						match e {
-							quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(_)) => {
-								break;
-							}
-							quinn::ReadToEndError::Read(quinn::ReadError::Reset(_)) => break,
-							quinn::ReadToEndError::TooLong => {
-								tracing::error!("Stream data too long");
-							}
-							quinn::ReadToEndError::Read(e) => {
-								tracing::error!("Stream read error {e}");
-							}
-						}
-					}
-				}
+			let mut send = transport.connection().open_uni().await?;
+			send.write_all(&buf)
+				.await
+				.map_err(|e| std::io::Error::other(e.to_string()))?;
+			let _ = send.finish(); // Ignore close errors
+			tracing::debug!("AgentHello sent successfully");
+		}
+
+		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(256);
+		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(256);
+
+		// Task 1: Incoming data handler
+		let transport_data = Arc::clone(&transport);
+		let instructions_tx = instructions.clone();
+		let responses_tx = responses.clone();
+
+		let incoming_handle = tokio::spawn(async move {
+			if let Err(e) =
+				bridge::run_incoming_data(&*transport_data, &instructions_tx, &responses_tx, None)
+					.await
+			{
+				tracing::debug!("Incoming data handler finished: {e}");
 			}
-			tracing::debug!("Receiver task finished.");
 		});
 
-		let connection1 = conn.clone();
-		let instructions1 = instructions.clone();
-		let responses1 = responses.clone();
-
-		tokio::spawn(async move {
-			let mtu = 2000;
-			let mut buf = Vec::with_capacity(mtu);
-
-			if role == ClientRole::Host {
-				let mut app_instr_rx = instructions1.subscribe();
+		// Task 2: Outgoing handler based on role
+		let outgoing_handle = match role {
+			ClientRole::Host => {
 				tracing::debug!("Listening for instructions to send to peer.");
+				let transport_out = Arc::clone(&transport);
+				let instructions_tx = instructions.clone();
 
-				loop {
-					match app_instr_rx.recv().await {
-						Ok(instruction) => {
-							tracing::trace!("received instruction {}", instruction);
-
-							let tunnel_msg = TunnelMessage {
-								message: Some(tunnel_message::Message::HostInstruction(
-									instruction,
-								)),
-							};
-
-							tracing::trace!("Opening peer uni stream");
-							let mut stream = match connection1.open_uni().await {
-								Ok(s) => s,
-								Err(e) => {
-									tracing::error!(
-										"Failed to open uni stream for instruction: {e}"
-									);
-									break;
-								}
-							};
-
-							buf.clear();
-							if let Err(e) = tunnel_msg.encode(&mut buf) {
-								tracing::error!("Failed to encode Instruction: {e}");
-								continue;
-							}
-
-							tracing::trace!("Sending instruction to peer");
-							if let Err(e) = stream.write_all(&buf).await {
-								tracing::error!("Failed to send instruction: {e}");
-								continue; // Or break depending on error nature
-							}
-							if let Err(e) = stream.finish() {
-								tracing::warn!(
-									"Failed to finish uni stream for instruction: {}",
-									e
-								);
-							}
-						}
-						Err(RecvError::Closed) => {
-							tracing::warn!("Application instruction channel closed. Exiting.");
-							break;
-						}
-						Err(RecvError::Lagged(n)) => {
-							tracing::warn!("Application instruction channel lagged by {}.", n);
-						}
+				tokio::spawn(async move {
+					if let Err(e) =
+						bridge::run_outgoing_instructions(&*transport_out, &instructions_tx).await
+					{
+						tracing::debug!("Outgoing instructions handler finished: {e}");
 					}
-				}
-			} else {
-				// ClientRole::Agent
-				let mut app_resp_rx = responses1.subscribe();
-				tracing::debug!("Listening for AgentResponses to send to peer");
-
-				loop {
-					tracing::trace!("Waiting for AgentResponse from application");
-
-					match app_resp_rx.recv().await {
-						Ok(response) => {
-							tracing::trace!("Received AgentResponse {response}");
-							let mut stream = match connection1.open_uni().await {
-								Ok(s) => s,
-								Err(e) => {
-									tracing::error!("Failed to open uni stream for response: {e}");
-									break;
-								}
-							};
-							let tunnel_msg = TunnelMessage {
-								message: Some(tunnel_message::Message::AgentResponse(response)),
-							};
-							buf.clear();
-							if let Err(e) = tunnel_msg.encode(&mut buf) {
-								tracing::error!("Failed to encode Response: {e}");
-								continue;
-							}
-							if let Err(e) = stream.write_all(&buf).await {
-								tracing::error!("Failed to send response: {e}");
-								continue; // Or break depending on error nature
-							}
-							if let Err(e) = stream.finish() {
-								tracing::warn!("Failed to finish uni stream for response: {}", e);
-							}
-						}
-						Err(RecvError::Closed) => {
-							tracing::warn!("Application response channel closed. Exiting.");
-							break;
-						}
-						Err(RecvError::Lagged(n)) => {
-							tracing::warn!("Application response channel lagged by {}.", n);
-						}
-					}
-				}
+				})
 			}
-			tracing::trace!("Sender task for QUIC client finished.");
-		});
+			ClientRole::Agent => {
+				tracing::debug!("Listening for AgentResponses to send to peer");
+				let transport_out = Arc::clone(&transport);
+				let responses_tx = responses.clone();
+
+				tokio::spawn(async move {
+					if let Err(e) =
+						bridge::run_outgoing_responses(&*transport_out, &responses_tx).await
+					{
+						tracing::debug!("Outgoing responses handler finished: {e}");
+					}
+				})
+			}
+		};
+
+		let tasks = ConnectionTasks {
+			incoming: incoming_handle,
+			outgoing: outgoing_handle,
+		};
 
 		Ok(ConnectResult::new(
 			(instructions, responses),
-			conn.remote_address().to_string(),
+			remote_addr,
+			tasks,
 		))
 	}
 
 	fn stop(&self) -> Result<(), Self::Error> {
-		todo!()
+		self.endpoint.close(0u32.into(), b"client stopping");
+		Ok(())
 	}
 }

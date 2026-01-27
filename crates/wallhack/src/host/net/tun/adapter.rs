@@ -28,18 +28,9 @@ use std::{
 use tun::{AsyncDevice, Device};
 
 enum Repr<'a> {
-	Tcp {
-		repr: TcpRepr<'a>,
-		payload: Option<Vec<u8>>,
-	},
-	Icmp {
-		repr: IcmpRepr<'a>,
-		data: Vec<u8>,
-	},
-	Udp {
-		repr: UdpRepr,
-		payload: Vec<u8>,
-	},
+	Tcp { repr: TcpRepr<'a>, payload: Vec<u8> },
+	Icmp { repr: IcmpRepr<'a>, _data: Vec<u8> },
+	Udp { repr: UdpRepr, payload: Vec<u8> },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -226,19 +217,25 @@ impl TunAdapter {
 					SocketAddrV4::new(dst_ip_addr, tcp_packet.dst_port()),
 				));
 
-				// this inserts a new flow if this is the first packet for this set
-				let mut flow = self.tcp_flows.entry(set).or_insert_with(|| TcpFlow {
-					ack_for_client_seq: tcp_packet.seq_number(),
-					host_advertised_window: tcp_packet.window_len(),
-					host_current_seq: tcp_packet.seq_number(),
-					..Default::default()
-				});
+				// Track whether we need to remove the flow after releasing the
+				// DashMap entry lock. Calling remove() while holding an entry
+				// reference deadlocks on the same shard's RwLock.
+				let mut remove_flow = false;
 
-				// This is the very start of a connection.
+				// SYN (without ACK) is the very start of a connection — create a
+				// new flow. All other packets must match an existing flow.
 				if tcp_packet.syn() && !tcp_packet.ack() {
+					let mut flow = self.tcp_flows.entry(set).or_insert_with(|| TcpFlow {
+						ack_for_client_seq: tcp_packet.seq_number(),
+						host_advertised_window: tcp_packet.window_len(),
+						host_current_seq: tcp_packet.seq_number(),
+						..Default::default()
+					});
+
 					flow.ack_for_client_seq = tcp_packet.seq_number().add(1);
 					flow.client_advertised_window = tcp_packet.window_len();
 					flow.connection_state = TcpFlowState::SynReceived;
+					tracing::debug!("SYN {set}");
 
 					messages_to_send.push(
 						v2::host_instruction::Instruction::TcpConnect(v2::TcpConnectInstruction {
@@ -246,84 +243,126 @@ impl TunAdapter {
 						})
 						.into(),
 					);
-				} else
-				// push data
-				if tcp_packet.psh() && tcp_packet.ack() {
-					let data_len = tcp_packet.payload().len();
-
-					tracing::trace!("IPV4 TCP PSH from {set} with {data_len} bytes. TcpSend.");
-
-					// This is the next seq we expect from the TCP stack.
-					flow.ack_for_client_seq =
-						tcp_packet.seq_number().add(tcp_packet.payload().len());
-
-					messages_to_send.push(
-						v2::host_instruction::Instruction::TcpSend(v2::TcpSendInstruction {
-							pair: Some(set.into()),
-							data: tcp_packet.payload().to_vec(),
-						})
-						.into(),
-					);
-				} else
-				// A FINACK from the host adapter indicates they got the data and are
-				// closing the connection.
-				if tcp_packet.fin() && tcp_packet.ack() {
-					tracing::trace!(
-						"IPV4 TCP FINACK from {set}. Client SEQ: {:?}, Current flow state: {:?}",
-						tcp_packet.seq_number(),
-						flow.connection_state
-					);
-
-					// Always ACK the client's FIN by setting the expected next sequence
-					// number.
-					flow.ack_for_client_seq = tcp_packet.seq_number().add(1);
-
-					// We always send an ACK for the client's FIN. The `SendOk` response
-					// type will generate a pure ACK packet.
-					let ack_for_client_fin_msg = v2::AgentResponse {
-						pair: Some(set.into()),
-						response: Some(v2::agent_response::Response::TcpResponse(
-							v2::TcpResponse {
-								response: Some(v2::tcp_response::Response::Ok(
-									v2::TcpOkResponse {},
-								)),
-							},
-						)),
-					};
-					messages_to_send.push(ack_for_client_fin_msg.into());
-
-					let close_instruction_payload =
-						v2::host_instruction::Instruction::TcpClose(v2::TcpCloseInstruction {
-							pair: Some(set.into()),
-						});
-					messages_to_send.push(
-						v2::HostInstruction {
-							instruction: Some(close_instruction_payload),
-						}
-						.into(),
-					);
-				} else if tcp_packet.rst() {
-					// RST tears down the connection immediately. No instruction needed.
-					tracing::trace!("IPV4 TCP RST from {set}. Removing flow.");
-					self.tcp_flows.remove(&set);
-				} else if tcp_packet.ack() && flow.connection_state == TcpFlowState::FinWait2 {
-					// Last ACK is sent after a FIN, and we can remove the flow.
-					tracing::trace!("IPV4 TCP ACK from {set} in LastAck state. Removing flow.");
-					self.tcp_flows.remove(&set);
 				} else {
-					// Any other packet (e.g., a pure ACK) requires no instruction for the
-					// agent. We just let it pass without action. The TCP flow state is
-					// not updated by pure ACKs in this logic, which is a simplification
-					// we are keeping for now.
-					tracing::debug!(
-						"IPV4 TCP packet from {set} requires no action: flags: SYN={}, ACK={}, FIN={}, RST={}, PSH={}, URG={}",
-						tcp_packet.syn(),
-						tcp_packet.ack(),
-						tcp_packet.fin(),
-						tcp_packet.rst(),
-						tcp_packet.psh(),
-						tcp_packet.urg()
-					);
+					// Non-SYN packet: look up existing flow
+					let Some(mut flow) = self.tcp_flows.get_mut(&set) else {
+						tracing::debug!(
+							"drop unknown {set} (SYN={}, ACK={}, FIN={}, RST={})",
+							tcp_packet.syn(),
+							tcp_packet.ack(),
+							tcp_packet.fin(),
+							tcp_packet.rst(),
+						);
+						return Ok(vec![]);
+					};
+
+					// Forward data. Check for non-empty payload rather than
+					// PSH flag — bulk transfers (e.g. iperf3) send intermediate
+					// segments with ACK only, reserving PSH for the final segment.
+					if tcp_packet.ack() && !tcp_packet.payload().is_empty() {
+						let data_len = tcp_packet.payload().len();
+
+						tracing::trace!("data {set} {data_len} bytes. send");
+
+						// This is the next seq we expect from the TCP stack.
+						flow.ack_for_client_seq =
+							tcp_packet.seq_number().add(tcp_packet.payload().len());
+
+						messages_to_send.push(
+							v2::host_instruction::Instruction::TcpSend(v2::TcpSendInstruction {
+								pair: Some(set.into()),
+								data: tcp_packet.payload().to_vec(),
+							})
+							.into(),
+						);
+					} else if tcp_packet.fin() {
+						// Client is sending FIN. Behavior depends on whether we
+						// already sent our own FIN (server-initiated close).
+						let payload_len = tcp_packet.payload().len();
+						flow.ack_for_client_seq = tcp_packet.seq_number().add(payload_len).add(1);
+
+						match flow.connection_state {
+							// Server-initiated close: we already sent FIN, client
+							// is now closing too. ACK their FIN and tear down.
+							TcpFlowState::FinWait1 | TcpFlowState::FinWait2 => {
+								tracing::debug!(
+									"FIN {set} state={:?}, remove",
+									flow.connection_state
+								);
+								messages_to_send.push(
+									v2::AgentResponse {
+										pair: Some(set.into()),
+										response: Some(v2::agent_response::Response::TcpResponse(
+											v2::TcpResponse {
+												response: Some(v2::tcp_response::Response::Ok(
+													v2::TcpOkResponse {},
+												)),
+											},
+										)),
+									}
+									.into(),
+								);
+								remove_flow = true;
+							}
+							// Client-initiated close: client sends FIN first.
+							// ACK it, record that we've seen it, and tell the
+							// agent to close its side.
+							_ => {
+								tracing::debug!(
+									"FIN {set} state={:?}, close",
+									flow.connection_state
+								);
+								flow.client_fin_received = true;
+								messages_to_send.push(
+									v2::AgentResponse {
+										pair: Some(set.into()),
+										response: Some(v2::agent_response::Response::TcpResponse(
+											v2::TcpResponse {
+												response: Some(v2::tcp_response::Response::Ok(
+													v2::TcpOkResponse {},
+												)),
+											},
+										)),
+									}
+									.into(),
+								);
+								messages_to_send.push(
+									v2::HostInstruction {
+										instruction: Some(
+											v2::host_instruction::Instruction::TcpClose(
+												v2::TcpCloseInstruction {
+													pair: Some(set.into()),
+												},
+											),
+										),
+									}
+									.into(),
+								);
+							}
+						}
+					} else if tcp_packet.rst() {
+						tracing::debug!("RST {set}, remove");
+						remove_flow = true;
+					} else if tcp_packet.ack() && flow.connection_state == TcpFlowState::FinWait2 {
+						// Client-initiated close: client already sent FIN, we sent
+						// our FIN (ConnectionClosed), this ACK confirms receipt.
+						tracing::debug!("ACK {set} state=FinWait2, remove");
+						remove_flow = true;
+					} else {
+						tracing::trace!(
+							"packet {set} no action: SYN={}, ACK={}, FIN={}, RST={}, PSH={}, state={:?}",
+							tcp_packet.syn(),
+							tcp_packet.ack(),
+							tcp_packet.fin(),
+							tcp_packet.rst(),
+							tcp_packet.psh(),
+							flow.connection_state
+						);
+					}
+				} // `flow` reference dropped, releasing DashMap shard lock
+
+				if remove_flow {
+					self.tcp_flows.remove(&set);
 				}
 			}
 			_ => {
@@ -479,7 +518,14 @@ impl HostAdapter for TunAdapter {
 		set: SocketSet,
 		response: v2::agent_response::Response,
 	) -> Result<(), Self::Error> {
-		let (src_port, dst_port) = set.ports();
+		// set.ports() returns (client_port, server_port) from the original
+		// SocketSet(client_addr, server_addr). For reply packets sent back to
+		// the client, TCP src must be server_port and dst must be client_port.
+
+		// TODO: rename these, client and server are irrelevant! we dont know what
+		// role the traffic plays, this is lower layer traffic. either of these
+		// ports could be servers or clients
+		let (client_port, server_port) = set.ports();
 
 		let mut packets: Vec<Repr> = vec![];
 
@@ -496,21 +542,27 @@ impl HostAdapter for TunAdapter {
 				// should always be an existing TCP flow when processing a response
 				// mutable by default because we will mostly always change it
 				let Some(mut flow) = self.tcp_flows.get_mut(&set) else {
-					tracing::warn!("No TCP flow found for set: {:?}", set);
+					tracing::warn!("no flow {set} (response={response:?}), already removed?");
 					return Ok(());
 				};
 
 				match response {
 					// Connected - indicates a connection establishment on agent
 					v2::tcp_response::Response::Connected(v2::TcpConnectedResponse {}) => {
+						tracing::debug!("Connected {set}, send SYN-ACK");
 						flow.host_current_seq = TcpSeqNumber(rand::random::<i32>());
 
 						let repr = Repr::Tcp {
-							repr: tcp_repr_default!(flow, src_port, dst_port, TcpControl::Syn),
-							payload: None,
+							repr: tcp_repr_default!(
+								flow,
+								server_port,
+								client_port,
+								TcpControl::Syn
+							),
+							payload: Vec::new(),
 						};
 
-						// update flow as required
+						// SYN consumes one sequence number
 						flow.host_current_seq += 1;
 
 						packets.push(repr);
@@ -519,13 +571,16 @@ impl HostAdapter for TunAdapter {
 					// Ok - indicates a successful operation on the agent, or a pure ACK
 					v2::tcp_response::Response::Ok(_) => {
 						let repr = Repr::Tcp {
-							repr: tcp_repr_default!(&flow, src_port, dst_port, TcpControl::None),
-							payload: None,
+							repr: tcp_repr_default!(
+								&flow,
+								server_port,
+								client_port,
+								TcpControl::None
+							),
+							payload: Vec::new(),
 						};
 
-						// update flow as required
-						flow.host_current_seq = flow.host_current_seq.add(1);
-
+						// Pure ACK does not consume sequence space
 						packets.push(repr);
 					}
 
@@ -535,14 +590,14 @@ impl HostAdapter for TunAdapter {
 						let repr = Repr::Tcp {
 							repr: tcp_repr_default!(
 								&flow,
-								src_port, // swapping for reply
-								dst_port,
-								TcpControl::None //ack
+								server_port,
+								client_port,
+								TcpControl::Psh
 							),
-							payload: Some(res.data),
+							payload: res.data,
 						};
 
-						// update flow as required
+						// Data consumes sequence space
 						flow.host_current_seq = flow.host_current_seq.add(len);
 
 						packets.push(repr);
@@ -550,47 +605,58 @@ impl HostAdapter for TunAdapter {
 
 					// ConnectionClosed - indicates the connection was closed on the agent
 					v2::tcp_response::Response::ConnectionClosed(_) => {
-						// ack
+						// ACK
 						packets.push(Repr::Tcp {
 							repr: tcp_repr_default!(
 								&flow,
-								src_port, // swapping for reply
-								dst_port,
+								server_port,
+								client_port,
 								TcpControl::None
 							),
-							payload: None,
+							payload: Vec::new(),
 						});
 
-						// update flow as required
-						flow.connection_state = TcpFlowState::FinWait2;
+						// If client already sent FIN (client-initiated close), we
+						// go to FinWait2: both sides closing, just need client's
+						// ACK for our FIN. Otherwise FinWait1: we still need the
+						// client's FIN.
+						if flow.client_fin_received {
+							tracing::debug!(
+								"ConnectionClosed {set}, send FIN (client already sent FIN → FinWait2)"
+							);
+							flow.connection_state = TcpFlowState::FinWait2;
+						} else {
+							tracing::debug!(
+								"ConnectionClosed {set}, send FIN (server-initiated → FinWait1)"
+							);
+							flow.connection_state = TcpFlowState::FinWait1;
+						}
 
 						packets.push(Repr::Tcp {
 							repr: tcp_repr_default!(
 								&flow,
-								src_port, // swapping for reply
-								dst_port,
+								server_port,
+								client_port,
 								TcpControl::Fin
 							),
-							payload: None,
+							payload: Vec::new(),
 						});
 
-						// update flow as required
+						// FIN consumes one sequence number
 						flow.host_current_seq = flow.host_current_seq.add(1);
 					}
 
 					// ConnectionRefused - indicates the connection was refused on agent
 					v2::tcp_response::Response::ConnectionRefused(_) => {
-						// emit_tcp_segment(&flow, set, TcpControl::Rst, &[], &mut
-						// inner_buf)
-
+						tracing::debug!("ConnectionRefused {set}, send RST");
 						let repr = Repr::Tcp {
 							repr: tcp_repr_default!(
 								&flow,
-								dst_port, // swapping for reply
-								src_port,
+								server_port,
+								client_port,
 								TcpControl::Rst
 							),
-							payload: None,
+							payload: Vec::new(),
 						};
 
 						packets.push(repr);
@@ -688,7 +754,10 @@ impl HostAdapter for TunAdapter {
 					}
 				};
 
-				packets.push(Repr::Icmp { repr, data: vec![] });
+				packets.push(Repr::Icmp {
+					repr,
+					_data: vec![],
+				});
 			}
 
 			//  UdpResponse
@@ -708,8 +777,8 @@ impl HostAdapter for TunAdapter {
 					v2::udp_response::Response::DataRecv(res) => {
 						packets.push(Repr::Udp {
 							repr: UdpRepr {
-								src_port: dst_port,
-								dst_port: src_port,
+								src_port: server_port,
+								dst_port: client_port,
 							},
 							payload: res.data,
 						});
@@ -745,13 +814,14 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 	// Calculate the L4 segment length (header + data) and the L4 protocol
 	// (next_header for IP).
 	let (segment_len, next_header) = match repr {
-		// for TCP, the repr contains the TcpRepr and an optional payload.
-		Repr::Tcp { repr, payload: _ } => (repr.buffer_len(), IpProtocol::Tcp),
+		// For TCP, the repr has an empty payload slice but the actual data is
+		// in the owned `payload` Vec. Include both the header and payload length.
+		Repr::Tcp { repr, payload } => (repr.header_len() + payload.len(), IpProtocol::Tcp),
 
 		// for UDP, the repr contains the UdpRepr but the payload is separate.
 		Repr::Udp { repr, payload } => (repr.header_len() + payload.len(), IpProtocol::Udp),
 
-		Repr::Icmp { data: _, repr } => match repr {
+		Repr::Icmp { _data: _, repr } => match repr {
 			IcmpRepr::Ipv4(icmp_repr) => (icmp_repr.buffer_len(), IpProtocol::Icmp),
 			IcmpRepr::Ipv6(icmp_repr) => (icmp_repr.buffer_len(), IpProtocol::Icmpv6),
 		},
@@ -780,11 +850,16 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 			match repr {
 				Repr::Tcp {
 					repr: tcp_repr,
-					payload: _,
+					payload,
 				} => {
+					// Build a TcpRepr that includes the actual payload data
+					let tcp_repr_with_payload = TcpRepr {
+						payload: payload.as_slice(),
+						..*tcp_repr
+					};
 					// Emit TCP segment to the L4 buffer
 					let mut tcp_packet = TcpPacket::new_unchecked(l4_buf);
-					tcp_repr.emit(
+					tcp_repr_with_payload.emit(
 						&mut tcp_packet,
 						&IpAddress::Ipv4(*original_dst_sock.ip()),
 						&IpAddress::Ipv4(*original_src_sock.ip()),
@@ -806,7 +881,7 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 						&ChecksumCapabilities::default(),
 					);
 				}
-				Repr::Icmp { repr, data: _ } => {
+				Repr::Icmp { repr, _data: _ } => {
 					let icmpv4_repr = match repr {
 						IcmpRepr::Ipv4(icmp_repr) => icmp_repr,
 						IcmpRepr::Ipv6(_) => {
@@ -843,11 +918,16 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 			match repr {
 				Repr::Tcp {
 					repr: tcp_repr,
-					payload: _,
+					payload,
 				} => {
+					// Build a TcpRepr that includes the actual payload data
+					let tcp_repr_with_payload = TcpRepr {
+						payload: payload.as_slice(),
+						..*tcp_repr
+					};
 					// Emit TCP segment to the L4 buffer
 					let mut tcp_packet = TcpPacket::new_unchecked(l4_buf);
-					tcp_repr.emit(
+					tcp_repr_with_payload.emit(
 						&mut tcp_packet,
 						&IpAddress::Ipv6(*original_dst_sock.ip()),
 						&IpAddress::Ipv6(*original_src_sock.ip()),
@@ -869,7 +949,7 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 						&ChecksumCapabilities::default(),
 					);
 				}
-				Repr::Icmp { repr, data: _ } => {
+				Repr::Icmp { repr, _data: _ } => {
 					let icmpv6_repr = match repr {
 						IcmpRepr::Ipv6(icmp_repr) => icmp_repr,
 						IcmpRepr::Ipv4(_) => {
@@ -893,5 +973,3 @@ fn to_ip_packet_bytes(set: SocketSet, repr: &Repr, packet_buf: &mut [u8]) -> Res
 	};
 	Ok(ip_packet_total_len)
 }
-
-// WARNING: This file contains AI-generated edits

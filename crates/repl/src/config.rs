@@ -97,7 +97,6 @@ pub enum Command {
 #[derive(Debug, Clone)]
 pub struct HostConfig {
 	pub command: Command,
-	pub tun: Option<String>,
 	pub globals: GlobalConfig,
 }
 

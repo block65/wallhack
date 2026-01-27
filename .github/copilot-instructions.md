@@ -1,4 +1,0 @@
-- For any file edits, ensure newline and comment at EOF: 'WARNING: This file contains AI-generated edits'
-- new code comments must explain the code, not the change
-- Do not write comments for self explanatory or self documenting code/variables
-- Stay focussed! dont modify code or add comments outside of the scope of your goal

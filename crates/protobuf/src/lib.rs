@@ -2,6 +2,7 @@
 #![warn(unused_extern_crates)]
 mod helpers;
 
+pub mod control;
 pub mod socket_set;
 pub mod v2;
 

@@ -4,13 +4,27 @@ version = "0.1.0"
 edition = "2024"
 categories = ["network-programming"]
 
+[features]
+default = ["quic"]
+quic = ["dep:quinn"]
+websocket = [
+    "dep:tokio-tungstenite",
+    "dep:tokio-util",
+    "dep:yamux",
+    "dep:httparse",
+    "dep:sha1",
+    "dep:base64",
+    "dep:tokio-rustls",
+]
+full = ["quic", "websocket"]
+
 [dependencies]
 agent_adapter = { path = "../agent-adapter" }
 anyhow = "1"
 dashmap = "6"
 prost = { version = "0.13" }
 protobuf = { path = "../protobuf" }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
 rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
@@ -37,10 +51,24 @@ tun = { version = "0.7", features = [
   "tokio",
 ], default-features = false }
 
+# WebSocket transport dependencies (optional)
+base64 = { version = "0.22", default-features = false, features = ["std"], optional = true }
+httparse = { version = "1.9", default-features = false, features = ["std"], optional = true }
+sha1 = { version = "0.10", default-features = false, features = ["std"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake", "stream"], optional = true }
+tokio-util = { version = "0.7", default-features = false, features = ["compat"], optional = true }
+yamux = { version = "0.13", default-features = false, optional = true }
+
+# Bridge module dependencies (always needed for transport abstraction)
+bytes = "1"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
 [build-dependencies]
 test-log = { version = "0.2", features = ["trace"] }
 
 [dev-dependencies]
+tempfile = "3"
 test-log = { version = "0.2", features = ["trace"] }
 tokio-test = "0.4"
 

@@ -5,6 +5,8 @@ use protobuf::{
 	v2::{AgentResponse, HostInstruction, tunnel_message},
 };
 
+use crate::control::metrics::SharedMetrics;
+
 use super::adapter::HostAdapter;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +29,7 @@ where
 	TNetworkAdapter: HostAdapter + Send + 'static,
 {
 	network_adapter: Arc<TNetworkAdapter>,
+	metrics: SharedMetrics,
 }
 
 impl<TNetworkAdapter> HostOrchestrator<TNetworkAdapter>
@@ -34,9 +37,10 @@ where
 	TNetworkAdapter: HostAdapter + Send + Sync + 'static,
 	TNetworkAdapter::Error: std::error::Error + Send + Sync + 'static,
 {
-	pub fn new(network_adapter: TNetworkAdapter) -> Self {
+	pub fn new(network_adapter: TNetworkAdapter, metrics: SharedMetrics) -> Self {
 		Self {
 			network_adapter: Arc::new(network_adapter),
+			metrics,
 		}
 	}
 
@@ -57,7 +61,8 @@ where
 		}
 
 		let net0 = Arc::clone(&self.network_adapter);
-		let host_to_agent_fut = async {
+		let metrics0 = self.metrics.clone();
+		let host_to_agent_fut = async move {
 			let mtu = 2000;
 			let mut buf = vec![0u8; mtu];
 
@@ -81,6 +86,9 @@ where
 
 							match message {
 								tunnel_message::Message::HostInstruction(msg) => {
+									use prost::Message;
+									metrics0.inc_packets_out(1);
+									metrics0.inc_bytes_out(msg.encoded_len() as u64);
 									instructions.send(msg)?;
 								}
 								tunnel_message::Message::AgentResponse(response) => {
@@ -107,6 +115,14 @@ where
 									}
 								}
 								tunnel_message::Message::RawPacket(_) => todo!(),
+								tunnel_message::Message::AgentHello(hello) => {
+									// TODO: Route agent_id to session manager for TUN naming
+									tracing::info!(
+										"Received AgentHello: id={}, version={}",
+										hello.agent_id,
+										hello.version
+									);
+								}
 							}
 						}
 					}
@@ -125,15 +141,16 @@ where
 		};
 
 		let net1 = Arc::clone(&self.network_adapter);
-		let agent_to_host_fut = async {
-			tracing::debug!("starting agent_to_host_fut...");
+		let metrics1 = self.metrics.clone();
+		let agent_to_host_fut = async move {
+			tracing::debug!("starting agent_to_host_fut (waiting for responses from agent)...");
 
 			loop {
-				// too noisy
-				// tracing::trace!("waiting for next response to execute...");
-
 				match responses.recv().await {
 					Ok(msg) => {
+						use prost::Message;
+						metrics1.inc_packets_in(1);
+						metrics1.inc_bytes_in(msg.encoded_len() as u64);
 						tracing::trace!("Channel received {msg}");
 
 						let span = tracing::span!(tracing::Level::TRACE, "responses", msg = %msg);
@@ -154,12 +171,18 @@ where
 
 						match net1.handle_response(set, response).await {
 							Ok(()) => tracing::trace!("Sent data to TUN interface."),
-							Err(e) => tracing::error!("tun error: {}", e),
+							Err(e) => tracing::error!("handle_response error: {}", e),
 						}
 					}
+					Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+						tracing::warn!(
+							"Agent response channel lagged by {n}, skipping missed messages"
+						);
+						continue;
+					}
 					Err(e) => {
-						tracing::error!("Agent channel recv error: {e}",);
-						// break Err(Error::RecvError(e));
+						tracing::error!("Agent channel closed: {e}");
+						break Err::<(), _>(Error::RecvError(e));
 					}
 				}
 			}

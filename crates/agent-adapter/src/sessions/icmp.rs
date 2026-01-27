@@ -35,7 +35,7 @@ impl IcmpSession {
 		// ident: u16,
 		recv_buf: &mut [u8],
 	) -> Result<SessionStatus, RuntimeError> {
-		tracing::debug!(seq_no = seq_no, "Sending ICMP echo request");
+		tracing::trace!(seq_no = seq_no, "Sending ICMP echo request");
 		let default_caps = ChecksumCapabilities::default();
 
 		let mut echo_request_buf = match self.pair {
@@ -73,7 +73,7 @@ impl IcmpSession {
 		let (_, dst_addr) = self.pair.into();
 		let status = self.send(dst_addr, &mut echo_request_buf).await?;
 
-		tracing::debug!("Sent ICMP echo request status {:?}. Waiting to rx", status);
+		tracing::trace!("Sent ICMP echo request status {:?}. Waiting to rx", status);
 
 		// NOTE: this will wait forever until data is received
 		self.recv(recv_buf).await
@@ -89,16 +89,16 @@ impl RxSession for IcmpSession {
 		let dst_addr2: socket2::SockAddr = dst_addr.into();
 
 		loop {
-			tracing::debug!("waiting to send some data to {:?}", dst_addr);
+			tracing::trace!("waiting to send some data to {:?}", dst_addr);
 
 			let mut guard = self.socket.writable().await?;
 
 			// Attempt to send the data
-			tracing::debug!("Attempting to send data to {:?}", dst_addr);
+			tracing::trace!("Attempting to send data to {:?}", dst_addr);
 
 			match guard.try_io(|inner| inner.get_ref().send_to(buf, &dst_addr2)) {
 				Ok(Ok(bytes_sent)) => {
-					tracing::debug!("Successfully sent {} bytes to {:?}", bytes_sent, dst_addr);
+					tracing::trace!("Successfully sent {} bytes to {:?}", bytes_sent, dst_addr);
 					return Ok(SessionStatus::DataIo { size: bytes_sent });
 				}
 				Ok(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -126,45 +126,39 @@ impl RxSession for IcmpSession {
 		}
 	}
 
-	async fn recv(&self, buf_wtf: &mut [u8]) -> Result<SessionStatus, RuntimeError> {
-		// WARN: I dont know how to use MaybeUninit, and the trait is `buf mut [u8]`
-		// which I dont want to change, so we do this absolute garbage for now.
-		// https://github.com/rust-lang/socket2/issues/270
-		// let mut wtf_buffer = buf.to_vec();
-		let mut wtf_recv_buffer = [MaybeUninit::<u8>::uninit(); 1500];
+	async fn recv(&self, buf: &mut [u8]) -> Result<SessionStatus, RuntimeError> {
+		// Convert &mut [u8] to &mut [MaybeUninit<u8>] safely
+		// SAFETY: [u8] and [MaybeUninit<u8>] have identical layout,
+		// and we're allowed to write MaybeUninit over initialized memory.
+		#[allow(unsafe_code)]
+		let uninit_buf: &mut [MaybeUninit<u8>] =
+			unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast(), buf.len()) };
 
 		loop {
-			tracing::debug!("Waiting for (more) data from socket");
+			tracing::trace!("Waiting for (more) data from socket");
 			let mut guard = self.socket.readable().await?;
 
-			match guard.try_io(|inner| inner.get_ref().recv(&mut wtf_recv_buffer)) {
-				Ok(Ok(n)) => {
-					// SAFETY: just received into the `buffer`.
-					let wtf_initialized_part = unsafe {
-						std::slice::from_raw_parts(wtf_recv_buffer.as_ptr().cast::<u8>(), n)
-					};
+			let io_result = match guard.try_io(|inner| inner.get_ref().recv(uninit_buf)) {
+				Ok(result) => result,
+				Err(_) => continue, // spurious wakeup
+			};
 
-					tracing::debug!("received {} bytes into {:?}", n, wtf_initialized_part);
-
-					// TODO: WTF
-					buf_wtf[..n].copy_from_slice(wtf_initialized_part);
+			match io_result {
+				Ok(0) => {
+					tracing::trace!("peer closed connection");
+					return Ok(SessionStatus::PeerClosed);
+				}
+				Ok(n) => {
+					tracing::trace!("received {} bytes", n);
 					return Ok(SessionStatus::DataIo { size: n });
 				}
-				Ok(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-					tracing::warn!(error=%e, "Receive operation would block, retrying");
+				Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+					tracing::warn!("would block, retrying");
 					guard.clear_ready();
-					// continue;
-				}
-				Ok(Err(e)) => {
-					tracing::error!(error=%e, "Receive operation failed");
-					return Err(RuntimeError::Io(e));
 				}
 				Err(e) => {
-					tracing::warn!(
-						error=?e,
-						"Readiness check failed after readable().await, retrying",
-					);
-					// continue;
+					tracing::error!(error=%e, "receive failed");
+					return Err(RuntimeError::Io(e));
 				}
 			}
 		}

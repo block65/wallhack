@@ -39,6 +39,11 @@ pub struct TcpFlow {
 	// TCP connection state (e.g., Established, FinWait1, Closing, etc.)
 	// This is a simplified representation. A full TCP state machine is more complex.
 	pub connection_state: TcpFlowState,
+
+	// Whether the client has sent a FIN. Used to distinguish client-initiated
+	// close (where we don't need to wait for another FIN after sending ours)
+	// from server-initiated close (where we must wait for the client's FIN).
+	pub client_fin_received: bool,
 }
 
 impl Default for TcpFlow {
@@ -49,6 +54,7 @@ impl Default for TcpFlow {
 			host_current_seq: TcpSeqNumber(0),
 			host_advertised_window: 65535,
 			client_advertised_window: 65535,
+			client_fin_received: false,
 		}
 	}
 }

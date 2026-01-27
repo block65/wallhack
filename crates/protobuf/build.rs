@@ -1,5 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-	let proto_file_paths = ["proto/command/v2.proto"];
+	let proto_file_paths = ["proto/command/v2.proto", "proto/control.proto"];
 
 	let mut config = prost_build::Config::new();
 

@@ -27,20 +27,21 @@ impl RxSession for TcpSession {
 			return Ok(SessionStatus::DataIo { size: 0 });
 		}
 		loop {
-			tracing::debug!("Attempting to send data over TCP stream...");
+			tracing::trace!("Attempting to send data over TCP stream...");
 			self.stream.writable().await?;
 
 			match self.stream.try_write(buf) {
 				Ok(0) => {
-					tracing::debug!("Wrote 0 bytes, peer likely closed connection.");
+					tracing::trace!("Wrote 0 bytes, peer likely closed connection.");
 					return Ok(SessionStatus::PeerClosed);
 				}
 				Ok(n) => {
-					tracing::debug!("Successfully wrote {n} bytes.");
+					tracing::trace!("Successfully wrote {n} bytes.");
 					return Ok(SessionStatus::DataIo { size: n });
 				}
 				Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-					tracing::warn!("Operation would block, retrying.");
+					tracing::trace!("Operation would block, retrying.");
+					tokio::task::yield_now().await;
 					continue;
 				}
 				Err(e) => {
@@ -52,20 +53,21 @@ impl RxSession for TcpSession {
 
 	async fn recv(&self, buf: &mut [u8]) -> Result<SessionStatus, RuntimeError> {
 		loop {
-			tracing::debug!("Attempting to read from TCP stream...");
+			tracing::trace!("Attempting to read from TCP stream...");
 			self.stream.readable().await?;
 
 			match self.stream.try_read(buf) {
 				Ok(0) => {
-					tracing::debug!("Read 0 bytes, peer likely closed connection.");
+					tracing::trace!("Read 0 bytes, peer likely closed connection.");
 					return Ok(SessionStatus::PeerClosed);
 				}
 				Ok(n) => {
-					tracing::debug!("Successfully read {n} bytes.");
+					tracing::trace!("Successfully read {n} bytes.");
 					return Ok(SessionStatus::DataIo { size: n });
 				}
 				Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-					tracing::warn!("Operation would block, retrying.");
+					tracing::trace!("Operation would block, retrying.");
+					tokio::task::yield_now().await;
 					continue;
 				}
 				Err(e) => {
@@ -75,5 +77,3 @@ impl RxSession for TcpSession {
 		}
 	}
 }
-
-// WARNING: This file contains AI-generated edits

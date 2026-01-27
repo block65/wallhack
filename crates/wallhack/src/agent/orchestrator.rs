@@ -14,6 +14,26 @@ use agent_adapter::{
 	sessions::{self, common::RxSession},
 };
 
+use crate::control::metrics::SharedMetrics;
+
+#[derive(Clone)]
+struct MetricsSender {
+	sender: broadcast::Sender<AgentResponse>,
+	metrics: SharedMetrics,
+}
+
+impl MetricsSender {
+	fn send(
+		&self,
+		msg: AgentResponse,
+	) -> Result<usize, tokio::sync::broadcast::error::SendError<AgentResponse>> {
+		use prost::Message;
+		self.metrics.inc_packets_out(1);
+		self.metrics.inc_bytes_out(msg.encoded_len() as u64);
+		self.sender.send(msg)
+	}
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
 	#[error(transparent)]
@@ -31,6 +51,7 @@ pub enum Error {
 
 pub struct Orchestrator<A: AgentAdapter> {
 	adapter: Arc<A>,
+	metrics: SharedMetrics,
 }
 
 macro_rules! extract_socket_pair {
@@ -51,8 +72,8 @@ macro_rules! extract_socket_pair {
 }
 
 impl<A: AgentAdapter> Orchestrator<A> {
-	pub fn new(adapter: Arc<A>) -> Self {
-		Self { adapter }
+	pub fn new(adapter: Arc<A>, metrics: SharedMetrics) -> Self {
+		Self { adapter, metrics }
 	}
 
 	pub async fn drive(
@@ -60,6 +81,11 @@ impl<A: AgentAdapter> Orchestrator<A> {
 		responses: broadcast::Sender<AgentResponse>,
 		mut instructions: broadcast::Receiver<HostInstruction>,
 	) -> Result<(), Error> {
+		let responses = MetricsSender {
+			sender: responses,
+			metrics: self.metrics.clone(),
+		};
+
 		loop {
 			tracing::trace!("Waiting for next instruction from host...");
 
@@ -68,20 +94,26 @@ impl<A: AgentAdapter> Orchestrator<A> {
 			let responses0 = responses.clone();
 
 			let host_instr = instructions.recv().await?;
-			tracing::debug!("Received instruction: {}", host_instr);
+			{
+				use prost::Message;
+				self.metrics.inc_packets_in(1);
+				self.metrics.inc_bytes_in(host_instr.encoded_len() as u64);
+			}
+
+			tracing::trace!("Received instruction: {}", host_instr);
 
 			match host_instr.instruction {
 				// TcpConnectInstruction - Agent establishes the actual connection to the remote host
 				Some(Instruction::TcpConnect(TcpConnectInstruction { pair })) => {
 					let set: SocketSet = extract_socket_pair!(pair, host_instr.instruction);
-					tracing::trace!(
+					tracing::debug!(
 						"Received TcpConnect instruction for {set}, attempting remote connection"
 					);
 
 					let fut = async move {
 						match adapter0.tcp_connect(set).await {
 							Ok(TcpStreamResponse::Connected { set }) => {
-								tracing::trace!(
+								tracing::debug!(
 									"Agent connected to remote for {set}, sending Connected response"
 								);
 								// Send Connected response to TUN
@@ -188,7 +220,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 											}
 										}
 									}
-									tracing::debug!("Recv task for {set} finished.");
+									tracing::trace!("Recv task for {set} finished.");
 
 									Ok::<(), Error>(())
 								};
@@ -301,15 +333,6 @@ impl<A: AgentAdapter> Orchestrator<A> {
 							)),
 						})),
 					})?;
-
-					responses0.send(AgentResponse {
-						pair: Some(set.into()),
-						response: Some(agent_response::Response::TcpResponse(v2::TcpResponse {
-							response: Some(v2::tcp_response::Response::ConnectionClosed(
-								v2::TcpConnectionClosedResponse {},
-							)),
-						})),
-					})?;
 				}
 
 				// UdpSendInstruction
@@ -358,7 +381,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 										// 	data: recv_buf[..size].to_vec(),
 										// 	size,
 										// }
-										tracing::debug!(
+										tracing::trace!(
 											"Received {} bytes from UDP session: {:?}",
 											size,
 											set
@@ -409,7 +432,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 							let h = tokio::spawn(
 								recv_fut, //.instrument(tracing::info_span!("udp_recv", pair = %pair)),
 							);
-							tracing::debug!("Spawned udp_recv task {}", h.id());
+							tracing::trace!("Spawned udp_recv task {}", h.id());
 						}
 
 						Ok::<(), Error>(())
@@ -457,7 +480,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 						match session_status {
 							sessions::common::SessionStatus::DataIo { size } => {
 								recv_buf.truncate(size);
-								tracing::debug!(
+								tracing::trace!(
 									"Received {} byte ICMP response: {:?}",
 									size,
 									recv_buf
@@ -490,7 +513,7 @@ impl<A: AgentAdapter> Orchestrator<A> {
 					let handle = tokio::spawn(
 						send_fut, // .instrument(tracing::info_span!("icmp_ping", pair = ?pair.clone())),
 					);
-					tracing::debug!("Spawned icmp_ping task id {}", handle.id());
+					tracing::trace!("Spawned icmp_ping task id {}", handle.id());
 				}
 				Some(Instruction::TcpListen(TcpListenInstruction { pair })) => {
 					let pair: SocketSet = extract_socket_pair!(pair, host_instr.instruction);
@@ -573,4 +596,3 @@ impl<A: AgentAdapter> Orchestrator<A> {
 		}
 	}
 }
-// WARNING: This file contains AI-generated edits

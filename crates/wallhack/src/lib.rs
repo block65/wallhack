@@ -12,8 +12,10 @@ mod tls;
 // public
 pub mod agent;
 pub mod client;
+pub mod control;
 pub mod host;
 pub mod server;
+pub mod transport;
 
 // re-exports
 use client::config::ClientConfig;

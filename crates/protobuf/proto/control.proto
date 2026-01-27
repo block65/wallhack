@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package tunnel.control.v1;
+
+message ControlRequest {
+  oneof request {
+    PingRequest ping = 1;
+    StatsRequest stats = 2;
+    PeersRequest peers = 3;
+    DisconnectRequest disconnect = 4;
+    RouteAddRequest route_add = 5;
+    RouteRemoveRequest route_remove = 6;
+  }
+}
+
+message ControlResponse {
+  oneof response {
+    PingResponse ping = 1;
+    StatsResponse stats = 2;
+    PeersResponse peers = 3;
+    DisconnectResponse disconnect = 4;
+    RouteAddResponse route_add = 5;
+    RouteRemoveResponse route_remove = 6;
+    ErrorResponse error = 100;
+  }
+}
+
+message PingRequest {}
+message PingResponse {
+  uint64 uptime_ms = 1;
+  string version = 2;
+  string node_role = 3;  // "entry", "relay", "exit"
+}
+
+message StatsRequest {}
+message StatsResponse {
+  uint64 bytes_in = 1;
+  uint64 bytes_out = 2;
+  uint64 packets_in = 3;
+  uint64 packets_out = 4;
+  uint64 active_connections = 5;
+  uint64 active_flows = 6;
+}
+
+message PeersRequest {}
+message PeersResponse {
+  repeated PeerInfo peers = 1;
+}
+
+message PeerInfo {
+  string id = 1;
+  string remote_addr = 2;
+  string role = 3;  // "upstream", "downstream"
+  uint64 connected_at = 4;
+  uint64 bytes_transferred = 5;
+}
+
+message DisconnectRequest {
+  string peer_id = 1;
+}
+message DisconnectResponse {
+  bool success = 1;
+}
+
+message RouteAddRequest {
+  string cidr = 1;  // e.g., "10.0.0.0/8"
+}
+message RouteAddResponse {
+  bool success = 1;
+}
+
+message RouteRemoveRequest {
+  string cidr = 1;
+}
+message RouteRemoveResponse {
+  bool success = 1;
+}
+
+message ErrorResponse {
+  string message = 1;
+}

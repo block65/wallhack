@@ -7,7 +7,7 @@ pub const DEFAULT_BIND_ADDRESS: std::net::Ipv6Addr = std::net::Ipv6Addr::UNSPECI
 
 pub const DEFAULT_CONNECT_ADDRESS: std::net::Ipv6Addr = std::net::Ipv6Addr::LOCALHOST;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientConfig {
 	/// URL to connect to
 	pub addr: SocketAddr,
@@ -20,9 +20,13 @@ pub struct ClientConfig {
 
 	/// Bind address for UDP socket
 	pub bind: SocketAddr,
+
+	/// Agent identifier for stable TUN naming (exit nodes only).
+	/// If set, sent to entry node via AgentHello message.
+	pub agent_id: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MtlsConfig {
 	/// Path to the client certificate
 	pub cert_pem_file: PathBuf,
@@ -42,6 +46,7 @@ impl Default for ClientConfig {
 			hostname: None,
 			mtls: None,
 			bind: (DEFAULT_BIND_ADDRESS, DEFAULT_BIND_PORT).into(),
+			agent_id: None,
 		}
 	}
 }

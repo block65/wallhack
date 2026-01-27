@@ -87,4 +87,3 @@ impl AgentAdapter for SyscallAgentAdapter {
 		self.icmp_session_impl(set, ident)
 	}
 }
-// WARNING: This file contains AI-generated edits

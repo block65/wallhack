@@ -66,9 +66,12 @@ impl _StatsForNerds for NetServer {
 }
 
 impl NetServer {
-	pub fn start(&mut self, config: ServerConfig) -> Result<(), wallhack::server::Error> {
+	pub fn start(
+		&mut self,
+		config: wallhack::server::config::ServerConfig,
+	) -> Result<(), wallhack::server::Error> {
 		tracing::trace!("config: {:?}.", config);
-		self.endpoint = Some(server::create(config)?);
+		self.endpoint = Some(wallhack::server::create(config)?);
 		Ok(())
 	}
 
