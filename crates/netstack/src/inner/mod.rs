@@ -258,7 +258,10 @@ mod tests {
 
 		let mut packet_buf = vec![0u8; ip_repr.buffer_len() + tcp_repr.header_len()];
 		let mut ipv4_pkt = Ipv4Packet::new_unchecked(&mut packet_buf);
-		ip_repr.emit(&mut ipv4_pkt, &smoltcp::phy::ChecksumCapabilities::default());
+		ip_repr.emit(
+			&mut ipv4_pkt,
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
 
 		let ip_hdr_len = ipv4_pkt.header_len() as usize;
 		let mut tcp_pkt = TcpPacket::new_unchecked(&mut packet_buf[ip_hdr_len..]);
@@ -271,7 +274,10 @@ mod tests {
 
 		// Re-emit IP header (checksum may depend on total length)
 		let mut ipv4_pkt = Ipv4Packet::new_unchecked(&mut packet_buf);
-		ip_repr.emit(&mut ipv4_pkt, &smoltcp::phy::ChecksumCapabilities::default());
+		ip_repr.emit(
+			&mut ipv4_pkt,
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
 
 		// Inject the SYN and poll
 		let now = Instant::from_millis(0);
