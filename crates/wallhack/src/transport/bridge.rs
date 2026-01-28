@@ -15,8 +15,8 @@ use tokio::{
 	sync::{broadcast, oneshot},
 };
 
-use super::{BiStream, Transport, TransportError};
 use crate::control::handler::Handler;
+use transport::{BiStream, Transport, TransportError};
 
 /// Maximum size for tunnel messages (2KB).
 const TUNNEL_MTU: usize = 2000;
