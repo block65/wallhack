@@ -1,0 +1,40 @@
+[package]
+name = "netstack"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+async = ["dep:tokio", "smoltcp/async"]
+
+[dependencies]
+smoltcp = { version = "0.12", default-features = false, features = [
+    "std",
+    "alloc",
+    "socket-tcp",
+    "socket-udp",
+    "socket-icmp",
+    "medium-ip",
+    "proto-ipv4",
+    "proto-ipv6",
+] }
+thiserror = { workspace = true }
+
+tokio = { workspace = true, features = [
+    "rt",
+    "sync",
+    "time",
+    "io-util",
+    "macros",
+], optional = true }
+
+[dev-dependencies]
+pcap-file = "2"
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "test-util",
+] }
+
+[lints]
+workspace = true
