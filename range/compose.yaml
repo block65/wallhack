@@ -12,6 +12,10 @@ services:
     hostname: gateway-perimeter
     ports:
       - "2222:22"
+    volumes:
+      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
     networks:
       perimeter:
         ipv4_address: 10.99.1.10
@@ -44,9 +48,23 @@ services:
     command: sh -c "apk add --no-cache openssh-client curl nmap netcat-openbsd socat bash && tail -f /dev/null"
     volumes:
       - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
     networks:
       perimeter:
         ipv4_address: 10.99.1.100
+
+  # Corporate proxy - all outbound must go through here
+  corp-proxy:
+    build:
+      context: .
+      dockerfile: images/proxy/Dockerfile
+    hostname: corp-proxy
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.50
 
   # ===========================================================================
   # OFFICE 10.99.2.0/24
@@ -57,6 +75,10 @@ services:
       context: .
       dockerfile: images/gateway/Dockerfile
     hostname: gateway-office
+    volumes:
+      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
     networks:
       office:
         ipv4_address: 10.99.2.10
@@ -106,6 +128,10 @@ services:
       context: .
       dockerfile: images/gateway/Dockerfile
     hostname: gateway-datacenter
+    volumes:
+      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
     networks:
       datacenter:
         ipv4_address: 10.99.3.10
@@ -169,6 +195,10 @@ services:
       context: .
       dockerfile: images/gateway-hardened/Dockerfile
     hostname: gateway-management
+    volumes:
+      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
     networks:
       management:
         ipv4_address: 10.99.4.10
