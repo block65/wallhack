@@ -1,0 +1,58 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+root := justfile_directory() / ".."
+iperf3_version := "3.20"
+iperf3_bin := justfile_directory() / "bin" / "iperf3"
+wallhack_bin := root / "target" / "release" / "wallhack"
+
+# Build wallhack in release mode
+build:
+    cd {{root}} && cargo build -q --release
+
+# Download static iperf3 binary
+fetch-iperf3:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -x "{{iperf3_bin}}" ]]; then
+        echo "iperf3 already present"
+        exit 0
+    fi
+    mkdir -p "$(dirname "{{iperf3_bin}}")"
+    url="https://github.com/userdocs/iperf3-static/releases/download/{{iperf3_version}}/iperf3-amd64"
+    echo "Downloading iperf3 {{iperf3_version}}..."
+    curl -fsSL -o "{{iperf3_bin}}" "$url"
+    chmod +x "{{iperf3_bin}}"
+    echo "iperf3 downloaded to {{iperf3_bin}}"
+
+# Verify netns infrastructure only (no wallhack)
+infra:
+    sudo python3 -m pytest tests/ -m infra --tb=short -q
+
+# Verify wallhack entry/exit connect on localhost (no netns)
+connect: build
+    sudo python3 -m pytest tests/ -m connect --tb=short -q -s \
+        --wallhack-bin "{{wallhack_bin}}"
+
+# Run smoketest (basic connectivity, no iperf3 required)
+smoketest: build
+    sudo python3 -m pytest tests/ -m smoketest --tb=short -q -s \
+        --wallhack-bin "{{wallhack_bin}}"
+
+# Run benchmarks (requires iperf3)
+benchmark: build fetch-iperf3
+    sudo python3 -m pytest tests/ -m benchmark --tb=short -q \
+        --wallhack-bin "{{wallhack_bin}}" \
+        --iperf3-bin "{{iperf3_bin}}"
+
+# Run all tests
+test: build fetch-iperf3
+    sudo python3 -m pytest tests/ --tb=short -q \
+        --wallhack-bin "{{wallhack_bin}}" \
+        --iperf3-bin "{{iperf3_bin}}"
+
+# Clean up leaked namespaces and downloaded binaries
+clean:
+    -sudo ip netns del wh-entry 2>/dev/null
+    -sudo ip netns del wh-exit 2>/dev/null
+    -sudo ip netns del wh-target 2>/dev/null
+    rm -f bin/iperf3
