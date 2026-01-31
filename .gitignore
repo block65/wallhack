@@ -12,7 +12,11 @@ tarpaulin-report.html
 * copy.*
 * copy
 
+.claude/
+.vscode/
+
 # bench artifacts
 bench/bin/iperf3
+bench/results
 
 *.log
