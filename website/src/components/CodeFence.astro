@@ -1,0 +1,49 @@
+---
+import { Code } from 'astro:components';
+import { Icon } from 'astro-icon/components';
+
+interface Props {
+  language?: string;
+  content?: string;
+}
+
+const { language = 'text', content = '' } = Astro.props;
+---
+
+<div class="group relative not-prose my-6">
+  <Code code={content} lang={language} theme="github-dark-default" />
+  <button
+    type="button"
+    class="copy-button absolute top-3 right-3 p-1.5 rounded-md bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/20"
+    data-code={content}
+    aria-label="Copy code"
+  >
+    <Icon name="lucide:copy" class="copy-icon w-4 h-4 text-neutral-400" />
+    <Icon name="lucide:check" class="check-icon w-4 h-4 text-green-400 hidden" />
+  </button>
+</div>
+
+<script>
+  function initCopyButtons() {
+    document.querySelectorAll('.copy-button').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const code = button.getAttribute('data-code') ?? '';
+        await navigator.clipboard.writeText(code);
+        
+        const copyIcon = button.querySelector('.copy-icon');
+        const checkIcon = button.querySelector('.check-icon');
+        
+        copyIcon?.classList.add('hidden');
+        checkIcon?.classList.remove('hidden');
+        
+        setTimeout(() => {
+          copyIcon?.classList.remove('hidden');
+          checkIcon?.classList.add('hidden');
+        }, 2000);
+      });
+    });
+  }
+  
+  initCopyButtons();
+  document.addEventListener('astro:after-swap', initCopyButtons);
+</script>

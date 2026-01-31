@@ -1,0 +1,34 @@
+---
+import { Icon } from 'astro-icon/components';
+
+interface Props {
+  title: string;
+  icon?: string;
+}
+
+const { title, icon } = Astro.props;
+
+const iconMap: Record<string, string> = {
+  shield: 'ph:shield-duotone',
+  globe: 'ph:globe-duotone',
+  cycle: 'ph:arrows-clockwise-duotone',
+  check: 'lucide:check',
+  skull: 'ph:skull-duotone',
+};
+
+const iconName = icon ? (iconMap[icon] ?? icon) : undefined;
+---
+
+<div class="flex items-start gap-2">
+  {iconName ? (
+    <Icon name={iconName} class="w-4 h-4 text-accent mt-0.5 shrink-0" />
+  ) : (
+    <span class="text-primary mt-1">•</span>
+  )}
+  <div>
+    <p class="text-sm font-semibold text-foreground mb-1">{title}</p>
+    <div class="text-xs text-muted-foreground leading-relaxed">
+      <slot />
+    </div>
+  </div>
+</div>

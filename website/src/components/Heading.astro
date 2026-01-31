@@ -1,0 +1,22 @@
+---
+interface Props {
+  level: number;
+  id?: string;
+}
+
+const { level, id } = Astro.props;
+const Tag = `h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+
+const styles: Record<number, string> = {
+  1: 'text-6xl font-display tracking-tight text-foreground',
+  2: 'text-3xl font-display tracking-tight mb-3 text-foreground scroll-mt-14',
+  3: 'text-2xl font-display tracking-tight mb-3 text-foreground scroll-mt-14',
+  4: 'text-lg font-semibold text-foreground font-sans',
+  5: 'text-base font-semibold text-foreground font-sans',
+  6: 'text-sm font-semibold text-foreground font-sans',
+};
+---
+
+<Tag id={id} class={styles[level]}>
+  <slot />
+</Tag>

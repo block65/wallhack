@@ -1,0 +1,304 @@
+@import 'tailwindcss';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/dm-serif-display/400.css';
+@import '@fontsource-variable/jetbrains-mono';
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  /* Use system font stack as fallback with similar metrics */
+  @font-face {
+    font-family: 'Inter';
+    font-display: swap;
+    size-adjust: 100%;
+  }
+}
+
+:root {
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.20 0.01 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.20 0.01 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.20 0.01 265);
+  --primary: oklch(0.40 0.15 265);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.45 0.03 240);
+  --secondary-foreground: oklch(0.99 0 0);
+  --muted: oklch(0.96 0.005 265);
+  --muted-foreground: oklch(0.45 0.015 265);
+  --accent: oklch(0.65 0.18 85);
+  --accent-foreground: oklch(0.20 0.01 265);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.90 0.005 265);
+  --input: oklch(0.90 0.005 265);
+  --ring: oklch(0.40 0.15 265);
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: oklch(0.13 0.01 265);
+  --foreground: oklch(0.95 0.005 265);
+  --card: oklch(0.16 0.01 265);
+  --card-foreground: oklch(0.95 0.005 265);
+  --popover: oklch(0.16 0.01 265);
+  --popover-foreground: oklch(0.95 0.005 265);
+  --primary: oklch(0.60 0.18 265);
+  --primary-foreground: oklch(0.13 0.01 265);
+  --secondary: oklch(0.22 0.02 265);
+  --secondary-foreground: oklch(0.95 0.005 265);
+  --muted: oklch(0.20 0.01 265);
+  --muted-foreground: oklch(0.65 0.015 265);
+  --accent: oklch(0.70 0.18 85);
+  --accent-foreground: oklch(0.13 0.01 265);
+  --destructive: oklch(0.60 0.22 27);
+  --destructive-foreground: oklch(0.95 0.005 265);
+  --border: oklch(0.25 0.01 265);
+  --input: oklch(0.25 0.01 265);
+  --ring: oklch(0.60 0.18 265);
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.5);
+  --radius-xl: calc(var(--radius) * 2);
+  --radius-2xl: calc(var(--radius) * 3);
+  --radius-full: 9999px;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'DM Serif Display', ui-serif, Georgia, serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  @apply bg-background text-foreground;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+pre, code {
+  font-family: var(--font-mono);
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Selection */
+::selection {
+  @apply bg-primary/20 text-foreground;
+}
+
+/* Focus ring */
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-ring;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
+
+/* Prose-like typography for Markdoc content */
+.prose {
+  @apply text-foreground leading-7;
+
+  > * + * {
+    margin-top: 1.25em;
+  }
+
+  p {
+    margin-top: 1.25em;
+    margin-bottom: 1.25em;
+  }
+
+  h1 {
+    @apply text-4xl font-bold tracking-tight;
+    margin-top: 0;
+    margin-bottom: 1rem;
+  }
+
+  h2 {
+    @apply text-2xl font-semibold tracking-tight border-b border-border pb-2;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+  }
+
+  h3 {
+    @apply text-xl font-semibold tracking-tight;
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+  }
+
+  h4 {
+    @apply text-lg font-semibold;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  ul, ol {
+    margin-top: 1.25em;
+    margin-bottom: 1.25em;
+    padding-left: 1.5em;
+  }
+
+  ul {
+    list-style-type: disc;
+  }
+
+  ol {
+    list-style-type: decimal;
+  }
+
+  li {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+  }
+
+  li > ul, li > ol {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+  }
+
+  a {
+    @apply text-primary underline underline-offset-4 hover:text-primary/80 transition-colors;
+  }
+
+  strong {
+    @apply font-semibold text-foreground;
+  }
+
+  code:not(pre code) {
+    @apply bg-muted text-foreground px-1.5 py-0.5 rounded text-sm font-medium;
+  }
+
+  pre {
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+  }
+
+  /* Code blocks inside prose should not inherit inline code styles */
+  pre code {
+    @apply bg-transparent p-0 rounded-none text-inherit font-normal;
+  }
+
+  blockquote {
+    @apply border-l-4 border-border pl-4 italic text-muted-foreground;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+  }
+
+  hr {
+    @apply border-border;
+    margin-top: 2em;
+    margin-bottom: 2em;
+  }
+
+  table {
+    @apply w-full text-sm;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+  }
+
+  th {
+    @apply border-b border-border px-4 py-2 text-left font-semibold;
+  }
+
+  td {
+    @apply border-b border-border px-4 py-2;
+  }
+
+  img {
+    @apply rounded-lg;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+  }
+
+  /* First element should not have top margin */
+  > :first-child {
+    margin-top: 0;
+  }
+
+  /* Last element should not have bottom margin */
+  > :last-child {
+    margin-bottom: 0;
+  }
+}
+
+/* Shiki code block styling */
+.astro-code,
+pre.shiki,
+pre[class*="astro-code"] {
+  @apply rounded-lg border border-neutral-700 p-4 text-sm leading-relaxed overflow-x-auto;
+  background-color: #0d1117 !important;
+}
+
+.astro-code code,
+pre.shiki code,
+pre[class*="astro-code"] code {
+  @apply bg-transparent p-0 text-sm font-normal;
+  font-family: var(--font-mono);
+}
+
+/* Ensure not-prose blocks escape prose styling */
+.prose .not-prose {
+  all: revert;
+}
+
+.not-prose * {
+  margin: revert;
+}

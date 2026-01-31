@@ -1,0 +1,57 @@
+---
+import { Icon } from 'astro-icon/components';
+import { cn } from '@/lib/utils';
+
+interface Props {
+  title: string;
+  icon?: string;
+  description?: string;
+}
+
+const { title, icon, description } = Astro.props;
+
+// Map short names to full icon names
+const iconMap: Record<string, string> = {
+  entry: 'ph:sign-in-duotone',
+  relay: 'ph:git-branch-duotone',
+  exit: 'ph:sign-out-duotone',
+  terminal: 'ph:terminal-duotone',
+  package: 'ph:package-duotone',
+  cube: 'ph:cube-duotone',
+  desktop: 'ph:desktop-duotone',
+  wifi: 'ph:wifi-high-duotone',
+  plug: 'ph:plugs-duotone',
+  scan: 'ph:magnifying-glass-duotone',
+  session: 'ph:identification-card-duotone',
+  api: 'ph:globe-duotone',
+  repl: 'ph:terminal-duotone',
+  chat: 'ph:chat-circle-dots-duotone',
+  shield: 'ph:shield-check-duotone',
+  cert: 'ph:certificate-duotone',
+  lock: 'ph:lock-key-duotone',
+  parachute: 'ph:parachute-duotone',
+  lightning: 'ph:lightning-duotone',
+  flask: 'ph:flask-duotone',
+  arrows: 'ph:arrows-clockwise-duotone',
+  check: 'ph:check-duotone',
+};
+
+const iconName = icon ? (iconMap[icon] ?? icon) : undefined;
+---
+
+<div class="border border-border rounded-lg overflow-hidden">
+  <div class="p-4 pb-3">
+    {iconName && (
+      <div class="mb-2">
+        <Icon name={iconName} class="w-6 h-6 text-primary" />
+      </div>
+    )}
+    <h3 class="text-base font-semibold text-foreground mb-2 font-sans">{title}</h3>
+    {description && (
+      <p class="text-sm text-muted-foreground leading-relaxed">{description}</p>
+    )}
+  </div>
+  <div class="px-4 pb-4">
+    <slot />
+  </div>
+</div>

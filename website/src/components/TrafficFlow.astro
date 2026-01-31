@@ -1,0 +1,27 @@
+---
+import { Icon } from 'astro-icon/components';
+
+interface Props {
+  flow: string;
+  label?: string;
+}
+
+const { flow, label } = Astro.props;
+const items = flow.split(' -> ');
+---
+
+<div class="p-4 bg-muted/50 border border-border rounded-lg">
+  <div class="flex items-center gap-2 text-sm flex-wrap">
+    {label && <span class="font-semibold text-foreground">{label}</span>}
+    <div class="flex items-center gap-1 text-muted-foreground flex-wrap">
+      {items.map((item, index) => (
+        <>
+          <span>{item}</span>
+          {index < items.length - 1 && (
+            <Icon name="lucide:arrow-right" class="w-3.5 h-3.5" />
+          )}
+        </>
+      ))}
+    </div>
+  </div>
+</div>

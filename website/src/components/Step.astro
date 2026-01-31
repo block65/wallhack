@@ -1,0 +1,22 @@
+---
+interface Props {
+  title: string;
+  number?: number;
+}
+
+const { title, number } = Astro.props;
+---
+
+<div class="space-y-3">
+  <div class="flex items-center gap-2">
+    {number && (
+      <div class="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold">
+        {number}
+      </div>
+    )}
+    <h4 class="text-base font-semibold text-foreground font-sans">{title}</h4>
+  </div>
+  <div class="pl-8 space-y-3">
+    <slot />
+  </div>
+</div>

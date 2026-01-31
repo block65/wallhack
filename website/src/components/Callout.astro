@@ -1,0 +1,64 @@
+---
+import { Icon } from 'astro-icon/components';
+import { cva, type VariantProps } from 'class-variance-authority';
+import { cn } from '@/lib/utils';
+
+const calloutVariants = cva(
+  'p-4 rounded-lg border my-4',
+  {
+    variants: {
+      type: {
+        info: 'bg-primary/5 border-primary/20',
+        warning: 'bg-accent/10 border-accent/30',
+        note: 'bg-muted border-border',
+        tip: 'bg-green-500/10 border-green-500/30',
+      },
+    },
+    defaultVariants: {
+      type: 'info',
+    },
+  }
+);
+
+const iconColorVariants = cva('', {
+  variants: {
+    type: {
+      info: 'text-primary',
+      warning: 'text-accent',
+      note: 'text-muted-foreground',
+      tip: 'text-green-500',
+    },
+  },
+  defaultVariants: {
+    type: 'info',
+  },
+});
+
+type CalloutType = NonNullable<VariantProps<typeof calloutVariants>['type']>;
+
+interface Props {
+  type?: CalloutType;
+  title?: string;
+}
+
+const { type = 'info', title } = Astro.props;
+
+const iconNames: Record<CalloutType, string> = {
+  info: 'lucide:info',
+  warning: 'lucide:alert-triangle',
+  note: 'lucide:file-text',
+  tip: 'lucide:lightbulb',
+};
+---
+
+<div class={cn(calloutVariants({ type }))}>
+  {title && (
+    <div class="flex items-center gap-2 mb-2">
+      <Icon name={iconNames[type]} class={cn('w-4 h-4', iconColorVariants({ type }))} />
+      <span class="text-sm font-semibold text-foreground">{title}</span>
+    </div>
+  )}
+  <div class="text-sm leading-relaxed text-foreground [&>p]:mb-0">
+    <slot />
+  </div>
+</div>

@@ -1,0 +1,58 @@
+---
+import { Icon } from 'astro-icon/components';
+import ThemeToggle from './ThemeToggle.astro';
+---
+
+<header class="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+  <div class="mx-auto max-w-screen-2xl flex h-14 items-center px-4 sm:px-6 lg:px-8">
+    <div class="mr-4 flex">
+      <a href="/" class="mr-6 flex items-center space-x-2">
+        <span class="text-xl font-display font-bold text-foreground">wallhack</span>
+      </a>
+    </div>
+    
+    <div class="flex flex-1 items-center justify-end space-x-2">
+      <nav class="hidden md:flex items-center space-x-6 text-sm font-medium">
+        <a href="/getting-started" class="text-muted-foreground hover:text-foreground transition-colors">Docs</a>
+        <a href="https://github.com/block65/wallhack" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+          <Icon name="lucide:github" class="w-4 h-4" />
+          GitHub
+        </a>
+      </nav>
+      
+      <ThemeToggle />
+      
+      <button
+        type="button"
+        id="mobile-menu-toggle"
+        class="md:hidden p-2 rounded-md hover:bg-muted transition-colors"
+        aria-label="Toggle menu"
+      >
+        <Icon name="lucide:menu" class="w-5 h-5 text-foreground" />
+      </button>
+    </div>
+  </div>
+</header>
+
+<script>
+  function initMobileMenu() {
+    const toggle = document.getElementById('mobile-menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    
+    toggle?.addEventListener('click', () => {
+      sidebar?.classList.toggle('-translate-x-full');
+      sidebar?.classList.toggle('translate-x-0');
+      overlay?.classList.toggle('hidden');
+    });
+    
+    overlay?.addEventListener('click', () => {
+      sidebar?.classList.add('-translate-x-full');
+      sidebar?.classList.remove('translate-x-0');
+      overlay?.classList.add('hidden');
+    });
+  }
+  
+  initMobileMenu();
+  document.addEventListener('astro:after-swap', initMobileMenu);
+</script>
