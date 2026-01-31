@@ -1,4 +1,5 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use netstack::async_stack::{Netstack, udp_socket::UdpSocketAny};
 use smoltcp::phy::Device;
@@ -8,6 +9,12 @@ use transport::{BiStream, Transport};
 use crate::control::metrics::SharedMetrics;
 
 use super::{actor::TunActor, session::run_tcp_session, udp_session::send_udp_packet};
+
+/// Warn once when connection rate exceeds this threshold (connections/sec)
+const HIGH_RATE_THRESHOLD: f64 = 50.0;
+
+/// Window for rate calculation
+const RATE_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -32,6 +39,10 @@ pub struct ConnectionManager<D: Device + Send + 'static, T: Transport + 'static>
 	transport: Arc<T>,
 	metrics: SharedMetrics,
 	udp_sessions: HashMap<(smoltcp::wire::IpEndpoint, u16), UdpSession>,
+	/// Timestamps of recent TCP connections for rate detection
+	recent_connections: Vec<Instant>,
+	/// Only warn once about high connection rate
+	rate_warned: AtomicBool,
 }
 
 impl<T: Transport + 'static> ConnectionManager<super::actor::SmoltcpTunDevice, T> {
@@ -41,6 +52,8 @@ impl<T: Transport + 'static> ConnectionManager<super::actor::SmoltcpTunDevice, T
 			transport,
 			metrics,
 			udp_sessions: HashMap::new(),
+			recent_connections: Vec::new(),
+			rate_warned: AtomicBool::new(false),
 		}
 	}
 }
@@ -75,6 +88,17 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 						remote = ?stream.remote_endpoint(),
 						"TCP stream accepted, spawning session"
 					);
+
+					// Track connection rate for RTFM warning
+					let now = Instant::now();
+					self.recent_connections.push(now);
+					self.recent_connections.retain(|t| now.duration_since(*t) < RATE_WINDOW);
+					let rate = self.recent_connections.len() as f64 / RATE_WINDOW.as_secs_f64();
+					if rate > HIGH_RATE_THRESHOLD && !self.rate_warned.swap(true, Ordering::Relaxed) {
+						tracing::warn!("⚠️  High connection rate detected ({rate:.0}/s)!");
+						tracing::warn!("💡 Tip: For scanning (nmap, masscan), use --scan mode for better performance.");
+					}
+
 					self.metrics.inc_active_connections();
 					let transport = Arc::clone(&self.transport);
 					let metrics = self.metrics.clone();
