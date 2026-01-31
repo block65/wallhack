@@ -26,15 +26,23 @@ class WallhackProcess:
         self.env = env or {}
         self._proc: subprocess.Popen[bytes] | None = None
 
-    def start(self) -> None:
+    def start(self, log_file: str | None = None) -> None:
         import os
         cmd = ["ip", "netns", "exec", self.ns, self.binary, *self.args]
         proc_env = os.environ.copy()
         proc_env.update(self.env)
+        
+        if log_file:
+            self._log_file = open(log_file, "w")
+            stdout_target = self._log_file
+        else:
+            self._log_file = None
+            stdout_target = subprocess.PIPE
+            
         self._proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
+            stdout=stdout_target,
             stderr=subprocess.STDOUT,
             env=proc_env,
         )
@@ -48,6 +56,9 @@ class WallhackProcess:
                 self._proc.kill()
                 self._proc.wait(timeout=5)
             self._proc = None
+        if hasattr(self, '_log_file') and self._log_file:
+            self._log_file.close()
+            self._log_file = None
 
     def output(self) -> str:
         """Return whatever stdout/stderr the process has produced so far."""

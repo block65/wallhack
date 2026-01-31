@@ -24,7 +24,7 @@ def test_udp_bandwidth(
         ns=NS_CLIENT,
         target_ip=IP_TARGET,
         binary=iperf3_bin,
-        duration=5,
+        duration=2,
         bandwidth=bandwidth,
         udp=True,
     )

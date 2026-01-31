@@ -205,8 +205,12 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
             ns=NS_ENTRY,
             args=["-l", f":{WALLHACK_LISTEN_PORT}", "--debug"],
             binary=wallhack_bin,
+            env={
+                "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
+                "NO_COLOR": "1",
+            },
         )
-        entry_proc.start()
+        entry_proc.start(log_file="/tmp/wallhack-entry.log")
         time.sleep(PROCESS_STARTUP_DELAY)
 
         # Start wallhack exit node (client mode, connects to entry)
@@ -219,7 +223,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
             ],
             binary=wallhack_bin,
         )
-        exit_proc.start()
+        exit_proc.start(log_file="/tmp/wallhack-exit.log")
 
         # Wait for TUN interface to come UP in entry namespace
         # (wallhack creates tun-bench when the exit node connects)
@@ -255,3 +259,4 @@ def iperf3_server(topology: None, iperf3_bin: str) -> Iperf3Server:
         yield server
     finally:
         server.stop()
+        time.sleep(0.5)  # Allow TIME_WAIT sockets to clear

@@ -28,6 +28,19 @@ use crate::{WallhackCli, cli::Protocol};
 const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// Maximum retry delay (caps exponential backoff).
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+/// Timeout for UDP response after forwarding packet.
+///
+/// Each UDP packet opens a QUIC bi-stream and waits for a response.
+/// Without a timeout, streams accumulate indefinitely when targets don't
+/// respond (common for UDP), eventually hitting QUIC's stream limit.
+///
+/// 500ms is aggressive but sufficient for:
+/// - LAN responses (< 10ms typical)
+/// - DNS queries (< 100ms typical)
+/// - Most interactive UDP protocols
+///
+/// For slower protocols, streams queue on entry node (backpressure).
+const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Run as an exit node.
 ///
@@ -182,9 +195,19 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				let _ = socket.send_to(&buf, target).await?;
 				let mut recv_buf = vec![0u8; 65535];
 				tracing::trace!("Waiting for UDP response...");
-				let (size, from) = socket.recv_from(&mut recv_buf).await?;
-				tracing::trace!(size, from = %from, "Received UDP response");
-				stream.write_all(&recv_buf[..size]).await?;
+				// Use timeout to avoid hanging streams that accumulate
+				match tokio::time::timeout(UDP_RESPONSE_TIMEOUT, socket.recv_from(&mut recv_buf)).await {
+					Ok(Ok((size, from))) => {
+						tracing::trace!(size, from = %from, "Received UDP response");
+						stream.write_all(&recv_buf[..size]).await?;
+					}
+					Ok(Err(e)) => {
+						tracing::trace!("UDP recv error: {e}");
+					}
+					Err(_) => {
+						tracing::trace!("UDP recv timeout");
+					}
+				}
 				stream.finish().await?;
 			}
 		}

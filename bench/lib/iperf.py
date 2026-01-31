@@ -79,7 +79,7 @@ def run_iperf3_client(
     if reverse:
         cmd.append("-R")
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 30)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 15)
 
     return _parse_iperf3_json(proc.stdout)
 

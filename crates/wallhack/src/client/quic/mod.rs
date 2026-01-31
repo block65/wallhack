@@ -68,6 +68,9 @@ impl Client for QuicClient {
 		let mut transport_config = quinn::TransportConfig::default();
 		transport_config.max_idle_timeout(Some(IdleTimeout::from(VarInt::MAX)));
 		transport_config.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
+		// Increase stream limits for high-throughput UDP (each packet uses a bi-stream)
+		transport_config.max_concurrent_bidi_streams(10_000u32.into());
+		transport_config.max_concurrent_uni_streams(1_000u32.into());
 
 		let mut client_config: quinn::ClientConfig =
 			quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_config)?));

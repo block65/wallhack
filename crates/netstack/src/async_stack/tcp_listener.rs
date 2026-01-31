@@ -5,85 +5,39 @@ use smoltcp::{iface::SocketHandle, phy::Device, socket::tcp};
 use super::{Shared, tcp_stream::TcpStream};
 use crate::error::Error;
 
-/// An async TCP listener that accepts incoming connections.
+/// A TCP listener for a specific port backed by the smoltcp stack.
 ///
-/// Internally maintains a backlog pool of listen sockets. When a socket
-/// transitions from LISTEN to ESTABLISHED, it is yielded as a [`TcpStream`] and
-/// a fresh listen socket replaces it in the pool.
+/// Uses a simple "seen list" approach - iterates all sockets in the stack,
+/// returns ESTABLISHED ones that haven't been returned before.
 pub struct TcpListener<D: Device + Send + 'static> {
 	shared: Arc<Shared<D>>,
 	port: u16,
-	backlog: Vec<SocketHandle>,
+	/// Handles we've already returned - don't return again
+	seen: std::collections::HashSet<SocketHandle>,
 }
 
 impl<D: Device + Send + 'static> TcpListener<D> {
-	/// Creates a new listener with the given backlog size.
-	///
-	/// # Errors
-	///
-	/// Returns an error if any of the listen sockets cannot be created.
-	pub(crate) fn new(
-		shared: Arc<Shared<D>>,
-		port: u16,
-		backlog_size: usize,
-	) -> Result<Self, Error> {
-		let backlog_size = backlog_size.max(1);
-		let mut backlog = Vec::with_capacity(backlog_size);
-		let mut found_handles = std::collections::HashSet::new();
-
-		{
-			let mut inner = shared.inner.lock().expect("mutex poisoned");
-
-			// First, find any existing sockets for this port (JIT-created)
-			let handle = inner.tcp_find_or_listen(port)?;
-			backlog.push(handle);
-			found_handles.insert(handle);
-
-			// Create additional backlog sockets up to backlog_size
-			// But avoid duplicates
-			while backlog.len() < backlog_size {
-				let handle = inner.tcp_listen(port)?;
-				if found_handles.insert(handle) {
-					backlog.push(handle);
-				} else {
-					// tcp_listen returned a duplicate, something is wrong
-					break;
-				}
-			}
-		}
-
-		Ok(Self {
+	/// Creates a new listener for the given port.
+	pub(crate) fn new(shared: Arc<Shared<D>>, port: u16, _backlog_size: usize) -> Self {
+		Self {
 			shared,
 			port,
-			backlog,
-		})
+			seen: std::collections::HashSet::new(),
+		}
 	}
 
 	/// Accept the next incoming TCP connection.
 	///
-	/// This method polls all backlog sockets for a LISTEN → ESTABLISHED
-	/// transition. When found, the established socket is returned as a
-	/// [`TcpStream`] and a new listen socket takes its place in the pool.
+	/// Waits until a connection is available.
 	///
 	/// # Errors
 	///
-	/// Returns an error if a replacement listen socket cannot be created.
-	///
-	/// # Panics
-	///
-	/// Panics if the internal mutex is poisoned.
-	///
-	/// # Cancellation safety
-	///
-	/// This method is cancel-safe. If dropped before completion, no connection is
-	/// lost — the socket remains in the backlog and will be found on the next
-	/// `accept()` call.
+	/// Returns an error if the listener cannot poll for connections.
 	pub async fn accept(&mut self) -> Result<TcpStream<D>, Error> {
 		loop {
 			if let Some(stream) = self.poll_accept()? {
 				return Ok(stream);
 			}
-
 			self.shared.notify.notified().await;
 		}
 	}
@@ -94,33 +48,46 @@ impl<D: Device + Send + 'static> TcpListener<D> {
 	///
 	/// # Errors
 	///
-	/// Returns an error if the connection cannot be polled.
+	/// Currently always returns `Ok`. Reserved for future error conditions.
 	///
 	/// # Panics
 	///
-	/// Panics if the internal mutex is poisoned.
+	/// Panics if the internal mutex is poisoned (another thread panicked while holding the lock).
 	pub fn poll_accept(&mut self) -> Result<Option<TcpStream<D>>, Error> {
 		let inner = self.shared.inner.lock().expect("mutex poisoned");
-		for (idx, &handle) in self.backlog.iter().enumerate() {
-			let socket: &tcp::Socket<'_> = inner.tcp_socket(handle);
-			if socket.is_active() && socket.may_send() {
-				let established_handle = self.backlog.remove(idx);
-				drop(inner);
 
-				let mut inner = self.shared.inner.lock().expect("mutex poisoned");
-				match inner.tcp_listen(self.port) {
-					Ok(new_handle) => self.backlog.push(new_handle),
-					Err(e) => {
-						if self.backlog.is_empty() {
-							return Err(e);
-						}
-					}
+		// Clean up seen set - remove handles that no longer exist or are closed
+		self.seen.retain(|&h| {
+			inner.sockets().iter().any(|(handle, socket)| {
+				if handle != h {
+					return false;
 				}
+				let smoltcp::socket::Socket::Tcp(tcp) = socket else {
+					return false;
+				};
+				!matches!(tcp.state(), tcp::State::Closed | tcp::State::TimeWait)
+			})
+		});
 
-				return Ok(Some(TcpStream::new(
-					Arc::clone(&self.shared),
-					established_handle,
-				)));
+		// Find an ESTABLISHED socket for our port that we haven't seen
+		for (handle, socket) in inner.sockets().iter() {
+			let smoltcp::socket::Socket::Tcp(tcp_socket) = socket else {
+				continue;
+			};
+
+			if tcp_socket.listen_endpoint().port != self.port {
+				continue;
+			}
+
+			if self.seen.contains(&handle) {
+				continue;
+			}
+
+			// Accept if established (or about to be)
+			if tcp_socket.is_active() && tcp_socket.may_send() {
+				tracing::debug!(port = self.port, ?handle, state = ?tcp_socket.state(), "Accepting connection");
+				self.seen.insert(handle);
+				return Ok(Some(TcpStream::new(Arc::clone(&self.shared), handle)));
 			}
 		}
 
@@ -132,21 +99,10 @@ impl<D: Device + Send + 'static> TcpListener<D> {
 	pub fn port(&self) -> u16 {
 		self.port
 	}
-
-	/// Returns the current number of listen sockets in the backlog.
-	#[must_use]
-	pub fn backlog_len(&self) -> usize {
-		self.backlog.len()
-	}
 }
 
 impl<D: Device + Send + 'static> Drop for TcpListener<D> {
 	fn drop(&mut self) {
-		if let Ok(mut inner) = self.shared.inner.lock() {
-			for &handle in &self.backlog {
-				let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(handle);
-				socket.abort();
-			}
-		}
+		// Nothing to clean up - sockets are managed by JIT
 	}
 }

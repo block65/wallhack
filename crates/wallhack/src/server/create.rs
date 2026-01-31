@@ -56,7 +56,10 @@ pub fn create(config: config::ServerConfig) -> Result<quinn::Endpoint, Error> {
 	let timeout = IdleTimeout::try_from(Duration::from_secs(10))?;
 	transport_config.max_idle_timeout(Some(timeout));
 	transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-	// transport_config.max_concurrent_uni_streams(1_u8.into());
+	// Cap at 1024 to match standard ulimit - protects exit node resources
+	// Entry node can queue more; quinn handles backpressure automatically
+	transport_config.max_concurrent_bidi_streams(1_024u32.into());
+	transport_config.max_concurrent_uni_streams(256u32.into());
 
 	tracing::trace!("Server Config {:?}", server_config);
 	// tracing::trace!("will listen on {}", config.listen);

@@ -128,11 +128,8 @@ impl<D: Device + Send + 'static> Netstack<D> {
 	///
 	/// Returns an error if the port is invalid or the listen socket cannot
 	/// be created.
-	pub fn tcp_listen(
-		&self,
-		port: u16,
-		backlog: usize,
-	) -> Result<tcp_listener::TcpListener<D>, crate::error::Error> {
+	#[must_use]
+	pub fn tcp_listen(&self, port: u16, backlog: usize) -> tcp_listener::TcpListener<D> {
 		tcp_listener::TcpListener::new(Arc::clone(&self.shared), port, backlog)
 	}
 
@@ -240,6 +237,7 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
 	notify: Arc<Notify>,
 ) {
+	let mut prune_counter: u32 = 0;
 	loop {
 		let delay = {
 			let mut inner = shared.inner.lock().expect("poll loop mutex poisoned");
@@ -261,6 +259,22 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 				}
 			}
 			inner.poll(now);
+			// Periodically prune closed sockets and log state
+			prune_counter = prune_counter.wrapping_add(1);
+			if prune_counter.is_multiple_of(100) {
+				let socket_count = inner.socket_count();
+				let pruned = inner.prune_closed_tcp_sockets();
+				if pruned > 0 || socket_count > 5 {
+					let states = inner.tcp_state_summary();
+					tracing::debug!(
+						socket_count,
+						pruned,
+						remaining = inner.socket_count(),
+						states,
+						"Socket state"
+					);
+				}
+			}
 			// Notify listeners after poll - sockets may have transitioned to established
 			notify.notify_waiters();
 			inner.poll_at(now).map(|poll_at| {
@@ -306,22 +320,23 @@ fn jit_bind_ports<D: Device + Send + 'static>(
 	udp_ports: &Arc<Mutex<HashSet<u16>>>,
 	notify: &Arc<Notify>,
 ) -> Result<(), crate::error::Error> {
-	let Some((protocol, dst_port)) = parse_l4(packet) else {
+	let Some((protocol, dst_port, is_syn)) = parse_l4(packet) else {
+		tracing::trace!(packet_len = packet.len(), "JIT: failed to parse L4");
 		return Ok(());
 	};
 
+	tracing::trace!(?protocol, dst_port, is_syn, jit_tcp, jit_udp, "JIT: parsed packet");
+
 	match protocol {
-		IpProtocol::Tcp if jit_tcp && dst_port != 0 => {
-			if !tcp_ports.lock().expect("tcp port lock").contains(&dst_port) {
-				#[cfg(feature = "async")]
-				tracing::info!("JIT TCP: observed SYN for port {}", dst_port);
-			}
+		IpProtocol::Tcp if jit_tcp && dst_port != 0 && is_syn => {
+			// Only create listener for SYN packets (new connections)
+			tracing::debug!(dst_port, "JIT: SYN packet detected");
 			inner.ensure_tcp_listener(dst_port)?;
 			tcp_ports.lock().expect("tcp port lock").insert(dst_port);
 			notify.notify_waiters();
 		}
 		IpProtocol::Udp if jit_udp && dst_port != 0 => {
-			tracing::trace!(dst_port, "JIT binding UDP listener");
+			tracing::debug!(dst_port, socket_count = inner.socket_count(), "JIT binding UDP listener");
 			inner.ensure_udp_listener(dst_port)?;
 			udp_ports.lock().expect("udp port lock").insert(dst_port);
 			notify.notify_waiters();
@@ -332,7 +347,7 @@ fn jit_bind_ports<D: Device + Send + 'static>(
 	Ok(())
 }
 
-fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
+fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
 	let version = IpVersion::of_packet(packet).ok()?;
 	match version {
 		IpVersion::Ipv4 => parse_ipv4_l4(packet),
@@ -340,7 +355,7 @@ fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
 	}
 }
 
-fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
+fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
 	if packet.len() < 20 {
 		return None;
 	}
@@ -350,14 +365,26 @@ fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
 	}
 	let protocol = IpProtocol::from(packet[9]);
 	let dst_port = u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]);
-	Some((protocol, dst_port))
+	// Check TCP SYN flag (offset 13 in TCP header, bit 1)
+	let is_syn = if protocol == IpProtocol::Tcp && packet.len() >= ihl + 14 {
+		(packet[ihl + 13] & 0x02) != 0 && (packet[ihl + 13] & 0x10) == 0 // SYN but not ACK
+	} else {
+		false
+	};
+	Some((protocol, dst_port, is_syn))
 }
 
-fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
+fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
 	if packet.len() < 44 {
 		return None;
 	}
 	let next_header = IpProtocol::from(packet[6]);
 	let dst_port = u16::from_be_bytes([packet[42], packet[43]]);
-	Some((next_header, dst_port))
+	// Check TCP SYN flag (offset 13 in TCP header after IPv6 header)
+	let is_syn = if next_header == IpProtocol::Tcp && packet.len() >= 54 {
+		(packet[40 + 13] & 0x02) != 0 && (packet[40 + 13] & 0x10) == 0 // SYN but not ACK
+	} else {
+		false
+	};
+	Some((next_header, dst_port, is_syn))
 }

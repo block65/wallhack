@@ -45,8 +45,8 @@ impl<D: Device> InnerStack<D> {
 	///
 	/// # Panics
 	///
-	/// Panics if the device medium does not match [`HardwareAddress::Ip`]
-	/// (the stack is designed for L3 / TUN devices only).
+	/// Panics if the device medium does not match [`HardwareAddress::Ip`] (the
+	/// stack is designed for L3 / TUN devices only).
 	///
 	/// # Examples
 	///
@@ -119,8 +119,8 @@ impl<D: Device> InnerStack<D> {
 
 	/// Returns the next time the stack should be polled, if any.
 	///
-	/// Returns [`None`] if there is no pending timer and the stack only
-	/// needs to be polled on new ingress.
+	/// Returns [`None`] if there is no pending timer and the stack only needs to
+	/// be polled on new ingress.
 	pub fn poll_at(&mut self, timestamp: Instant) -> Option<Instant> {
 		self.iface.poll_at(timestamp, &self.sockets)
 	}
@@ -139,7 +139,8 @@ impl<D: Device> InnerStack<D> {
 		self.device.peek_ingress()
 	}
 
-	/// Register a TCP listen socket on the given port if one doesn't already exist.
+	/// Register a TCP listen socket on the given port if one doesn't already
+	/// exist.
 	///
 	/// # Errors
 	///
@@ -149,6 +150,12 @@ impl<D: Device> InnerStack<D> {
 			return Ok(());
 		}
 
+		#[cfg(feature = "async")]
+		tracing::debug!(
+			port,
+			socket_count = self.socket_count(),
+			"ensure_tcp_listener: creating new"
+		);
 		let rx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_rx_buffer_size]);
 		let tx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_tx_buffer_size]);
 		let mut socket = tcp::Socket::new(rx_buf, tx_buf);
@@ -157,17 +164,20 @@ impl<D: Device> InnerStack<D> {
 		Ok(())
 	}
 
-	/// Register a UDP socket bound to the given port if one doesn't already exist.
+	/// Register a UDP socket bound to the given port if one doesn't already
+	/// exist.
 	///
 	/// # Errors
 	///
 	/// Returns an error if the socket cannot be created.
 	pub fn ensure_udp_listener(&mut self, port: u16) -> Result<(), Error> {
 		if self.udp_listener_exists(port) {
+			#[cfg(feature = "async")]
 			tracing::trace!(port, "UDP listener already exists");
 			return Ok(());
 		}
 
+		#[cfg(feature = "async")]
 		tracing::trace!(port, "Creating JIT UDP listener");
 		let rx_buf = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 64], vec![0u8; 65535]);
 		let tx_buf = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 64], vec![0u8; 65535]);
@@ -201,8 +211,8 @@ impl<D: Device> InnerStack<D> {
 	///
 	/// # Errors
 	///
-	/// Returns [`Error::InvalidPort`] if `port` is 0.
-	/// Returns [`Error::Listen`] if the socket cannot enter the listen state.
+	/// Returns [`Error::InvalidPort`] if `port` is 0. Returns [`Error::Listen`]
+	/// if the socket cannot enter the listen state.
 	pub fn tcp_listen(&mut self, port: u16) -> Result<SocketHandle, Error> {
 		if port == 0 {
 			return Err(Error::InvalidPort { port });
@@ -225,24 +235,33 @@ impl<D: Device> InnerStack<D> {
 	///
 	/// # Errors
 	///
-	/// Returns [`Error::InvalidPort`] if `port` is 0.
-	/// Returns [`Error::Listen`] if the socket cannot enter the listen state.
+	/// Returns [`Error::InvalidPort`] if `port` is 0. Returns [`Error::Listen`]
+	/// if the socket cannot enter the listen state.
 	pub fn tcp_find_or_listen(&mut self, port: u16) -> Result<SocketHandle, Error> {
 		if port == 0 {
 			return Err(Error::InvalidPort { port });
 		}
 
-		// Find socket that was originally listening on this port
-		// listen_endpoint() returns the original listen port even for established sockets
+		// Find a socket that is LISTENING on this port Only LISTEN state sockets
+		// can accept new connections
 		for (handle, socket) in self.sockets.iter() {
 			let Socket::Tcp(tcp_socket) = socket else {
 				continue;
 			};
-			if tcp_socket.listen_endpoint().port == port {
+			// Only return sockets that are actually listening
+			if tcp_socket.state() == tcp::State::Listen && tcp_socket.listen_endpoint().port == port
+			{
 				return Ok(handle);
 			}
 		}
 
+		// No LISTEN socket found, create a new one
+		#[cfg(feature = "async")]
+		tracing::debug!(
+			port,
+			socket_count = self.socket_count(),
+			"tcp_find_or_listen: creating new"
+		);
 		self.tcp_listen(port)
 	}
 
@@ -272,6 +291,34 @@ impl<D: Device> InnerStack<D> {
 	/// Panics if the handle does not refer to a valid socket.
 	pub fn remove_socket(&mut self, handle: SocketHandle) -> smoltcp::socket::Socket<'static> {
 		self.sockets.remove(handle)
+	}
+
+	/// Remove all TCP sockets that are in a closed state. Returns the number of
+	/// sockets removed.
+	pub fn prune_closed_tcp_sockets(&mut self) -> usize {
+		let to_remove: Vec<_> = self
+			.sockets
+			.iter()
+			.filter_map(|(handle, socket)| {
+				if let Socket::Tcp(tcp) = socket {
+					match tcp.state() {
+						tcp::State::Closed | tcp::State::TimeWait => {
+							#[cfg(feature = "async")]
+							tracing::debug!(?handle, state = ?tcp.state(), port = tcp.listen_endpoint().port, "Pruning socket");
+							Some(handle)
+						}
+						_ => None,
+					}
+				} else {
+					None
+				}
+			})
+			.collect();
+		let count = to_remove.len();
+		for handle in to_remove {
+			self.sockets.remove(handle);
+		}
+		count
 	}
 
 	/// Returns a reference to the underlying device.
@@ -305,6 +352,48 @@ impl<D: Device> InnerStack<D> {
 	/// Returns a mutable reference to the [`SocketSet`].
 	pub fn sockets_mut(&mut self) -> &mut SocketSet<'static> {
 		&mut self.sockets
+	}
+
+	/// Returns the number of sockets in the set.
+	#[must_use]
+	pub fn socket_count(&self) -> usize {
+		self.sockets.iter().count()
+	}
+
+	/// Returns a breakdown of TCP socket states as a formatted string.
+	#[cfg(feature = "async")]
+	pub fn tcp_state_summary(&self) -> String {
+		let mut listen = 0;
+		let mut syn_rcvd = 0;
+		let mut established = 0;
+		let mut fin_wait = 0;
+		let mut close_wait = 0;
+		let mut closing = 0;
+		let mut time_wait = 0;
+		let mut closed = 0;
+		let mut other = 0;
+		let mut udp_count = 0;
+
+		for (_handle, socket) in self.sockets.iter() {
+			match socket {
+				Socket::Tcp(tcp) => match tcp.state() {
+					tcp::State::Listen => listen += 1,
+					tcp::State::SynReceived => syn_rcvd += 1,
+					tcp::State::Established => established += 1,
+					tcp::State::FinWait1 | tcp::State::FinWait2 => fin_wait += 1,
+					tcp::State::CloseWait => close_wait += 1,
+					tcp::State::Closing | tcp::State::LastAck => closing += 1,
+					tcp::State::TimeWait => time_wait += 1,
+					tcp::State::Closed => closed += 1,
+					tcp::State::SynSent => other += 1,
+				},
+				Socket::Udp(_) => udp_count += 1,
+				_ => {}
+			}
+		}
+		format!(
+			"TCP[L:{listen} S:{syn_rcvd} E:{established} FW:{fin_wait} CW:{close_wait} C:{closing} TW:{time_wait} X:{closed} O:{other}] UDP:{udp_count}"
+		)
 	}
 }
 

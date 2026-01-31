@@ -51,13 +51,18 @@ impl<D: Device + Send + 'static> TcpListenerAny<D> {
 	pub async fn accept(&mut self) -> Result<super::tcp_stream::TcpStream<D>, Error> {
 		loop {
 			let ports = self.ports.lock().expect("ports mutex poisoned").clone();
+
+			// Create listeners for new ports
 			for port in &ports {
 				if !self.listeners.contains_key(port) {
 					tracing::trace!(port, "creating JIT TCP listener");
-					let listener = TcpListener::new(Arc::clone(&self.shared), *port, self.backlog)?;
+					let listener = TcpListener::new(Arc::clone(&self.shared), *port, self.backlog);
 					self.listeners.insert(*port, listener);
 				}
 			}
+
+			// Remove listeners for ports no longer in use
+			self.listeners.retain(|port, _| ports.contains(port));
 
 			for (port, listener) in &mut self.listeners {
 				if let Some(stream) = listener.poll_accept()? {
