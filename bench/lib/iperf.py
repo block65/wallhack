@@ -33,7 +33,7 @@ class Iperf3Server:
         self._proc = subprocess.Popen(
             [
                 "ip", "netns", "exec", self.ns,
-                self.binary, "--server", "--one-off", "--port", str(IPERF3_PORT),
+                self.binary, "--server", "--port", str(IPERF3_PORT),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -81,7 +81,11 @@ def run_iperf3_client(
 
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 15)
 
-    return _parse_iperf3_json(proc.stdout)
+    result = _parse_iperf3_json(proc.stdout)
+    # Debug: print error from iperf3 if present
+    if result.raw.get("error"):
+        print(f"\n  iperf3 error: {result.raw['error']}")
+    return result
 
 
 def _parse_iperf3_json(output: str) -> IperfResult:

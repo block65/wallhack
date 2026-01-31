@@ -72,11 +72,23 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 	);
 	println!("Connecting to upstream: {upstream_addr}");
 
-	let upstream_client = match connect_spec.protocol {
+	// Connect upstream and run downstream listener based on protocol combination
+	match connect_spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				connect_quic_upstream(&cli, upstream_addr).await?
+				let upstream_client = connect_quic_upstream(&cli, upstream_addr).await?;
+				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
+				crate::info!("Connected to upstream (QUIC)");
+				run_downstream(
+					&cli,
+					&listen_spec,
+					addr,
+					server_options,
+					upstream_instr,
+					upstream_resp,
+				)
+				.await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -86,21 +98,35 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				connect_ws_upstream(&cli, upstream_addr).await?
+				let upstream_client = connect_ws_upstream(&cli, upstream_addr).await?;
+				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
+				crate::info!("Connected to upstream (WebSocket)");
+				run_downstream(
+					&cli,
+					&listen_spec,
+					addr,
+					server_options,
+					upstream_instr,
+					upstream_resp,
+				)
+				.await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
 				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
 			}
 		}
-	};
+	}
+}
 
-	let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
-	crate::info!("Connected to upstream");
-
-	// TODO: Monitor upstream_client connection health and reconnect on failure
-
-	// Start downstream listener based on protocol
+async fn run_downstream(
+	cli: &WallhackCli,
+	listen_spec: &crate::cli::AddressSpec,
+	addr: std::net::SocketAddr,
+	server_options: ServerOptions,
+	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+) -> Result<()> {
 	crate::info!(
 		"Listening for downstream on {} ({:?})",
 		addr,
@@ -111,7 +137,7 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_downstream(&cli, addr, server_options, upstream_instr, upstream_resp).await
+				run_quic_downstream(cli, addr, server_options, upstream_instr, upstream_resp).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{

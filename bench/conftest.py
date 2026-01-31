@@ -249,6 +249,57 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
             entry_proc.stop()
 
 
+@pytest.fixture(scope="session")
+def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState:
+    """Start wallhack entry + exit using WebSocket transport."""
+    entry_proc = None
+    exit_proc = None
+
+    try:
+        # Start wallhack entry node with WebSocket (TCP) transport
+        # Use /tcp suffix to select WebSocket transport
+        entry_proc = WallhackProcess(
+            ns=NS_ENTRY,
+            args=["-l", f":{WALLHACK_LISTEN_PORT}/tcp", "--debug"],
+            binary=wallhack_bin,
+            env={
+                "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
+                "NO_COLOR": "1",
+            },
+        )
+        entry_proc.start(log_file="/tmp/wallhack-entry-ws.log")
+        time.sleep(PROCESS_STARTUP_DELAY)
+
+        # Start wallhack exit node with WebSocket transport
+        exit_proc = WallhackProcess(
+            ns=NS_EXIT,
+            args=[
+                "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT}/tcp",
+                "-i", EXIT_ID,
+                "--debug",
+            ],
+            binary=wallhack_bin,
+        )
+        exit_proc.start(log_file="/tmp/wallhack-exit-ws.log")
+
+        # Wait for TUN interface
+        entry_proc.wait_for_tun(ns=NS_ENTRY)
+
+        # Add routes
+        add_route(NS_ENTRY, SUBNET_EXIT_TARGET, TUN_NAME)
+        ns_exec(NS_CLIENT, f"ip route add {SUBNET_EXIT_TARGET} via {IP_ENTRY_CLIENT_SIDE}")
+
+        state = TopologyState(entry_proc, exit_proc)
+        print(f"\n[WebSocket] {state.dump()}")
+        yield state
+
+    finally:
+        if exit_proc:
+            exit_proc.stop()
+        if entry_proc:
+            entry_proc.stop()
+
+
 @pytest.fixture
 def iperf3_server(topology: None, iperf3_bin: str) -> Iperf3Server:
     """Start an iperf3 server in the target namespace for one test."""

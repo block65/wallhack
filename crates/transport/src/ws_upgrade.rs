@@ -126,7 +126,7 @@ where
 				ws_key = Some(value.to_string());
 			}
 			"host" => {
-				hostname = Some(value.to_string());
+				host = Some(value.to_string());
 			}
 			"upgrade" => {
 				is_upgrade = value.eq_ignore_ascii_case("websocket");
@@ -173,7 +173,7 @@ where
 
 	Ok(UpgradeResult {
 		path: path.to_string(),
-		hostname,
+		hostname: host,
 	})
 }
 

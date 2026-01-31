@@ -30,15 +30,26 @@ where
 	let source = local
 		.remote_endpoint()
 		.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "missing remote"))?;
+	tracing::debug!(?target, ?source, "TCP session starting, opening bi-stream");
 	let mut remote = transport.open_bi().await?;
+	tracing::debug!(?target, ?source, "bi-stream opened, sending init");
 	let init = SessionInit {
 		target_addr: target.to_string(),
 		source_addr: source.to_string(),
 		protocol: SessionProtocol::Tcp as i32,
 	};
 	write_length_delimited(&mut remote, &init).await?;
+	tracing::debug!(?target, ?source, "init sent, starting copy_bidirectional");
 
-	let _ = copy_bidirectional(&mut local, &mut remote).await?;
+	match copy_bidirectional(&mut local, &mut remote).await {
+		Ok((to_remote, to_local)) => {
+			tracing::debug!(?target, to_remote, to_local, "copy_bidirectional completed");
+		}
+		Err(e) => {
+			tracing::debug!(?target, error = %e, "copy_bidirectional failed");
+			return Err(e.into());
+		}
+	}
 	let _ = remote.finish().await;
 	Ok(())
 }

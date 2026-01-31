@@ -251,10 +251,13 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 				.expect("timestamp overflow"),
 			);
 			if jit_tcp || jit_udp {
-				let peeked = inner.peek_ingress().map(<[u8]>::to_vec);
-				if let Some(packet) = peeked {
+				// Get ALL pending packets and create listeners for each SYN.
+				// This handles burst arrivals where multiple SYNs arrive before
+				// poll() can process them.
+				let packets = inner.peek_all_ingress();
+				for packet in &packets {
 					let _ = jit_bind_ports(
-						&mut inner, &packet, jit_tcp, jit_udp, &tcp_ports, &udp_ports, &notify,
+						&mut inner, packet, jit_tcp, jit_udp, &tcp_ports, &udp_ports, &notify,
 					);
 				}
 			}
@@ -325,18 +328,31 @@ fn jit_bind_ports<D: Device + Send + 'static>(
 		return Ok(());
 	};
 
-	tracing::trace!(?protocol, dst_port, is_syn, jit_tcp, jit_udp, "JIT: parsed packet");
+	tracing::trace!(
+		?protocol,
+		dst_port,
+		is_syn,
+		jit_tcp,
+		jit_udp,
+		"JIT: parsed packet"
+	);
 
 	match protocol {
 		IpProtocol::Tcp if jit_tcp && dst_port != 0 && is_syn => {
-			// Only create listener for SYN packets (new connections)
+			// Create a LISTEN socket for EACH SYN packet.
+			// smoltcp transitions LISTEN -> SYN_RECEIVED -> ESTABLISHED per socket,
+			// so we need one LISTEN socket per incoming connection.
 			tracing::debug!(dst_port, "JIT: SYN packet detected");
-			inner.ensure_tcp_listener(dst_port)?;
+			inner.tcp_listen(dst_port)?;
 			tcp_ports.lock().expect("tcp port lock").insert(dst_port);
 			notify.notify_waiters();
 		}
 		IpProtocol::Udp if jit_udp && dst_port != 0 => {
-			tracing::debug!(dst_port, socket_count = inner.socket_count(), "JIT binding UDP listener");
+			tracing::debug!(
+				dst_port,
+				socket_count = inner.socket_count(),
+				"JIT binding UDP listener"
+			);
 			inner.ensure_udp_listener(dst_port)?;
 			udp_ports.lock().expect("udp port lock").insert(dst_port);
 			notify.notify_waiters();

@@ -86,7 +86,7 @@ impl<D: Device + Send + 'static> AsyncRead for TcpStream<D> {
 		buf: &mut ReadBuf<'_>,
 	) -> Poll<io::Result<()>> {
 		let mut inner = self.shared.inner.lock().expect("mutex poisoned");
-		
+
 		// Check if socket still exists (may have been pruned)
 		if !socket_exists(&inner, self.handle) {
 			return Poll::Ready(Err(io::Error::new(
@@ -94,7 +94,7 @@ impl<D: Device + Send + 'static> AsyncRead for TcpStream<D> {
 				"socket was closed",
 			)));
 		}
-		
+
 		let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(self.handle);
 
 		socket.register_recv_waker(cx.waker());
@@ -129,7 +129,7 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 		buf: &[u8],
 	) -> Poll<io::Result<usize>> {
 		let mut inner = self.shared.inner.lock().expect("mutex poisoned");
-		
+
 		// Check if socket still exists (may have been pruned)
 		if !socket_exists(&inner, self.handle) {
 			return Poll::Ready(Err(io::Error::new(
@@ -137,7 +137,7 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 				"socket was closed",
 			)));
 		}
-		
+
 		let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(self.handle);
 
 		socket.register_send_waker(cx.waker());
@@ -172,12 +172,12 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 
 	fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
 		let mut inner = self.shared.inner.lock().expect("mutex poisoned");
-		
+
 		// Check if socket still exists (may have been pruned)
 		if !socket_exists(&inner, self.handle) {
 			return Poll::Ready(Ok(())); // Already gone, consider it shutdown
 		}
-		
+
 		let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(self.handle);
 		socket.close();
 		drop(inner);
@@ -195,7 +195,7 @@ impl<D: Device + Send + 'static> Drop for TcpStream<D> {
 				tracing::trace!(handle = ?self.handle, "TcpStream dropped but socket already gone");
 				return;
 			}
-			
+
 			// Abort the socket (sends RST, transitions to Closed)
 			// Do NOT remove - let prune_closed_tcp_sockets clean it up after
 			// the RST has been sent by the next poll() cycle

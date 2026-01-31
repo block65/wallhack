@@ -327,5 +327,9 @@ pub async fn write_length_delimited<M: Message, S: tokio::io::AsyncWrite + Unpin
 		.write_all(&buf)
 		.await
 		.map_err(|e| TransportError::stream(e.to_string()))?;
+	stream
+		.flush()
+		.await
+		.map_err(|e| TransportError::stream(e.to_string()))?;
 	Ok(())
 }

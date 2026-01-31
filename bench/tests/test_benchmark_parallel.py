@@ -10,18 +10,20 @@ from lib.iperf import Iperf3Server, run_iperf3_client
 pytestmark = pytest.mark.benchmark
 
 
-def test_tcp_parallel_4_streams(
+@pytest.mark.parametrize("streams", [1, 2, 3, 4, 5])
+def test_tcp_parallel_streams(
     topology: None,
     iperf3_server: Iperf3Server,
     iperf3_bin: str,
+    streams: int,
 ) -> None:
-    """4-way parallel TCP streams."""
+    """Test parallel TCP streams with varying counts."""
     result = run_iperf3_client(
         ns=NS_CLIENT,
         target_ip=IP_TARGET,
         binary=iperf3_bin,
-        duration=5,
-        parallel=4,
+        duration=3,
+        parallel=streams,
     )
-    assert result.bits_per_second > 0, "No throughput measured"
-    print(f"\n  aggregate: {result.bits_per_second / 1e6:.2f} Mbps")
+    assert result.bits_per_second > 0, f"No throughput with {streams} streams"
+    print(f"\n  {streams} streams: {result.bits_per_second / 1e6:.2f} Mbps")

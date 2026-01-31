@@ -129,19 +129,30 @@ impl SmoltcpTunDevice {
 
 impl netstack::inner::peek_device::PeekDevice for SmoltcpTunDevice {
 	fn peek_ingress(&mut self) -> Option<&[u8]> {
-		if self.pending.is_empty() {
+		// Drain ALL available packets from the TUN device into pending.
+		// This is critical for handling bursts of SYNs - we need to see
+		// all of them BEFORE poll() processes them, so JIT can create
+		// a LISTEN socket for each one.
+		loop {
 			match self.read_packet(self.mtu) {
 				Ok(Some(packet)) => {
 					self.pending.push_back(packet);
 				}
-				Ok(None) => return None,
+				Ok(None) => break, // No more packets available
 				Err(e) => {
 					tracing::warn!("tun peek failed: {e}");
-					return None;
+					break;
 				}
 			}
 		}
 		self.pending.front().map(std::vec::Vec::as_slice)
+	}
+
+	fn peek_all_ingress(&mut self) -> Vec<Vec<u8>> {
+		// First drain all available packets
+		let _ = self.peek_ingress();
+		// Return copies of all pending packets
+		self.pending.iter().cloned().collect()
 	}
 }
 
@@ -219,9 +230,10 @@ impl smoltcp::phy::TxToken for TunTxToken {
 		let result = f(&mut buf);
 		let inner = self.inner.lock().expect("tun device lock poisoned");
 		if let Err(e) = inner.send(&buf)
-			&& e.kind() != std::io::ErrorKind::WouldBlock {
-				tracing::warn!("tun send failed: {e}");
-			}
+			&& e.kind() != std::io::ErrorKind::WouldBlock
+		{
+			tracing::warn!("tun send failed: {e}");
+		}
 		result
 	}
 }

@@ -139,6 +139,17 @@ impl<D: Device> InnerStack<D> {
 		self.device.peek_ingress()
 	}
 
+	/// Returns all pending ingress packets.
+	///
+	/// This drains all available packets from the device and returns copies.
+	/// Used for JIT listener creation to handle burst arrivals.
+	pub fn peek_all_ingress(&mut self) -> Vec<Vec<u8>>
+	where
+		D: crate::inner::peek_device::PeekDevice,
+	{
+		self.device.peek_all_ingress()
+	}
+
 	/// Register a TCP listen socket on the given port if one doesn't already
 	/// exist.
 	///
@@ -388,7 +399,7 @@ impl<D: Device> InnerStack<D> {
 					tcp::State::SynSent => other += 1,
 				},
 				Socket::Udp(_) => udp_count += 1,
-				_ => {}
+				Socket::Icmp(_) => {}
 			}
 		}
 		format!(

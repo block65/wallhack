@@ -70,6 +70,11 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 			tokio::select! {
 				stream = listener.accept() => {
 					let stream = stream?;
+					tracing::debug!(
+						local = ?stream.local_endpoint(),
+						remote = ?stream.remote_endpoint(),
+						"TCP stream accepted, spawning session"
+					);
 					self.metrics.inc_active_connections();
 					let transport = Arc::clone(&self.transport);
 					let metrics = self.metrics.clone();

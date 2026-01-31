@@ -65,9 +65,16 @@ impl<D: Device + Send + 'static> TcpListenerAny<D> {
 			self.listeners.retain(|port, _| ports.contains(port));
 
 			for (port, listener) in &mut self.listeners {
-				if let Some(stream) = listener.poll_accept()? {
-					tracing::trace!(port, "accepted TCP connection");
-					return Ok(stream);
+				match listener.poll_accept() {
+					Ok(Some(stream)) => {
+						tracing::trace!(port, "accepted TCP connection");
+						return Ok(stream);
+					}
+					Ok(None) => {}
+					Err(e) => {
+						tracing::warn!(port, ?e, "poll_accept error");
+						return Err(e);
+					}
 				}
 			}
 

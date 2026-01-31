@@ -196,7 +196,9 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				let mut recv_buf = vec![0u8; 65535];
 				tracing::trace!("Waiting for UDP response...");
 				// Use timeout to avoid hanging streams that accumulate
-				match tokio::time::timeout(UDP_RESPONSE_TIMEOUT, socket.recv_from(&mut recv_buf)).await {
+				match tokio::time::timeout(UDP_RESPONSE_TIMEOUT, socket.recv_from(&mut recv_buf))
+					.await
+				{
 					Ok(Ok((size, from))) => {
 						tracing::trace!(size, from = %from, "Received UDP response");
 						stream.write_all(&recv_buf[..size]).await?;
