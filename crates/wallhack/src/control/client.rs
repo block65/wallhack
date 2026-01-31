@@ -188,7 +188,10 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::control::{handler::HandlerConfig, metrics::Metrics, server::ControlServer};
+	use crate::{
+		NodeRole,
+		control::{handler::HandlerConfig, metrics::Metrics, server::ControlServer},
+	};
 	use protobuf::control::{PingRequest, StatsRequest, control_request, control_response};
 	use std::time::Duration;
 
@@ -197,7 +200,7 @@ mod tests {
 		let metrics = Arc::new(Metrics::default());
 		let server = ControlServer::bind(
 			"127.0.0.1:0".parse().unwrap(),
-			HandlerConfig::default(),
+			HandlerConfig::new(NodeRole::Entry),
 			metrics,
 		)
 		.unwrap();

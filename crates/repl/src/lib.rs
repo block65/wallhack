@@ -1,7 +1,6 @@
 #![warn(unused_extern_crates)]
 
 pub mod cli;
-pub mod config;
 pub mod dns;
 pub mod output;
 

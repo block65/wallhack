@@ -4,12 +4,14 @@ use quinn::{IdleTimeout, VarInt, crypto::rustls::QuicClientConfig};
 use tokio::time::Instant;
 
 use crate::{
-	ClientConfig,
-	client::{client::ClientRole, tls_config},
+	ClientConfig, NodeRole,
+	client::tls_config,
 	transport::{bridge, quic::QuicTransport},
 };
 use prost::Message;
-use protobuf::v2::{AgentHello, AgentResponse, HostInstruction, TunnelMessage, tunnel_message};
+use protobuf::v2::{
+	EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message,
+};
 
 use super::client::{Client, ConnectResult, ConnectionTasks};
 
@@ -53,11 +55,12 @@ pub struct QuicClient {
 	addr: std::net::SocketAddr,
 	hostname: String,
 	endpoint: quinn::Endpoint,
-	agent_id: Option<String>,
+	exit_id: Option<String>,
 }
 
 impl Client for QuicClient {
 	type Error = Error;
+	type Transport = QuicTransport;
 
 	fn try_new(args: ClientConfig) -> Result<Self, Error> {
 		let tls_config = tls_config::client_config(args.mtls)?;
@@ -84,11 +87,14 @@ impl Client for QuicClient {
 			addr: args.addr,
 			hostname,
 			endpoint,
-			agent_id: args.agent_id,
+			exit_id: args.exit_id,
 		})
 	}
 
-	async fn connect(&mut self, role: ClientRole) -> Result<ConnectResult, Self::Error> {
+	async fn connect(
+		&mut self,
+		role: NodeRole,
+	) -> Result<ConnectResult<Self::Transport>, Self::Error> {
 		tracing::debug!(
 			"{:?} connecting to {} with server name {:?}",
 			role,
@@ -109,28 +115,30 @@ impl Client for QuicClient {
 		// Wrap connection in transport abstraction
 		let transport = Arc::new(QuicTransport::new(conn));
 
-		// Send AgentHello if we have an agent_id (exit nodes)
-		if let Some(ref agent_id) = self.agent_id {
-			tracing::debug!("Sending AgentHello with id: {}", agent_id);
+		// Send ExitNodeHello if we have an exit_id (exit nodes)
+		if let Some(ref exit_id) = self.exit_id {
+			tracing::debug!("Sending ExitNodeHello with id: {}", exit_id);
 			let hello = TunnelMessage {
-				message: Some(tunnel_message::Message::AgentHello(AgentHello {
-					agent_id: agent_id.clone(),
+				message: Some(tunnel_message::Message::ExitNodeHello(ExitNodeHello {
+					exit_id: exit_id.clone(),
 					version: env!("CARGO_PKG_VERSION").to_string(),
 				})),
 			};
 			let mut buf = Vec::new();
-			hello.encode(&mut buf).expect("failed to encode AgentHello");
+			hello
+				.encode(&mut buf)
+				.expect("failed to encode ExitNodeHello");
 
 			let mut send = transport.connection().open_uni().await?;
 			send.write_all(&buf)
 				.await
 				.map_err(|e| std::io::Error::other(e.to_string()))?;
 			let _ = send.finish(); // Ignore close errors
-			tracing::debug!("AgentHello sent successfully");
+			tracing::debug!("ExitNodeHello sent successfully");
 		}
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(256);
-		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(256);
+		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
+		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
 		// Task 1: Incoming data handler
 		let transport_data = Arc::clone(&transport);
@@ -148,8 +156,8 @@ impl Client for QuicClient {
 
 		// Task 2: Outgoing handler based on role
 		let outgoing_handle = match role {
-			ClientRole::Host => {
-				tracing::debug!("Listening for instructions to send to peer.");
+			NodeRole::Entry | NodeRole::Relay => {
+				tracing::debug!("Listening for instructions.");
 				let transport_out = Arc::clone(&transport);
 				let instructions_tx = instructions.clone();
 
@@ -161,8 +169,8 @@ impl Client for QuicClient {
 					}
 				})
 			}
-			ClientRole::Agent => {
-				tracing::debug!("Listening for AgentResponses to send to peer");
+			NodeRole::Exit => {
+				tracing::debug!("Listening for responses");
 				let transport_out = Arc::clone(&transport);
 				let responses_tx = responses.clone();
 
@@ -182,6 +190,7 @@ impl Client for QuicClient {
 		};
 
 		Ok(ConnectResult::new(
+			Arc::clone(&transport),
 			(instructions, responses),
 			remote_addr,
 			tasks,

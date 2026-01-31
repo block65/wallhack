@@ -40,7 +40,7 @@ pub struct UpgradeResult {
 	/// The requested path (e.g., "/ws").
 	pub path: String,
 	/// The Host header value.
-	pub host: Option<String>,
+	pub hostname: Option<String>,
 }
 
 /// Performs the server-side WebSocket upgrade handshake.
@@ -107,6 +107,7 @@ where
 	let mut host = None;
 	let mut is_upgrade = false;
 	let mut is_websocket = false;
+	let mut is_version_13 = false;
 
 	for line in lines {
 		if line.is_empty() {
@@ -125,7 +126,7 @@ where
 				ws_key = Some(value.to_string());
 			}
 			"host" => {
-				host = Some(value.to_string());
+				hostname = Some(value.to_string());
 			}
 			"upgrade" => {
 				is_upgrade = value.eq_ignore_ascii_case("websocket");
@@ -135,6 +136,9 @@ where
 					.split(',')
 					.any(|v| v.trim().eq_ignore_ascii_case("upgrade"));
 			}
+			"sec-websocket-version" => {
+				is_version_13 = value == "13";
+			}
 			_ => {}
 		}
 	}
@@ -142,6 +146,12 @@ where
 	// Validate WebSocket upgrade requirements
 	if !is_upgrade || !is_websocket {
 		return Err(UpgradeError::NotWebSocket);
+	}
+
+	if !is_version_13 {
+		return Err(UpgradeError::InvalidRequest(
+			"unsupported websocket version (expected 13)".into(),
+		));
 	}
 
 	let ws_key = ws_key.ok_or_else(|| UpgradeError::MissingHeader("Sec-WebSocket-Key".into()))?;
@@ -163,7 +173,7 @@ where
 
 	Ok(UpgradeResult {
 		path: path.to_string(),
-		host,
+		hostname,
 	})
 }
 

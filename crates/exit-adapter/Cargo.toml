@@ -1,0 +1,37 @@
+[package]
+name = "exit_adapter"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["tracing"]
+# integration_tests = []
+tracing = ["tokio/tracing"]
+
+[dependencies]
+anyhow = "1"
+protobuf = { path = "../protobuf" }
+smoltcp = { version = "0.12", default-features = false, features = [
+  "proto-ipv4",
+  "proto-ipv6",
+] }
+socket2 = "0.5"
+thiserror = "2"
+tokio.features = [
+  "rt-multi-thread",
+  "net",
+  "sync",
+  "macros",
+  "time",
+  "tracing",
+  "signal",
+]
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+test-log = "0.2"
+
+[lints]
+# workspace = true
+rust.unsafe_code = "warn"

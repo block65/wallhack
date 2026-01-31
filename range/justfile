@@ -1,0 +1,27 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+root := justfile_directory() / ".."
+
+# Build wallhack for musl
+build:
+    cd {{root}} && cross build -q --release --target x86_64-unknown-linux-musl
+
+# Start the cyber range
+up: build
+    docker compose up -d --build
+
+# Stop the cyber range
+down:
+    docker compose down
+
+# Shell into the attacker container
+shell:
+    docker exec -it wallhack-range-attacker-1 sh
+
+# Run range validation tests
+test:
+    bash test.sh
+
+# Stop and remove all volumes/images
+clean:
+    docker compose down -v --rmi local

@@ -222,7 +222,7 @@ async fn handle_request(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::control::metrics::Metrics;
+	use crate::{NodeRole, control::metrics::Metrics};
 	use protobuf::control::{ControlResponse, PingRequest, control_request, control_response};
 	use quinn::ClientConfig;
 	use std::time::Duration;
@@ -295,7 +295,7 @@ mod tests {
 		let metrics = Arc::new(Metrics::default());
 		let server = ControlServer::bind(
 			"127.0.0.1:0".parse().unwrap(),
-			HandlerConfig::default(),
+			HandlerConfig::new(NodeRole::Entry),
 			metrics,
 		)
 		.unwrap();

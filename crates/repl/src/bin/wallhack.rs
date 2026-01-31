@@ -3,8 +3,8 @@
 //! Usage:
 //!   wallhack                                    # Entry node with REPL (default)
 //!   wallhack --listen :7777                     # Entry node on custom port
-//!   wallhack --connect host:6565 --listen :7575 # Relay node
-//!   wallhack --connect host:6565                # Exit node
+//!   wallhack --connect hostname:6565 --listen :7575 # Relay node
+//!   wallhack --connect hostname:6565                # Exit node
 
 use anyhow::Result;
 use repl::{NodeRole, WallhackCli, parse_wallhack, run_entry, run_exit, run_relay};

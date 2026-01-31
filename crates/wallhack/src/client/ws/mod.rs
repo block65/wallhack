@@ -10,7 +10,9 @@ use std::{
 };
 
 use prost::Message;
-use protobuf::v2::{AgentHello, AgentResponse, HostInstruction, TunnelMessage, tunnel_message};
+use protobuf::v2::{
+	EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message,
+};
 use tokio::{
 	io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf},
 	net::TcpStream,
@@ -20,11 +22,12 @@ use tokio_tungstenite::{WebSocketStream, client_async};
 use yamux::Mode;
 
 use crate::{
+	NodeRole,
 	client::config::ClientConfig,
-	transport::{bridge, ws::WsTransport, ws_adapter::WsByteStream},
+	transport::{Transport, bridge, ws::WsTransport, ws_adapter::WsByteStream},
 };
 
-use super::client::{ClientRole, ConnectResult, ConnectionTasks};
+use super::client::{ConnectResult, ConnectionTasks};
 
 /// Errors that can occur in the WebSocket client.
 #[derive(Debug, thiserror::Error)]
@@ -159,7 +162,7 @@ impl WsClient {
 	/// # Errors
 	///
 	/// Returns an error if the connection fails.
-	pub async fn connect(&mut self, role: ClientRole) -> Result<ConnectResult, Error> {
+	pub async fn connect(&mut self, role: NodeRole) -> Result<ConnectResult<WsTransport>, Error> {
 		let addr = self.config.base.addr;
 		let hostname = self
 			.config
@@ -215,31 +218,31 @@ impl WsClient {
 			}
 		});
 
-		// Send AgentHello if we have an agent_id (exit nodes)
-		if let Some(ref agent_id) = self.config.base.agent_id {
-			tracing::debug!("Sending AgentHello with id: {}", agent_id);
+		// Send ExitNodeHello if we have an exit_id (exit nodes)
+		if let Some(ref exit_id) = self.config.base.exit_id {
+			tracing::debug!("Sending ExitNodeHello with id: {}", exit_id);
 			let hello = TunnelMessage {
-				message: Some(tunnel_message::Message::AgentHello(AgentHello {
-					agent_id: agent_id.clone(),
+				message: Some(tunnel_message::Message::ExitNodeHello(ExitNodeHello {
+					exit_id: exit_id.clone(),
 					version: env!("CARGO_PKG_VERSION").to_string(),
 				})),
 			};
 			let mut buf = Vec::new();
-			hello.encode(&mut buf).expect("failed to encode AgentHello");
+			hello
+				.encode(&mut buf)
+				.expect("failed to encode ExitNodeHello");
 
 			let mut send = transport
 				.open_uni()
 				.await
-				.map_err(|e| Error::Io(e.into()))?;
-			send.write_all(&buf)
-				.await
-				.map_err(|e| Error::Io(e.into()))?;
-			send.shutdown().await.map_err(|e| Error::Io(e.into()))?;
-			tracing::debug!("AgentHello sent successfully");
+				.map_err(|e| Error::Io(std::io::Error::other(e)))?;
+			send.write_all(&buf).await.map_err(Error::Io)?;
+			send.shutdown().await.map_err(Error::Io)?;
+			tracing::debug!("ExitNodeHello sent successfully");
 		}
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(256);
-		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(256);
+		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
+		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
 		// Task 1: Incoming data handler
 		let transport_data = Arc::clone(&transport);
@@ -257,8 +260,8 @@ impl WsClient {
 
 		// Task 2: Outgoing handler based on role
 		let outgoing_handle = match role {
-			ClientRole::Host => {
-				tracing::debug!("Listening for instructions to send to peer.");
+			NodeRole::Entry | NodeRole::Relay => {
+				tracing::debug!("Listening for instructions.");
 				let transport_out = Arc::clone(&transport);
 				let instructions_tx = instructions.clone();
 
@@ -270,8 +273,8 @@ impl WsClient {
 					}
 				})
 			}
-			ClientRole::Agent => {
-				tracing::debug!("Listening for AgentResponses to send to peer");
+			NodeRole::Exit => {
+				tracing::debug!("Listening for responses");
 				let transport_out = Arc::clone(&transport);
 				let responses_tx = responses.clone();
 
@@ -291,6 +294,7 @@ impl WsClient {
 		};
 
 		Ok(ConnectResult::new(
+			Arc::clone(&transport),
 			(instructions, responses),
 			remote_addr_str,
 			tasks,

@@ -8,7 +8,7 @@ use bytes::Bytes;
 use prost::Message;
 use protobuf::{
 	control::ControlRequest,
-	v2::{AgentHello, AgentResponse, HostInstruction, TunnelMessage, tunnel_message},
+	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message},
 };
 use tokio::{
 	io::{AsyncReadExt, AsyncWriteExt},
@@ -17,6 +17,9 @@ use tokio::{
 
 use crate::control::handler::Handler;
 use transport::{BiStream, Transport, TransportError};
+
+/// Maximum size for session init messages (1KB).
+pub const SESSION_INIT_MTU: usize = 1024;
 
 /// Maximum size for tunnel messages (2KB).
 const TUNNEL_MTU: usize = 2000;
@@ -29,8 +32,8 @@ const CONTROL_MTU: usize = 4096;
 /// Accepts unidirectional streams from the transport, decodes [`TunnelMessage`]s,
 /// and routes them to the appropriate broadcast channel (instructions or responses).
 ///
-/// If `agent_hello_tx` is provided, the first `AgentHello` received will be sent
-/// through it. This allows the caller to wait for agent identity before proceeding.
+/// If `exit_hello_tx` is provided, the first `ExitNodeHello` received will be sent
+/// through it. This allows the caller to wait for identity before proceeding.
 ///
 /// # Cancellation Safety
 ///
@@ -38,9 +41,9 @@ const CONTROL_MTU: usize = 4096;
 /// no data is lost.
 pub async fn run_incoming_data<T: Transport>(
 	transport: &T,
-	instructions_tx: &broadcast::Sender<HostInstruction>,
-	responses_tx: &broadcast::Sender<AgentResponse>,
-	mut agent_hello_tx: Option<oneshot::Sender<AgentHello>>,
+	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
+	responses_tx: &broadcast::Sender<ExitNodeResponse>,
+	mut exit_hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
 ) -> Result<(), TransportError> {
 	loop {
 		let Some(recv) = transport.accept_uni().await? else {
@@ -73,20 +76,20 @@ pub async fn run_incoming_data<T: Transport>(
 		};
 
 		match msg.message {
-			Some(tunnel_message::Message::AgentResponse(resp)) => {
-				tracing::trace!("Received AgentResponse from peer");
+			Some(tunnel_message::Message::ExitNodeResponse(resp)) => {
+				tracing::trace!("Received ExitNodeResponse from peer");
 				if responses_tx.send(resp).is_err() {
 					tracing::warn!(
-						"No receivers for AgentResponse - response dropped! (receivers={})",
+						"No receivers for ExitNodeResponse - response dropped! (receivers={})",
 						responses_tx.receiver_count()
 					);
 				}
 			}
-			Some(tunnel_message::Message::HostInstruction(instr)) => {
-				tracing::trace!("Received HostInstruction from peer");
+			Some(tunnel_message::Message::EntryNodeInstruction(instr)) => {
+				tracing::trace!("Received EntryNodeInstruction from peer");
 				if instructions_tx.send(instr).is_err() {
 					tracing::warn!(
-						"No receivers for HostInstruction - instruction dropped! (receivers={})",
+						"No receivers for EntryNodeInstruction - instruction dropped! (receivers={})",
 						instructions_tx.receiver_count()
 					);
 				}
@@ -94,14 +97,14 @@ pub async fn run_incoming_data<T: Transport>(
 			Some(tunnel_message::Message::RawPacket(pkt)) => {
 				tracing::warn!("Unhandled RawPacket message: {} bytes", pkt.data.len());
 			}
-			Some(tunnel_message::Message::AgentHello(hello)) => {
+			Some(tunnel_message::Message::ExitNodeHello(hello)) => {
 				tracing::info!(
-					"Received AgentHello: id={}, version={}",
-					hello.agent_id,
+					"Received ExitNodeHello: id={}, version={}",
+					hello.exit_id,
 					hello.version
 				);
 				// Send to oneshot channel if caller is waiting for it
-				if let Some(tx) = agent_hello_tx.take() {
+				if let Some(tx) = exit_hello_tx.take() {
 					let _ = tx.send(hello);
 				}
 			}
@@ -123,7 +126,7 @@ pub async fn run_incoming_data<T: Transport>(
 /// will be left on the wire.
 pub async fn run_outgoing_instructions<T: Transport>(
 	transport: &T,
-	instructions_tx: &broadcast::Sender<HostInstruction>,
+	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
 ) -> Result<(), TransportError> {
 	let mut rx = instructions_tx.subscribe();
 	let mut buf = Vec::with_capacity(TUNNEL_MTU);
@@ -141,7 +144,7 @@ pub async fn run_outgoing_instructions<T: Transport>(
 			}
 		};
 
-		tracing::trace!("Sending HostInstruction to peer");
+		tracing::trace!("Sending EntryNodeInstruction to peer");
 
 		let mut send = transport.open_uni().await?;
 
@@ -163,7 +166,7 @@ pub async fn run_outgoing_instructions<T: Transport>(
 	}
 }
 
-/// Runs the outgoing responses handler (for Agent role).
+/// Runs the outgoing responses handler
 ///
 /// Subscribes to the responses broadcast channel and sends each response
 /// to the peer over a new unidirectional stream.
@@ -174,7 +177,7 @@ pub async fn run_outgoing_instructions<T: Transport>(
 /// will be left on the wire.
 pub async fn run_outgoing_responses<T: Transport>(
 	transport: &T,
-	responses_tx: &broadcast::Sender<AgentResponse>,
+	responses_tx: &broadcast::Sender<ExitNodeResponse>,
 ) -> Result<(), TransportError> {
 	let mut rx = responses_tx.subscribe();
 	let mut buf = Vec::with_capacity(TUNNEL_MTU);
@@ -192,7 +195,7 @@ pub async fn run_outgoing_responses<T: Transport>(
 			}
 		};
 
-		tracing::trace!("Sending AgentResponse to peer");
+		tracing::trace!("Sending ExitNodeResponse to peer");
 
 		let mut send = transport.open_uni().await?;
 
@@ -276,4 +279,53 @@ pub async fn run_control_handler<T: Transport>(
 			tracing::trace!("Failed to finish control stream: {e}");
 		}
 	}
+}
+
+/// Read a length-delimited protobuf from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the stream closes unexpectedly or decoding fails.
+pub async fn read_length_delimited<M: Message + Default, S: tokio::io::AsyncRead + Unpin>(
+	stream: &mut S,
+	max_len: usize,
+) -> Result<M, TransportError> {
+	let len = stream
+		.read_u32()
+		.await
+		.map_err(|e| TransportError::stream(e.to_string()))?;
+	let len = usize::try_from(len).map_err(|_| TransportError::stream("length overflow"))?;
+	if len > max_len {
+		return Err(TransportError::stream("length exceeds maximum"));
+	}
+	let mut buf = vec![0u8; len];
+	stream
+		.read_exact(&mut buf)
+		.await
+		.map_err(|e| TransportError::stream(e.to_string()))?;
+	M::decode(&buf[..]).map_err(|e| TransportError::stream(e.to_string()))
+}
+
+/// Write a length-delimited protobuf to the stream.
+///
+/// # Errors
+///
+/// Returns an error if encoding or writing fails.
+pub async fn write_length_delimited<M: Message, S: tokio::io::AsyncWrite + Unpin>(
+	stream: &mut S,
+	msg: &M,
+) -> Result<(), TransportError> {
+	let mut buf = Vec::new();
+	msg.encode(&mut buf)
+		.map_err(|e| TransportError::stream(e.to_string()))?;
+	let len = u32::try_from(buf.len()).map_err(|_| TransportError::stream("length overflow"))?;
+	stream
+		.write_u32(len)
+		.await
+		.map_err(|e| TransportError::stream(e.to_string()))?;
+	stream
+		.write_all(&buf)
+		.await
+		.map_err(|e| TransportError::stream(e.to_string()))?;
+	Ok(())
 }

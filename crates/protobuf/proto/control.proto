@@ -29,7 +29,14 @@ message PingRequest {}
 message PingResponse {
   uint64 uptime_ms = 1;
   string version = 2;
-  string node_role = 3;  // "entry", "relay", "exit"
+  NodeRole node_role = 3;
+}
+
+enum NodeRole {
+  ROLE_UNKNOWN = 0;
+  ROLE_ENTRY = 1;
+  ROLE_RELAY = 2;
+  ROLE_EXIT = 3;
 }
 
 message StatsRequest {}

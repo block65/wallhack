@@ -6,11 +6,17 @@
 use std::{str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
+use tokio::io::AsyncWriteExt;
 
 use wallhack::{
-	agent::{net::SyscallAgentAdapter, orchestrator::Orchestrator},
-	client::client::{Client, ClientRole, ConnectResult},
+	NodeRole,
+	client::client::{Client, ConnectResult},
 	control::metrics::Metrics,
+	exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
+	transport::{
+		BiStream, Transport,
+		bridge::{SESSION_INIT_MTU, read_length_delimited},
+	},
 };
 
 #[cfg(feature = "quic")]
@@ -35,9 +41,9 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// Returns error if orchestrator fails (connection errors are retried).
 pub async fn run(cli: WallhackCli) -> Result<()> {
 	let connect_spec = cli.connect_spec().context("Exit node requires --connect")?;
-	let agent_id = cli.agent_id();
+	let exit_id = cli.exit_id();
 
-	crate::info!("Exit node starting with agent_id: {}", agent_id);
+	crate::info!("Exit node starting with exit_id: {}", exit_id);
 	crate::info!("Resolving {}", connect_spec.addr);
 
 	// Parse and resolve target address
@@ -55,7 +61,7 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_exit(&cli, endpoint, agent_id).await
+				run_quic_exit(&cli, endpoint, exit_id).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -65,7 +71,7 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_exit(&cli, endpoint, agent_id).await
+				run_ws_exit(&cli, endpoint, exit_id).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -76,26 +82,24 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 }
 
 /// Drive the exit node orchestrator with a connected client.
-async fn run_exit_loop(connect_result: ConnectResult) -> Result<()> {
+async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
+	connect_result: ConnectResult<T>,
+) -> Result<()> {
 	crate::info!("Connected to {}", connect_result.client_ident());
 
 	// Create syscall adapter for local network access
-	let adapter = SyscallAgentAdapter::new();
+	let adapter = SyscallExitAdapter::new();
 	let metrics = Arc::new(Metrics::default());
 
-	// Create orchestrator
 	let orchestrator = Orchestrator::new(Arc::new(adapter), metrics);
 
-	// Split into channels and connection tasks
+	let transport = connect_result.transport();
 	let ((instr, resp), mut tasks) = connect_result.into_parts();
-
-	// Run orchestrator and monitor connection health concurrently.
-	// If either the orchestrator exits OR the connection tasks die, we reconnect.
-	let orchestrator_fut = orchestrator.drive(resp, instr.subscribe());
+	let stream_fut = run_stream_listener(transport);
 	let disconnect_fut = tasks.wait_for_disconnect();
 
 	tokio::select! {
-		result = orchestrator_fut => {
+		result = orchestrator.drive(resp, instr.subscribe()) => {
 			match result {
 				Ok(()) => {
 					crate::info!("Connection closed cleanly");
@@ -107,7 +111,12 @@ async fn run_exit_loop(connect_result: ConnectResult) -> Result<()> {
 				}
 			}
 		}
-		_ = disconnect_fut => {
+		result = stream_fut => {
+			if let Err(e) = result {
+				crate::error!("Stream handler error: {e}");
+			}
+		}
+		() = disconnect_fut => {
 			crate::info!("Connection tasks died - transport disconnected");
 			println!("Transport disconnected, reconnecting...");
 		}
@@ -116,19 +125,89 @@ async fn run_exit_loop(connect_result: ConnectResult) -> Result<()> {
 	Ok(())
 }
 
+async fn run_stream_listener<T: Transport>(transport: std::sync::Arc<T>) -> Result<()>
+where
+	T::BiStream: 'static,
+{
+	tracing::trace!("Stream listener started");
+	loop {
+		let Some(mut stream) = transport.accept_bi().await? else {
+			return Ok(());
+		};
+		tracing::trace!("Accepted bi-stream from entry");
+		tokio::spawn(async move {
+			if let Err(e) = handle_stream(&mut stream).await {
+				tracing::warn!("stream handler failed: {e}");
+			}
+		});
+	}
+}
+
+async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
+	let init = read_length_delimited::<protobuf::v2::SessionInit, _>(stream, SESSION_INIT_MTU)
+		.await
+		.map_err(|e| anyhow::anyhow!(e))?;
+	tracing::trace!(target = %init.target_addr, source = %init.source_addr, protocol = init.protocol, "SessionInit received");
+	let target: std::net::SocketAddr = init.target_addr.parse()?;
+	let source: Option<std::net::SocketAddr> = if init.source_addr.is_empty() {
+		None
+	} else {
+		Some(init.source_addr.parse()?)
+	};
+	match init.protocol {
+		val if val == protobuf::v2::SessionProtocol::Tcp as i32 => {
+			// Note: source address is informational only, we don't bind to it
+			// because it may not exist in our namespace
+			let mut socket = tokio::net::TcpStream::connect(target).await?;
+			let _ = tokio::io::copy_bidirectional(&mut *stream, &mut socket).await?;
+		}
+		val if val == protobuf::v2::SessionProtocol::Udp as i32 => {
+			// Note: source address is informational only, we don't bind to it
+			// because it may not exist in our namespace (same as TCP)
+			tracing::trace!(target = %target, source = ?source, "Processing UDP session");
+			let socket = tokio::net::UdpSocket::bind(match target {
+				std::net::SocketAddr::V4(_) => {
+					std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))
+				}
+				std::net::SocketAddr::V6(_) => {
+					std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0))
+				}
+			})
+			.await?;
+			let mut buf = Vec::new();
+			tokio::io::AsyncReadExt::read_to_end(stream, &mut buf).await?;
+			tracing::trace!(buf_len = buf.len(), "Read UDP payload from stream");
+			if !buf.is_empty() {
+				tracing::trace!(target = %target, "Sending UDP to target");
+				let _ = socket.send_to(&buf, target).await?;
+				let mut recv_buf = vec![0u8; 65535];
+				tracing::trace!("Waiting for UDP response...");
+				let (size, from) = socket.recv_from(&mut recv_buf).await?;
+				tracing::trace!(size, from = %from, "Received UDP response");
+				stream.write_all(&recv_buf[..size]).await?;
+				stream.finish().await?;
+			}
+		}
+		_ => {
+			tracing::warn!("unsupported session protocol {}", init.protocol);
+		}
+	}
+	Ok(())
+}
+
 #[cfg(feature = "quic")]
 async fn run_quic_exit(
 	cli: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-	agent_id: String,
+	exit_id: String,
 ) -> Result<()> {
-	let client_config = build_quic_client_config(cli, endpoint, agent_id);
+	let client_config = build_quic_client_config(cli, endpoint, exit_id);
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
 	loop {
 		let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
 
-		match client.connect(ClientRole::Agent).await {
+		match client.connect(NodeRole::Exit).await {
 			Ok(connect_result) => {
 				retry_delay = INITIAL_RETRY_DELAY;
 				run_exit_loop(connect_result).await?;
@@ -147,7 +226,7 @@ async fn run_quic_exit(
 async fn run_ws_exit(
 	cli: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-	agent_id: String,
+	exit_id: String,
 ) -> Result<()> {
 	use wallhack::client::{
 		config::ClientConfig,
@@ -159,7 +238,7 @@ async fn run_ws_exit(
 			addr: endpoint,
 			hostname: cli.hostname.clone(),
 			mtls: None,
-			agent_id: Some(agent_id),
+			exit_id: Some(exit_id),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -171,7 +250,7 @@ async fn run_ws_exit(
 	loop {
 		let mut client = WsClient::new(client_config.clone())?;
 
-		match client.connect(ClientRole::Agent).await {
+		match client.connect(NodeRole::Exit).await {
 			Ok(connect_result) => {
 				retry_delay = INITIAL_RETRY_DELAY;
 				run_exit_loop(connect_result).await?;
@@ -190,7 +269,7 @@ async fn run_ws_exit(
 fn build_quic_client_config(
 	cli: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-	agent_id: String,
+	exit_id: String,
 ) -> ClientConfig {
 	let mtls = match (&cli.cert, &cli.key) {
 		(Some(cert), Some(key)) => Some(MtlsConfig {
@@ -205,7 +284,7 @@ fn build_quic_client_config(
 		addr: endpoint,
 		hostname: cli.hostname.clone(),
 		mtls,
-		agent_id: Some(agent_id),
+		exit_id: Some(exit_id),
 		..Default::default()
 	}
 }

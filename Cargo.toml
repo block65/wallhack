@@ -22,18 +22,3 @@ opt-level = 0
 strip = true
 opt-level = 3 # all
 lto = true
-
-# agent has to be as small as possible
-[profile.agent-release]
-inherits = "release"
-opt-level = "z"      # Optimize for size.
-codegen-units = 1
-panic = "abort"
-
-[profile.wasm-release]
-inherits = "release"
-codegen-units = 1
-debug = false
-lto = true
-opt-level = "s"
-panic = "abort"

@@ -5,6 +5,8 @@ use smoltcp::{
 	time::Instant,
 };
 
+use super::peek_device::PeekDevice;
+
 /// A virtual network device backed by in-memory queues.
 ///
 /// Packets injected via [`inject`](Self::inject) appear as received frames.
@@ -13,16 +15,6 @@ use smoltcp::{
 ///
 /// This device uses [`Medium::Ip`] (L3, no Ethernet framing), matching
 /// TUN device semantics.
-///
-/// # Examples
-///
-/// ```
-/// use netstack::inner::device::VecDevice;
-///
-/// let mut dev = VecDevice::new(1500);
-/// dev.inject(vec![0u8; 40]);
-/// assert_eq!(dev.ingress_len(), 1);
-/// ```
 #[derive(Debug)]
 pub struct VecDevice {
 	ingress: VecDeque<Vec<u8>>,
@@ -32,13 +24,6 @@ pub struct VecDevice {
 
 impl VecDevice {
 	/// Creates a new `VecDevice` with the given MTU.
-	///
-	/// # Examples
-	///
-	/// ```
-	/// use netstack::inner::device::VecDevice;
-	/// let dev = VecDevice::new(1500);
-	/// ```
 	#[must_use]
 	pub fn new(mtu: usize) -> Self {
 		Self {
@@ -68,6 +53,18 @@ impl VecDevice {
 	#[must_use]
 	pub fn egress_len(&self) -> usize {
 		self.egress.len()
+	}
+
+	/// Returns the next ingress packet without consuming it.
+	#[must_use]
+	pub fn peek_ingress(&self) -> Option<&[u8]> {
+		self.ingress.front().map(std::vec::Vec::as_slice)
+	}
+}
+
+impl PeekDevice for VecDevice {
+	fn peek_ingress(&mut self) -> Option<&[u8]> {
+		self.ingress.front().map(std::vec::Vec::as_slice)
 	}
 }
 

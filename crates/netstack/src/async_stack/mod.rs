@@ -1,12 +1,21 @@
 pub mod tcp_listener;
+pub mod tcp_listener_any;
 pub mod tcp_stream;
+pub mod udp_socket;
 
-use std::sync::{Arc, Mutex};
+use std::{
+	collections::HashSet,
+	sync::{Arc, Mutex},
+};
 
-use smoltcp::{phy::Device, time::Instant as SmolInstant};
+use smoltcp::{
+	phy::Device,
+	time::Instant as SmolInstant,
+	wire::{IpProtocol, IpVersion},
+};
 use tokio::{sync::Notify, task::JoinHandle};
 
-use crate::inner::InnerStack;
+use crate::inner::{InnerStack, peek_device::PeekDevice};
 
 /// Shared state between the poll loop and async socket handles.
 ///
@@ -42,6 +51,11 @@ pub(crate) struct Shared<D: Device> {
 pub struct Netstack<D: Device + Send + 'static> {
 	shared: Arc<Shared<D>>,
 	poll_handle: JoinHandle<()>,
+	jit_tcp: bool,
+	jit_udp: bool,
+	tcp_ports: Arc<Mutex<HashSet<u16>>>,
+	udp_ports: Arc<Mutex<HashSet<u16>>>,
+	jit_notify: Arc<Notify>,
 }
 
 impl<D: Device + Send + 'static> Netstack<D> {
@@ -59,13 +73,53 @@ impl<D: Device + Send + 'static> Netstack<D> {
 
 		let poll_handle = {
 			let shared = Arc::clone(&shared);
-			tokio::spawn(poll_loop(shared))
+			tokio::spawn(poll_loop_basic(shared))
 		};
 
 		Self {
 			shared,
 			poll_handle,
+			jit_tcp: false,
+			jit_udp: false,
+			tcp_ports: Arc::new(Mutex::new(HashSet::new())),
+			udp_ports: Arc::new(Mutex::new(HashSet::new())),
+			jit_notify: Arc::new(Notify::new()),
 		}
+	}
+
+	/// Enable JIT TCP listeners for any destination port.
+	pub fn enable_tcp_listen_any(&mut self)
+	where
+		D: PeekDevice,
+	{
+		self.jit_tcp = true;
+		self.restart_poll_loop();
+	}
+
+	/// Enable JIT UDP listeners for any destination port.
+	pub fn enable_udp_bind_any(&mut self)
+	where
+		D: PeekDevice,
+	{
+		self.jit_udp = true;
+		self.restart_poll_loop();
+	}
+
+	fn restart_poll_loop(&mut self)
+	where
+		D: PeekDevice,
+	{
+		self.poll_handle.abort();
+		let shared = Arc::clone(&self.shared);
+		let jit_tcp = self.jit_tcp;
+		let jit_udp = self.jit_udp;
+		let tcp_ports = Arc::clone(&self.tcp_ports);
+		let udp_ports = Arc::clone(&self.udp_ports);
+		let notify = Arc::clone(&self.jit_notify);
+		self.poll_handle = tokio::spawn(poll_loop_jit(
+			shared, jit_tcp, jit_udp, tcp_ports, udp_ports, notify,
+		));
+		self.wake();
 	}
 
 	/// Create a TCP listener on the given port.
@@ -80,6 +134,44 @@ impl<D: Device + Send + 'static> Netstack<D> {
 		backlog: usize,
 	) -> Result<tcp_listener::TcpListener<D>, crate::error::Error> {
 		tcp_listener::TcpListener::new(Arc::clone(&self.shared), port, backlog)
+	}
+
+	/// Create a TCP listener that accepts on any port via JIT binding.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the listener cannot be created.
+	pub fn tcp_listen_any(
+		&mut self,
+		backlog: usize,
+	) -> Result<tcp_listener_any::TcpListenerAny<D>, crate::error::Error>
+	where
+		D: PeekDevice,
+	{
+		self.enable_tcp_listen_any();
+		Ok(tcp_listener_any::TcpListenerAny::new(
+			Arc::clone(&self.shared),
+			Arc::clone(&self.jit_notify),
+			Arc::clone(&self.tcp_ports),
+			backlog,
+		))
+	}
+
+	/// Create a UDP socket that accepts on any port via JIT binding.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the socket cannot be created.
+	pub fn udp_bind_any(&mut self) -> Result<udp_socket::UdpSocketAny<D>, crate::error::Error>
+	where
+		D: PeekDevice,
+	{
+		self.enable_udp_bind_any();
+		Ok(udp_socket::UdpSocketAny::new(
+			Arc::clone(&self.shared),
+			Arc::clone(&self.jit_notify),
+			Arc::clone(&self.udp_ports),
+		))
 	}
 
 	/// Wake the poll loop to process pending work immediately.
@@ -103,7 +195,7 @@ impl<D: Device + Send + 'static> Drop for Netstack<D> {
 ///
 /// This function is safe to cancel (abort) at any point — the only state
 /// is behind the mutex, which is never held across an await.
-async fn poll_loop<D: Device + Send + 'static>(shared: Arc<Shared<D>>) {
+async fn poll_loop_basic<D: Device + Send + 'static>(shared: Arc<Shared<D>>) {
 	loop {
 		let delay = {
 			let mut inner = shared.inner.lock().expect("poll loop mutex poisoned");
@@ -121,12 +213,10 @@ async fn poll_loop<D: Device + Send + 'static>(shared: Arc<Shared<D>>) {
 				let diff = poll_at - now;
 				tokio::time::Duration::from_millis(diff.total_millis())
 			})
-			// Lock is dropped here
 		};
 
 		match delay {
 			Some(d) if d.is_zero() => {
-				// Need to poll again immediately, but yield to let other tasks run
 				tokio::task::yield_now().await;
 			}
 			Some(d) => {
@@ -136,9 +226,138 @@ async fn poll_loop<D: Device + Send + 'static>(shared: Arc<Shared<D>>) {
 				}
 			}
 			None => {
-				// No timer pending; wait for external notification
 				shared.notify.notified().await;
 			}
 		}
 	}
+}
+
+async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
+	shared: Arc<Shared<D>>,
+	jit_tcp: bool,
+	jit_udp: bool,
+	tcp_ports: Arc<Mutex<HashSet<u16>>>,
+	udp_ports: Arc<Mutex<HashSet<u16>>>,
+	notify: Arc<Notify>,
+) {
+	loop {
+		let delay = {
+			let mut inner = shared.inner.lock().expect("poll loop mutex poisoned");
+			let now = SmolInstant::from_millis(
+				i64::try_from(
+					std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.expect("system clock before epoch")
+						.as_millis(),
+				)
+				.expect("timestamp overflow"),
+			);
+			if jit_tcp || jit_udp {
+				let peeked = inner.peek_ingress().map(<[u8]>::to_vec);
+				if let Some(packet) = peeked {
+					let _ = jit_bind_ports(
+						&mut inner, &packet, jit_tcp, jit_udp, &tcp_ports, &udp_ports, &notify,
+					);
+				}
+			}
+			inner.poll(now);
+			// Notify listeners after poll - sockets may have transitioned to established
+			notify.notify_waiters();
+			inner.poll_at(now).map(|poll_at| {
+				let diff = poll_at - now;
+				tokio::time::Duration::from_millis(diff.total_millis())
+			})
+		};
+
+		match delay {
+			Some(d) if d.is_zero() => {
+				// Need to poll again immediately, but yield to let other tasks run
+				tokio::task::yield_now().await;
+			}
+			Some(d) => {
+				// We need to poll even if the stack says it can wait, because
+				// new packets might arrive on the TUN interface which we need
+				// to JIT bind.
+				//
+				// TODO: This is inefficient (busy loop with 1ms sleep).
+				// Proper fix requires AsyncDevice trait so we can await on read.
+				tokio::select! {
+					() = tokio::time::sleep(d.min(tokio::time::Duration::from_millis(10))) => {}
+					() = shared.notify.notified() => {}
+				}
+			}
+			None => {
+				// Same here - wake up periodically to check for new packets
+				tokio::select! {
+					() = tokio::time::sleep(tokio::time::Duration::from_millis(10)) => {}
+					() = shared.notify.notified() => {}
+				}
+			}
+		}
+	}
+}
+
+fn jit_bind_ports<D: Device + Send + 'static>(
+	inner: &mut InnerStack<D>,
+	packet: &[u8],
+	jit_tcp: bool,
+	jit_udp: bool,
+	tcp_ports: &Arc<Mutex<HashSet<u16>>>,
+	udp_ports: &Arc<Mutex<HashSet<u16>>>,
+	notify: &Arc<Notify>,
+) -> Result<(), crate::error::Error> {
+	let Some((protocol, dst_port)) = parse_l4(packet) else {
+		return Ok(());
+	};
+
+	match protocol {
+		IpProtocol::Tcp if jit_tcp && dst_port != 0 => {
+			if !tcp_ports.lock().expect("tcp port lock").contains(&dst_port) {
+				#[cfg(feature = "async")]
+				tracing::info!("JIT TCP: observed SYN for port {}", dst_port);
+			}
+			inner.ensure_tcp_listener(dst_port)?;
+			tcp_ports.lock().expect("tcp port lock").insert(dst_port);
+			notify.notify_waiters();
+		}
+		IpProtocol::Udp if jit_udp && dst_port != 0 => {
+			tracing::trace!(dst_port, "JIT binding UDP listener");
+			inner.ensure_udp_listener(dst_port)?;
+			udp_ports.lock().expect("udp port lock").insert(dst_port);
+			notify.notify_waiters();
+		}
+		_ => {}
+	}
+
+	Ok(())
+}
+
+fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
+	let version = IpVersion::of_packet(packet).ok()?;
+	match version {
+		IpVersion::Ipv4 => parse_ipv4_l4(packet),
+		IpVersion::Ipv6 => parse_ipv6_l4(packet),
+	}
+}
+
+fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
+	if packet.len() < 20 {
+		return None;
+	}
+	let ihl = (packet[0] & 0x0f) as usize * 4;
+	if packet.len() < ihl + 4 {
+		return None;
+	}
+	let protocol = IpProtocol::from(packet[9]);
+	let dst_port = u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]);
+	Some((protocol, dst_port))
+}
+
+fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16)> {
+	if packet.len() < 44 {
+		return None;
+	}
+	let next_header = IpProtocol::from(packet[6]);
+	let dst_port = u16::from_be_bytes([packet[42], packet[43]]);
+	Some((next_header, dst_port))
 }

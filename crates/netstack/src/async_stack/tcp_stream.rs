@@ -12,8 +12,8 @@ use super::Shared;
 
 /// An async TCP stream backed by the smoltcp stack.
 ///
-/// Implements [`AsyncRead`] and [`AsyncWrite`]. When the stream is dropped
-/// the underlying socket is aborted and the poll loop is notified.
+/// Implements [`AsyncRead`] and [`AsyncWrite`]. When the stream is dropped the
+/// underlying socket is aborted and the poll loop is notified.
 pub struct TcpStream<D: Device + Send + 'static> {
 	shared: Arc<Shared<D>>,
 	handle: SocketHandle,
@@ -40,6 +40,28 @@ impl<D: Device + Send + 'static> TcpStream<D> {
 		let inner = self.shared.inner.lock().expect("mutex poisoned");
 		inner.tcp_socket(self.handle).state()
 	}
+
+	/// Returns the remote endpoint for this stream, if connected.
+	///
+	/// # Panics
+	///
+	/// Panics if the mutex is poisoned.
+	#[must_use]
+	pub fn remote_endpoint(&self) -> Option<smoltcp::wire::IpEndpoint> {
+		let inner = self.shared.inner.lock().expect("mutex poisoned");
+		inner.tcp_socket(self.handle).remote_endpoint()
+	}
+
+	/// Returns the local endpoint for this stream, if connected.
+	///
+	/// # Panics
+	///
+	/// Panics if the mutex is poisoned.
+	#[must_use]
+	pub fn local_endpoint(&self) -> Option<smoltcp::wire::IpEndpoint> {
+		let inner = self.shared.inner.lock().expect("mutex poisoned");
+		inner.tcp_socket(self.handle).local_endpoint()
+	}
 }
 
 impl<D: Device + Send + 'static> AsyncRead for TcpStream<D> {
@@ -61,6 +83,7 @@ impl<D: Device + Send + 'static> AsyncRead for TcpStream<D> {
 		match socket.recv_slice(buf.initialize_unfilled()) {
 			Ok(0) => Poll::Pending,
 			Ok(n) => {
+				tracing::trace!(bytes = n, "TcpStream recv");
 				buf.advance(n);
 				drop(inner);
 				self.shared.notify.notify_one();
@@ -96,6 +119,7 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 		match socket.send_slice(buf) {
 			Ok(0) => Poll::Pending,
 			Ok(n) => {
+				tracing::trace!(bytes = n, "TcpStream send");
 				drop(inner);
 				self.shared.notify.notify_one();
 				Poll::Ready(Ok(n))

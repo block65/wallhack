@@ -1,54 +1,61 @@
-use protobuf::v2::{AgentHello, AgentResponse, HostInstruction};
+use protobuf::v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse};
 use tokio::sync::oneshot;
+use transport::Transport;
 
-use crate::control::{handler::HandlerConfig, metrics::SharedMetrics};
+use crate::{
+	NodeRole,
+	control::{handler::HandlerConfig, metrics::SharedMetrics},
+};
 
 use super::config;
 
-#[derive(Clone, Copy, Debug)]
-pub enum ServerRole {
-	Agent,
-	Host,
-}
-
 pub type Channels = (
-	tokio::sync::broadcast::Sender<HostInstruction>,
-	tokio::sync::broadcast::Sender<AgentResponse>,
+	tokio::sync::broadcast::Sender<EntryNodeInstruction>,
+	tokio::sync::broadcast::Sender<ExitNodeResponse>,
 );
 
 /// Result of accepting a connection on the server.
-pub struct AcceptResult {
+pub struct AcceptResult<T: Transport> {
 	channels: Channels,
 	peer_ident: String,
 	metrics: SharedMetrics,
-	agent_hello_rx: Option<oneshot::Receiver<AgentHello>>,
+	hello_rx: Option<oneshot::Receiver<ExitNodeHello>>,
+	transport: std::sync::Arc<T>,
 }
 
-impl AcceptResult {
+impl<T: Transport> AcceptResult<T> {
 	/// Creates a new accept result.
 	#[must_use]
-	pub fn new(channels: Channels, peer_ident: String, metrics: SharedMetrics) -> Self {
-		Self {
-			channels,
-			peer_ident,
-			metrics,
-			agent_hello_rx: None,
-		}
-	}
-
-	/// Creates a new accept result with an AgentHello receiver.
-	#[must_use]
-	pub fn with_agent_hello(
+	pub fn new(
+		transport: std::sync::Arc<T>,
 		channels: Channels,
 		peer_ident: String,
 		metrics: SharedMetrics,
-		agent_hello_rx: oneshot::Receiver<AgentHello>,
 	) -> Self {
 		Self {
 			channels,
 			peer_ident,
 			metrics,
-			agent_hello_rx: Some(agent_hello_rx),
+			hello_rx: None,
+			transport,
+		}
+	}
+
+	/// Creates a new accept result with an `ExitNodeHello` receiver.
+	#[must_use]
+	pub fn with_exit_hello(
+		transport: std::sync::Arc<T>,
+		channels: Channels,
+		peer_ident: String,
+		metrics: SharedMetrics,
+		hello_rx: oneshot::Receiver<ExitNodeHello>,
+	) -> Self {
+		Self {
+			channels,
+			peer_ident,
+			metrics,
+			hello_rx: Some(hello_rx),
+			transport,
 		}
 	}
 
@@ -70,16 +77,23 @@ impl AcceptResult {
 		self.metrics.clone()
 	}
 
-	/// Takes the AgentHello receiver, if available.
+	/// Returns the transport for this connection.
+	#[must_use]
+	pub fn transport(&self) -> std::sync::Arc<T> {
+		std::sync::Arc::clone(&self.transport)
+	}
+
+	/// Takes the `ExitNodeHello` receiver, if available.
 	///
-	/// This can be used to wait for agent identity before creating TUN interfaces.
-	pub fn take_agent_hello_rx(&mut self) -> Option<oneshot::Receiver<AgentHello>> {
-		self.agent_hello_rx.take()
+	/// This can be used to wait for exit node identity before creating TUN
+	/// interfaces.
+	pub fn take_hello_rx(&mut self) -> Option<oneshot::Receiver<ExitNodeHello>> {
+		self.hello_rx.take()
 	}
 }
 
 /// Configuration for server with control support.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ServerOptions {
 	/// Handler configuration for control requests.
 	pub handler_config: HandlerConfig,
@@ -89,6 +103,7 @@ pub struct ServerOptions {
 
 pub trait Server {
 	type Error: std::error::Error + std::fmt::Debug + Send + Sync + 'static;
+	type Transport: Transport;
 
 	/// Creates a new server with the given configuration and options.
 	fn try_new(config: config::ServerConfig, options: ServerOptions) -> Result<Self, Self::Error>
@@ -101,6 +116,7 @@ pub trait Server {
 	/// Accepts a new connection.
 	fn accept(
 		&mut self,
-		role: ServerRole,
-	) -> impl std::future::Future<Output = Result<Option<AcceptResult>, Self::Error>> + Send;
+		role: NodeRole,
+	) -> impl std::future::Future<Output = Result<Option<AcceptResult<Self::Transport>>, Self::Error>>
+	+ Send;
 }

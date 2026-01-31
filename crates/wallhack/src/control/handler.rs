@@ -1,29 +1,34 @@
 //! Control channel request handler.
 //!
-//! Handles incoming [`ControlRequest`] messages and produces [`ControlResponse`] messages.
+//! Handles incoming [`ControlRequest`] messages and produces
+//! [`ControlResponse`] messages.
 
 use std::{sync::atomic::Ordering, time::Instant};
 
 use protobuf::control::{
-	ControlRequest, ControlResponse, ErrorResponse, PingResponse, StatsResponse, control_request,
-	control_response,
+	ControlRequest, ControlResponse, ErrorResponse, NodeRole as ProtoNodeRole, PingResponse,
+	StatsResponse, control_request, control_response,
 };
+
+use crate::NodeRole;
 
 use super::metrics::SharedMetrics;
 
 /// Configuration for the control handler.
 #[derive(Debug, Clone)]
 pub struct HandlerConfig {
-	/// The role of this node (e.g., "host", "agent", "relay").
-	pub node_role: String,
+	/// The role of this node.
+	pub node_role: NodeRole,
 	/// Application version string.
 	pub version: String,
 }
 
-impl Default for HandlerConfig {
-	fn default() -> Self {
+impl HandlerConfig {
+	/// Creates a new handler configuration with the specified role.
+	#[must_use]
+	pub fn new(node_role: NodeRole) -> Self {
 		Self {
-			node_role: "unknown".to_string(),
+			node_role,
 			version: env!("CARGO_PKG_VERSION").to_string(),
 		}
 	}
@@ -31,8 +36,8 @@ impl Default for HandlerConfig {
 
 /// Handler for control channel requests.
 ///
-/// Processes incoming control requests and returns appropriate responses
-/// based on the current state of metrics and configuration.
+/// Processes incoming control requests and returns appropriate responses based
+/// on the current state of metrics and configuration.
 pub struct Handler {
 	config: HandlerConfig,
 	metrics: SharedMetrics,
@@ -54,7 +59,8 @@ impl Handler {
 	///
 	/// # Errors
 	///
-	/// Returns an error response if the request is malformed or cannot be processed.
+	/// Returns an error response if the request is malformed or cannot be
+	/// processed.
 	#[must_use]
 	pub fn handle(&self, request: ControlRequest) -> ControlResponse {
 		match request.request {
@@ -74,7 +80,7 @@ impl Handler {
 			response: Some(control_response::Response::Ping(PingResponse {
 				uptime_ms: u64::try_from(uptime.as_millis()).unwrap_or(u64::MAX),
 				version: self.config.version.clone(),
-				node_role: self.config.node_role.clone(),
+				node_role: ProtoNodeRole::from(self.config.node_role).into(),
 			})),
 		}
 	}
@@ -146,7 +152,7 @@ mod tests {
 
 	fn test_handler() -> Handler {
 		let metrics = Arc::new(Metrics::default());
-		Handler::new(HandlerConfig::default(), metrics)
+		Handler::new(HandlerConfig::new(NodeRole::Entry), metrics)
 	}
 
 	#[test]
@@ -162,7 +168,7 @@ mod tests {
 		match response.response {
 			Some(control_response::Response::Ping(ping)) => {
 				assert!(!ping.version.is_empty());
-				assert_eq!(ping.node_role, "unknown");
+				assert_eq!(ping.node_role, ProtoNodeRole::RoleEntry.into());
 			}
 			_ => panic!("Expected ping response"),
 		}
@@ -174,7 +180,7 @@ mod tests {
 		metrics.inc_bytes_in(100);
 		metrics.inc_packets_out(5);
 
-		let handler = Handler::new(HandlerConfig::default(), metrics);
+		let handler = Handler::new(HandlerConfig::new(NodeRole::Entry), metrics);
 		let request = ControlRequest {
 			request: Some(control_request::Request::Stats(
 				protobuf::control::StatsRequest {},

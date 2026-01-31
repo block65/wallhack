@@ -450,3 +450,183 @@ fn pcap_replay_full_handshake() {
 	let n = socket.recv_slice(&mut recv_buf).expect("recv data");
 	assert_eq!(&recv_buf[..n], data);
 }
+
+/// Test AnyIP mode with 0.0.0.0/0 address - mirrors TunActor config
+#[test]
+fn anyip_syn_response() {
+	use smoltcp::wire::{
+		IpProtocol, Ipv4Packet, Ipv4Repr, TcpControl, TcpPacket, TcpRepr, TcpSeqNumber,
+	};
+
+	let device = VecDevice::new(1500);
+
+	// This mirrors the TunActor config exactly
+	let config = StackConfig {
+		ip_addrs: vec![IpCidr::new(Ipv4Address::UNSPECIFIED.into(), 0)],
+		any_ip: true,
+		..StackConfig::default()
+	};
+
+	let mut stack = InnerStack::new(device, config);
+	let _h = stack.tcp_listen(9999).expect("listen on 9999");
+
+	// SYN from 10.200.1.10:44678 to 10.200.2.10:9999 (like the smoketest)
+	let src_addr = Ipv4Address::new(10, 200, 1, 10);
+	let dst_addr = Ipv4Address::new(10, 200, 2, 10);
+
+	let tcp_repr = TcpRepr {
+		src_port: 44678,
+		dst_port: 9999,
+		control: TcpControl::Syn,
+		seq_number: TcpSeqNumber(2078392895),
+		ack_number: None,
+		window_len: 64240,
+		window_scale: Some(10),
+		max_seg_size: Some(1460),
+		sack_permitted: true,
+		sack_ranges: [None; 3],
+		payload: &[],
+		timestamp: None,
+	};
+
+	let ip_repr = Ipv4Repr {
+		src_addr,
+		dst_addr,
+		next_header: IpProtocol::Tcp,
+		payload_len: tcp_repr.header_len(),
+		hop_limit: 64,
+	};
+
+	let total_len = ip_repr.buffer_len() + tcp_repr.header_len();
+	let mut buf = vec![0u8; total_len];
+	{
+		let mut ip_pkt = Ipv4Packet::new_unchecked(&mut buf);
+		ip_repr.emit(&mut ip_pkt, &smoltcp::phy::ChecksumCapabilities::default());
+	}
+	let ip_hdr_len = {
+		let ip_pkt = Ipv4Packet::new_unchecked(&buf);
+		ip_pkt.header_len() as usize
+	};
+	{
+		let mut tcp_pkt = TcpPacket::new_unchecked(&mut buf[ip_hdr_len..]);
+		tcp_repr.emit(
+			&mut tcp_pkt,
+			&src_addr.into(),
+			&dst_addr.into(),
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
+	}
+
+	stack.device_mut().inject(buf);
+	let now = Instant::from_millis(1000);
+	stack.poll(now);
+
+	let egress = stack.device_mut().drain_egress();
+	assert!(
+		!egress.is_empty(),
+		"expected SYN-ACK response with AnyIP mode"
+	);
+
+	// Verify it's a SYN-ACK
+	let reply_ip = Ipv4Packet::new_checked(&egress[0]).expect("valid IPv4");
+	assert_eq!(
+		reply_ip.src_addr(),
+		dst_addr,
+		"reply src should be original dst"
+	);
+	assert_eq!(
+		reply_ip.dst_addr(),
+		src_addr,
+		"reply dst should be original src"
+	);
+
+	let reply_tcp = TcpPacket::new_checked(reply_ip.payload()).expect("valid TCP");
+	assert!(reply_tcp.syn(), "SYN flag");
+	assert!(reply_tcp.ack(), "ACK flag");
+}
+
+/// Test JIT binding flow - listener created AFTER peeking SYN, BEFORE poll
+#[test]
+fn anyip_jit_binding_flow() {
+	use smoltcp::wire::{
+		IpProtocol, Ipv4Packet, Ipv4Repr, TcpControl, TcpPacket, TcpRepr, TcpSeqNumber,
+	};
+
+	let device = VecDevice::new(1500);
+
+	let config = StackConfig {
+		ip_addrs: vec![IpCidr::new(Ipv4Address::UNSPECIFIED.into(), 0)],
+		any_ip: true,
+		..StackConfig::default()
+	};
+
+	let mut stack = InnerStack::new(device, config);
+	// NOTE: No tcp_listen here - we'll create it after peeking
+
+	let src_addr = Ipv4Address::new(10, 200, 1, 10);
+	let dst_addr = Ipv4Address::new(10, 200, 2, 10);
+
+	let tcp_repr = TcpRepr {
+		src_port: 44678,
+		dst_port: 9999,
+		control: TcpControl::Syn,
+		seq_number: TcpSeqNumber(2078392895),
+		ack_number: None,
+		window_len: 64240,
+		window_scale: Some(10),
+		max_seg_size: Some(1460),
+		sack_permitted: true,
+		sack_ranges: [None; 3],
+		payload: &[],
+		timestamp: None,
+	};
+
+	let ip_repr = Ipv4Repr {
+		src_addr,
+		dst_addr,
+		next_header: IpProtocol::Tcp,
+		payload_len: tcp_repr.header_len(),
+		hop_limit: 64,
+	};
+
+	let total_len = ip_repr.buffer_len() + tcp_repr.header_len();
+	let mut buf = vec![0u8; total_len];
+	{
+		let mut ip_pkt = Ipv4Packet::new_unchecked(&mut buf);
+		ip_repr.emit(&mut ip_pkt, &smoltcp::phy::ChecksumCapabilities::default());
+	}
+	let ip_hdr_len = {
+		let ip_pkt = Ipv4Packet::new_unchecked(&buf);
+		ip_pkt.header_len() as usize
+	};
+	{
+		let mut tcp_pkt = TcpPacket::new_unchecked(&mut buf[ip_hdr_len..]);
+		tcp_repr.emit(
+			&mut tcp_pkt,
+			&src_addr.into(),
+			&dst_addr.into(),
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
+	}
+
+	// Inject the SYN packet
+	stack.device_mut().inject(buf);
+
+	// Step 1: Peek (like poll_loop_jit does)
+	let peeked = stack.peek_ingress().map(<[u8]>::to_vec);
+	assert!(peeked.is_some(), "should have peeked packet");
+
+	// Step 2: Create listener (JIT binding)
+	stack.ensure_tcp_listener(9999).expect("create listener");
+
+	// Step 3: Poll (should process the SYN from pending queue)
+	let now = Instant::from_millis(1000);
+	stack.poll(now);
+
+	let egress = stack.device_mut().drain_egress();
+	assert!(!egress.is_empty(), "expected SYN-ACK after JIT binding");
+
+	let reply_ip = Ipv4Packet::new_checked(&egress[0]).expect("valid IPv4");
+	let reply_tcp = TcpPacket::new_checked(reply_ip.payload()).expect("valid TCP");
+	assert!(reply_tcp.syn() && reply_tcp.ack(), "should be SYN-ACK");
+}

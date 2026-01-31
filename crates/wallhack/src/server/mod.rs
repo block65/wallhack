@@ -4,6 +4,7 @@ mod create;
 pub mod config;
 #[cfg(feature = "quic")]
 pub mod quic;
+#[allow(clippy::module_inception)]
 pub mod server;
 pub mod tls;
 #[cfg(feature = "websocket")]

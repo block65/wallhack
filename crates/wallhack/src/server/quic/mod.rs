@@ -1,14 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
-use protobuf::v2::{AgentResponse, HostInstruction};
+use protobuf::v2::{EntryNodeInstruction, ExitNodeResponse};
 use quinn::{IdleTimeout, crypto::rustls::QuicServerConfig};
 
 use crate::{
+	NodeRole,
 	control::{handler::Handler, metrics::Metrics},
-	server::{
-		server::ServerRole,
-		tls::{ALPN_QUIC_HTTP, configure_crypto},
-	},
+	server::tls::{ALPN_QUIC_HTTP, configure_crypto},
 	transport::{bridge, quic::QuicTransport},
 };
 
@@ -46,6 +44,7 @@ pub struct QuicServer {
 
 impl Server for QuicServer {
 	type Error = Error;
+	type Transport = QuicTransport;
 
 	fn try_new(config: ServerConfig, options: ServerOptions) -> Result<Self, Error> {
 		let (cert_der, priv_key) = configure_crypto(config.tls)?;
@@ -61,7 +60,7 @@ impl Server for QuicServer {
 
 		let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
 
-		let timeout = IdleTimeout::try_from(Duration::from_secs(60))?;
+		let timeout = IdleTimeout::try_from(Duration::from_mins(1))?;
 		transport_config.max_idle_timeout(Some(timeout));
 		transport_config.keep_alive_interval(Some(Duration::from_secs(10)));
 
@@ -75,7 +74,10 @@ impl Server for QuicServer {
 		Ok(Self { endpoint, options })
 	}
 
-	async fn accept(&mut self, role: ServerRole) -> Result<Option<AcceptResult>, Error> {
+	async fn accept(
+		&mut self,
+		role: NodeRole,
+	) -> Result<Option<AcceptResult<Self::Transport>>, Error> {
 		tracing::debug!("waiting for next connection...");
 
 		let Some(incoming) = self.endpoint.accept().await else {
@@ -97,11 +99,11 @@ impl Server for QuicServer {
 			.clone()
 			.unwrap_or_else(|| Arc::new(Metrics::default()));
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<HostInstruction>(256);
-		let (responses, _) = tokio::sync::broadcast::channel::<AgentResponse>(256);
+		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
+		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
-		// Create oneshot channel for AgentHello
-		let (agent_hello_tx, agent_hello_rx) = tokio::sync::oneshot::channel();
+		// Create oneshot channel for ExitNodeHello
+		let (exit_hello_tx, exit_hello_rx) = tokio::sync::oneshot::channel();
 
 		// Task 0: Control stream handler
 		let transport_ctrl = Arc::clone(&transport);
@@ -115,59 +117,32 @@ impl Server for QuicServer {
 			}
 		});
 
-		// Task 1: Incoming data handler
-		let transport_data = Arc::clone(&transport);
-		let responses_tx = responses.clone();
-		let instructions_tx = instructions.clone();
+		// Task 1: Incoming data handler - spawns for listening side to receive ExitNodeHello
+		if matches!(role, NodeRole::Entry) {
+			let transport_data = Arc::clone(&transport);
+			let responses_tx = responses.clone();
+			let instructions_tx = instructions.clone();
 
-		tokio::spawn(async move {
-			if let Err(e) = bridge::run_incoming_data(
-				&*transport_data,
-				&instructions_tx,
-				&responses_tx,
-				Some(agent_hello_tx),
-			)
-			.await
-			{
-				tracing::debug!("Incoming data handler finished: {e}");
-			}
-		});
-
-		// Task 2: Outgoing handler based on role
-		match role {
-			ServerRole::Agent => {
-				tracing::info!("Spawning task to send responses to peer");
-				let transport_out = Arc::clone(&transport);
-				let responses_tx = responses.clone();
-
-				tokio::spawn(async move {
-					if let Err(e) =
-						bridge::run_outgoing_responses(&*transport_out, &responses_tx).await
-					{
-						tracing::debug!("Outgoing responses handler finished: {e}");
-					}
-				});
-			}
-			ServerRole::Host => {
-				tracing::info!("Spawning task to send instructions to peer");
-				let transport_out = Arc::clone(&transport);
-				let instructions_tx = instructions.clone();
-
-				tokio::spawn(async move {
-					if let Err(e) =
-						bridge::run_outgoing_instructions(&*transport_out, &instructions_tx).await
-					{
-						tracing::debug!("Outgoing instructions handler finished: {e}");
-					}
-				});
-			}
+			tokio::spawn(async move {
+				if let Err(e) = bridge::run_incoming_data(
+					&*transport_data,
+					&instructions_tx,
+					&responses_tx,
+					Some(exit_hello_tx),
+				)
+				.await
+				{
+					tracing::debug!("Incoming data handler finished: {e}");
+				}
+			});
 		}
 
-		Ok(Some(AcceptResult::with_agent_hello(
+		Ok(Some(AcceptResult::with_exit_hello(
+			Arc::clone(&transport),
 			(instructions, responses),
 			remote_addr,
 			metrics,
-			agent_hello_rx,
+			exit_hello_rx,
 		)))
 	}
 

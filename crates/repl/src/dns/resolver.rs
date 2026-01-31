@@ -56,11 +56,11 @@ pub async fn resolve(
 	resolvable: ResolvableAddress,
 	dns_server: Option<SocketAddr>,
 ) -> Result<SocketAddr, Error> {
-	let host = &resolvable.hostname;
+	let hostname = &resolvable.hostname;
 	let port = resolvable.port;
 
-	// Attempt to parse the host as an IP address first
-	if let Ok(ip_addr) = host.parse::<IpAddr>() {
+	// Attempt to parse the hostname as an IP address first
+	if let Ok(ip_addr) = hostname.parse::<IpAddr>() {
 		return Ok(SocketAddr::new(ip_addr, port));
 	}
 
@@ -68,11 +68,11 @@ pub async fn resolve(
 	let resolved_ip: IpAddr = if let Some(dns_server_addr) = dns_server {
 		#[cfg(feature = "dns-resolver")]
 		{
-			resolve_with_custom_dns(host, dns_server_addr).await?
+			resolve_with_custom_dns(hostname, dns_server_addr).await?
 		}
 		#[cfg(not(feature = "dns-resolver"))]
 		{
-			resolve_with_custom_dns(host, dns_server_addr)?
+			resolve_with_custom_dns(hostname, dns_server_addr)?
 		}
 	} else {
 		// Use system DNS resolver
@@ -80,7 +80,9 @@ pub async fn resolve(
 		let mut addrs_iter = resolvable.input.to_socket_addrs()?;
 		addrs_iter
 			.next()
-			.ok_or_else(|| Error::NoRecordsFound(format!("No records found for hostname: {host}")))?
+			.ok_or_else(|| {
+				Error::NoRecordsFound(format!("No records found for hostname: {hostname}"))
+			})?
 			.ip()
 	};
 
@@ -88,7 +90,10 @@ pub async fn resolve(
 }
 
 #[cfg(feature = "dns-resolver")]
-async fn resolve_with_custom_dns(host: &str, dns_server_addr: SocketAddr) -> Result<IpAddr, Error> {
+async fn resolve_with_custom_dns(
+	hostname: &str,
+	dns_server_addr: SocketAddr,
+) -> Result<IpAddr, Error> {
 	tracing::debug!("Using custom DNS server: {dns_server_addr}");
 
 	let mut resolver_config = ResolverConfig::default();
@@ -110,11 +115,11 @@ async fn resolve_with_custom_dns(host: &str, dns_server_addr: SocketAddr) -> Res
 	)
 	.build();
 
-	let response = resolver.lookup_ip(host).await?;
+	let response = resolver.lookup_ip(hostname).await?;
 	response
 		.iter()
 		.next()
-		.ok_or_else(|| Error::NoRecordsFound(format!("No records found for hostname: {host}")))
+		.ok_or_else(|| Error::NoRecordsFound(format!("No records found for hostname: {hostname}")))
 }
 
 #[cfg(not(feature = "dns-resolver"))]

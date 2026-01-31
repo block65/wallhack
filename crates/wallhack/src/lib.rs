@@ -8,18 +8,20 @@
 
 // mod channel;
 mod tls;
+pub mod types;
 
 // public
-pub mod agent;
 pub mod client;
 pub mod control;
-pub mod host;
+pub mod entry;
+pub mod exit;
 pub mod server;
 pub mod transport;
 
 // re-exports
 use client::config::ClientConfig;
 use server::config::ServerConfig;
+pub use types::NodeRole;
 
 #[cfg(test)]
 pub mod pcap_parser;

@@ -18,7 +18,7 @@ full = ["quic", "websocket"]
 
 [dependencies]
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "net", "io-util", "sync"] }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "sync", "macros"] }
 tracing = { workspace = true }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 

@@ -1,18 +1,14 @@
 use tokio::task::JoinHandle;
 
-use protobuf::v2::{AgentResponse, HostInstruction};
+use protobuf::v2::{EntryNodeInstruction, ExitNodeResponse};
+
+use crate::NodeRole;
 
 use super::config;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClientRole {
-	Host,
-	Agent,
-}
-
 pub type Channels = (
-	tokio::sync::broadcast::Sender<HostInstruction>,
-	tokio::sync::broadcast::Sender<AgentResponse>,
+	tokio::sync::broadcast::Sender<EntryNodeInstruction>,
+	tokio::sync::broadcast::Sender<ExitNodeResponse>,
 );
 
 /// Handles to the background tasks that service the connection.
@@ -38,19 +34,26 @@ impl ConnectionTasks {
 	}
 }
 
-pub struct ConnectResult {
+pub struct ConnectResult<T: transport::Transport + ?Sized> {
 	channels: Channels,
 	peer_ident: String,
 	tasks: ConnectionTasks,
+	transport: std::sync::Arc<T>,
 }
 
-impl ConnectResult {
+impl<T: transport::Transport + ?Sized> ConnectResult<T> {
 	#[must_use]
-	pub fn new(channels: Channels, peer_ident: String, tasks: ConnectionTasks) -> Self {
+	pub fn new(
+		transport: std::sync::Arc<T>,
+		channels: Channels,
+		peer_ident: String,
+		tasks: ConnectionTasks,
+	) -> Self {
 		Self {
 			channels,
 			peer_ident,
 			tasks,
+			transport,
 		}
 	}
 
@@ -68,10 +71,16 @@ impl ConnectResult {
 	pub fn client_ident(&self) -> &str {
 		&self.peer_ident
 	}
+
+	#[must_use]
+	pub fn transport(&self) -> std::sync::Arc<T> {
+		std::sync::Arc::clone(&self.transport)
+	}
 }
 
 pub trait Client {
 	type Error: std::error::Error + std::fmt::Debug + Send + Sync + 'static;
+	type Transport: transport::Transport;
 
 	fn try_new(config: config::ClientConfig) -> Result<Self, Self::Error>
 	where
@@ -81,6 +90,6 @@ pub trait Client {
 
 	fn connect(
 		&mut self,
-		role: ClientRole,
-	) -> impl std::future::Future<Output = Result<ConnectResult, Self::Error>> + Send;
+		role: NodeRole,
+	) -> impl std::future::Future<Output = Result<ConnectResult<Self::Transport>, Self::Error>> + Send;
 }

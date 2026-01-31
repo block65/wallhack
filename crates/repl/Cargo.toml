@@ -40,6 +40,7 @@ rand = { version = "0.9", default-features = false, features = [
   "std",
   "std_rng",
 ] }
+parking_lot = "0.12.5"
 
 
 [lints]

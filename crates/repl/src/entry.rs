@@ -15,61 +15,58 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
 use wallhack::{
+	NodeRole,
 	control::{handler::HandlerConfig, metrics::Metrics},
-	host::{net::tun::adapter::TunAdapter, orchestrator::HostOrchestrator},
+	entry::{actor::TunActor, manager::ConnectionManager},
 	server::{
 		config::ServerConfig,
-		server::{Server, ServerOptions, ServerRole},
+		server::{Server, ServerOptions},
 	},
 };
 
 use crate::{WallhackCli, cli::Protocol};
 
-/// Manages TUN sessions for connected agents.
+/// Manages TUN sessions for connected exit nodes.
 ///
-/// Keeps TUN adapters alive between reconnections so agents can reconnect
+/// Keeps TUN adapters alive between reconnections so exit nodes can reconnect
 /// without losing their TUN interface.
 #[derive(Clone, Default)]
 struct SessionManager {
-	sessions: Arc<Mutex<HashMap<String, TunAdapter>>>,
+	sessions: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl SessionManager {
-	/// Gets or creates a TUN adapter for the given agent.
+	/// Gets or creates a TUN adapter for the given exit node.
 	///
-	/// If the agent has connected before, returns a clone of their existing TUN.
-	/// Otherwise creates a new TUN with stable naming (`tun-{agent_id}`).
-	fn get_or_create(
-		&self,
-		agent_id: &str,
-	) -> Result<TunAdapter, wallhack::host::net::tun::adapter::Error> {
+	/// If the exit node has connected before, returns a clone of their existing
+	/// TUN. Otherwise creates a new TUN with stable naming (`tun-{exit_id}`).
+	fn get_or_create(&self, exit_id: &str) -> std::string::String {
 		let mut sessions = self.sessions.lock();
 
-		if let Some(adapter) = sessions.get(agent_id) {
-			tracing::info!("Reusing existing TUN for agent {}", agent_id);
-			return Ok(adapter.clone());
+		if let Some(name) = sessions.get(exit_id) {
+			tracing::info!("Reusing existing TUN for exit node {}", exit_id);
+			return name.clone();
 		}
 
 		// Create new TUN with stable name
-		let tun_name = format!("tun-{agent_id}");
-		tracing::info!("Creating new TUN {} for agent {}", tun_name, agent_id);
-		let adapter = TunAdapter::try_new(Some(tun_name))?;
-
-		sessions.insert(agent_id.to_string(), adapter.clone());
-		Ok(adapter)
+		let tun_name = format!("tun-{exit_id}");
+		tracing::info!("Creating new TUN {} for exit node {}", tun_name, exit_id);
+		sessions.insert(exit_id.to_string(), tun_name.clone());
+		tun_name
 	}
 
-	/// Gets a TUN adapter with auto-generated name (for agents without identity).
-	fn create_anonymous(&self) -> Result<TunAdapter, wallhack::host::net::tun::adapter::Error> {
-		TunAdapter::try_new(None)
+	/// Gets a TUN adapter with auto-generated name (for exit nodes without
+	/// identity).
+	fn create_anonymous() -> std::string::String {
+		TunActor::random_iface_name()
 	}
 
-	/// Returns a list of (agent_id, tun_name) pairs for all active sessions.
+	/// Returns a list of (`exit_id`, `tun_name`) pairs for all active sessions.
 	fn list(&self) -> Vec<(String, String)> {
 		self.sessions
 			.lock()
 			.iter()
-			.map(|(id, adapter)| (id.clone(), adapter.name.clone()))
+			.map(|(id, name)| (id.clone(), name.clone()))
 			.collect()
 	}
 }
@@ -91,8 +88,8 @@ impl Printer {
 
 /// Run as an entry node with interactive REPL.
 ///
-/// Creates TUN interface and listens for downstream connections.
-/// Runs an interactive REPL for control commands.
+/// Creates TUN interface and listens for downstream connections. Runs an
+/// interactive REPL for control commands.
 ///
 /// # Errors
 ///
@@ -110,10 +107,7 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 
 	// Server options with control handler config
 	let server_options = ServerOptions {
-		handler_config: HandlerConfig {
-			node_role: "entry".to_string(),
-			..Default::default()
-		},
+		handler_config: HandlerConfig::new(NodeRole::Entry),
 		metrics: Some(Arc::clone(&metrics)),
 	};
 
@@ -162,6 +156,7 @@ async fn run_entry_server<S: Server>(
 ) -> Result<()>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
+	S::Transport: Send + Sync + 'static,
 {
 	// Channel for REPL commands (input thread -> async loop)
 	let (repl_tx, repl_rx) = mpsc::channel::<ReplCommand>(16);
@@ -191,22 +186,21 @@ where
 	loop {
 		tokio::select! {
 			// Handle incoming connections
-			accept_result = server.accept(ServerRole::Host) => {
+			accept_result = server.accept(NodeRole::Entry) => {
 				match accept_result {
 					Ok(Some(mut accept_result)) => {
 						let conn_metrics = accept_result.metrics();
 						let conn_printer = printer.clone();
 						let conn_sessions = sessions.clone();
-						let agent_hello_rx = accept_result.take_agent_hello_rx();
+						let hello_rx = accept_result.take_hello_rx();
 
 						crate::info!("Accepted connection from {}", accept_result.client_ident());
 						printer.print(format!("Connection from {}", accept_result.client_ident()));
 
-						let (instr, resp) = accept_result.channels();
-
-						// Spawn handler for this connection (each agent gets its own TUN)
+						// Spawn handler for this connection (each exit node gets its own
+						// TUN)
 						tokio::spawn(async move {
-							match handle_connection(conn_metrics, instr, resp, agent_hello_rx, conn_sessions).await {
+							match handle_connection(conn_metrics, accept_result, hello_rx, conn_sessions).await {
 								Ok(tun_name) => {
 									conn_printer.print(format!("Connection closed (tun: {tun_name})"));
 								}
@@ -284,20 +278,19 @@ fn run_repl_input(
 		}
 	};
 
-	// Create external printer for async output
-	let mut printer = match rl.create_external_printer() {
-		Ok(p) => p,
-		Err(e) => {
-			eprintln!("Failed to create external printer: {e}");
-			let _ = tx.blocking_send(ReplCommand::Quit);
-			return;
-		}
-	};
+	// Create external printer for async output, falling back to println if
+	// unavailable
+	let mut printer = rl.create_external_printer().ok();
 
 	// Spawn thread to handle print requests
 	std::thread::spawn(move || {
 		while let Some(msg) = print_rx.blocking_recv() {
-			let _ = printer.print(msg);
+			if let Some(ref mut p) = printer {
+				let _ = p.print(msg);
+			} else {
+				// Fallback if external printer couldn't be created (e.g. non-TTY env)
+				println!("{msg}");
+			}
 		}
 	});
 
@@ -337,7 +330,8 @@ fn run_repl_input(
 ) {
 	use std::io::{BufRead, Write};
 
-	// Spawn thread to handle print requests (just println without readline coordination)
+	// Spawn thread to handle print requests (just println without readline
+	// coordination)
 	std::thread::spawn(move || {
 		while let Some(msg) = print_rx.blocking_recv() {
 			println!("{msg}");
@@ -429,8 +423,8 @@ fn print_sessions(sessions: &SessionManager, printer: &Printer) {
 		printer.print("No active sessions.");
 	} else {
 		printer.print(format!("Active sessions ({}):", list.len()));
-		for (agent_id, tun_name) in &list {
-			printer.print(format!("  {agent_id} -> {tun_name}"));
+		for (exit_id, tun_name) in &list {
+			printer.print(format!("  {exit_id} -> {tun_name}"));
 		}
 	}
 }
@@ -438,7 +432,7 @@ fn print_sessions(sessions: &SessionManager, printer: &Printer) {
 fn print_help(printer: &Printer) {
 	printer.print("Available commands:");
 	printer.print("  stats, s       - Show traffic statistics");
-	printer.print("  sessions, t    - List active agent sessions");
+	printer.print("  sessions, t    - List active exit node sessions");
 	printer.print("  help, ?        - Show this help message");
 	printer.print("  quit, q        - Exit wallhack");
 }
@@ -463,29 +457,32 @@ fn format_bytes(bytes: u64) -> String {
 	}
 }
 
-/// Timeout for waiting for AgentHello message.
-const AGENT_HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Timeout for waiting for `ExitNodeHello` message.
+const HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-async fn handle_connection(
+async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	metrics: Arc<Metrics>,
-	instr: tokio::sync::broadcast::Sender<protobuf::v2::HostInstruction>,
-	resp: tokio::sync::broadcast::Sender<protobuf::v2::AgentResponse>,
-	agent_hello_rx: Option<tokio::sync::oneshot::Receiver<protobuf::v2::AgentHello>>,
+	accept_result: wallhack::server::server::AcceptResult<T>,
+	hello_rx: Option<tokio::sync::oneshot::Receiver<protobuf::v2::ExitNodeHello>>,
 	sessions: SessionManager,
 ) -> Result<String> {
-	// Wait for AgentHello to get agent identity for session management
-	let agent_id = if let Some(rx) = agent_hello_rx {
-		match tokio::time::timeout(AGENT_HELLO_TIMEOUT, rx).await {
+	// Wait for ExitNodeHello to get exit node identity for session management
+	let exit_id = if let Some(rx) = hello_rx {
+		match tokio::time::timeout(HELLO_TIMEOUT, rx).await {
 			Ok(Ok(hello)) => {
-				crate::info!("Agent identified: {} (v{})", hello.agent_id, hello.version);
-				Some(hello.agent_id)
+				crate::info!(
+					"Exit node identified: {} (v{})",
+					hello.exit_id,
+					hello.version
+				);
+				Some(hello.exit_id)
 			}
 			Ok(Err(_)) => {
-				crate::verbose!("AgentHello channel closed before receiving message");
+				crate::verbose!("ExitNodeHello channel closed before receiving message");
 				None
 			}
 			Err(_) => {
-				crate::verbose!("Timeout waiting for AgentHello, using anonymous session");
+				crate::verbose!("Timeout waiting for ExitNodeHello, using anonymous session");
 				None
 			}
 		}
@@ -494,21 +491,15 @@ async fn handle_connection(
 	};
 
 	// Get or create TUN adapter via session manager
-	let adapter = if let Some(ref id) = agent_id {
-		sessions.get_or_create(id)?
+	let name = if let Some(ref id) = exit_id {
+		sessions.get_or_create(id)
 	} else {
-		sessions.create_anonymous()?
+		SessionManager::create_anonymous()
 	};
-	let name = adapter.name.clone();
 
-	// Create and run orchestrator
-	let orchestrator = HostOrchestrator::new(adapter, metrics);
-	tracing::debug!(
-		"Starting orchestrator: instr_receivers={}, resp_receivers={}",
-		instr.receiver_count(),
-		resp.receiver_count() + 1, // +1 for the subscribe() we're about to do
-	);
-	orchestrator.drive((instr, resp.subscribe())).await?;
+	let actor = TunActor::new(Some(name.clone()))?;
+	let manager = ConnectionManager::new(actor, accept_result.transport(), metrics);
+	manager.run().await?;
 
 	Ok(name)
 }

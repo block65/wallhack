@@ -34,6 +34,13 @@ pub struct StackConfig {
 
 	/// Size of TCP socket transmit buffers in bytes.
 	pub tcp_tx_buffer_size: usize,
+
+	/// Enable "any IP" mode (promiscuous mode for IP).
+	///
+	/// In this mode, the interface will accept packets destined to any IP address.
+	/// Required for transparent proxying or capturing all traffic on a TUN interface.
+	/// Note: Default routes are automatically added when this is enabled.
+	pub any_ip: bool,
 }
 
 impl Default for StackConfig {
@@ -44,6 +51,7 @@ impl Default for StackConfig {
 			mtu: 1500,
 			tcp_rx_buffer_size: 65535,
 			tcp_tx_buffer_size: 65535,
+			any_ip: false,
 		}
 	}
 }

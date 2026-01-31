@@ -6,40 +6,48 @@ categories = ["network-programming"]
 
 [features]
 default = ["quic"]
-quic = ["dep:quinn"]
+quic = ["dep:quinn", "transport/quic"]
 websocket = [
     "dep:tokio-tungstenite",
-    "dep:tokio-util",
     "dep:yamux",
-    "dep:httparse",
-    "dep:sha1",
-    "dep:base64",
     "dep:tokio-rustls",
+    "transport/websocket",
 ]
 full = ["quic", "websocket"]
 
 [dependencies]
-agent_adapter = { path = "../agent-adapter" }
+exit_adapter = { path = "../exit-adapter" }
+transport = { path = "../transport", default-features = false }
 anyhow = "1"
 dashmap = "6"
 prost = { version = "0.13" }
 protobuf = { path = "../protobuf" }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
-rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
+netstack = { path = "../netstack", features = ["async"] }
+quinn = { version = "0.11", default-features = false, features = [
+    "runtime-tokio",
+    "rustls-ring",
+], optional = true }
+rand = { version = "0.9", default-features = false, features = [
+    "std",
+    "std_rng",
+] }
 rcgen = { version = "0.13", default-features = false, features = ["ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+] }
 rustls-pemfile = "2"
 smoltcp = { version = "0.12", default-features = false, features = [
-  "std",
-  "alloc",
-  "socket-tcp",
-  "socket-udp",
-  "socket-icmp",
-  "medium-ip",
-  "medium-ethernet",
-  "phy-tuntap_interface",
-  "proto-ipv4",
-  "proto-ipv6",
+    "std",
+    "alloc",
+    "socket-tcp",
+    "socket-udp",
+    "socket-icmp",
+    "medium-ip",
+    "medium-ethernet",
+    "phy-tuntap_interface",
+    "proto-ipv4",
+    "proto-ipv6",
 ] }
 socket2.version = "0.5"
 thiserror = "2"
@@ -47,17 +55,18 @@ tokio.features = ["rt", "macros", "rt-multi-thread", "net", "io-util"]
 tokio.workspace = true
 tracing.workspace = true
 tun = { version = "0.7", features = [
-  "async",
-  "tokio",
+    "async",
+    "tokio",
 ], default-features = false }
 
-# WebSocket transport dependencies (optional)
-base64 = { version = "0.22", default-features = false, features = ["std"], optional = true }
-httparse = { version = "1.9", default-features = false, features = ["std"], optional = true }
-sha1 = { version = "0.10", default-features = false, features = ["std"], optional = true }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
-tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake", "stream"], optional = true }
-tokio-util = { version = "0.7", default-features = false, features = ["compat"], optional = true }
+# WebSocket dependencies still used directly by wallhack client/server
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "ring",
+], optional = true }
+tokio-tungstenite = { version = "0.26", default-features = false, features = [
+    "handshake",
+    "stream",
+], optional = true }
 yamux = { version = "0.13", default-features = false, optional = true }
 
 # Bridge module dependencies (always needed for transport abstraction)

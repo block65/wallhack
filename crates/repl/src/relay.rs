@@ -9,9 +9,10 @@ use anyhow::{Context, Result};
 use tokio::sync::broadcast;
 
 use wallhack::{
-	client::client::{Client, ClientRole, ConnectResult},
+	NodeRole,
+	client::client::{Client, ConnectResult},
 	control::{handler::HandlerConfig, metrics::Metrics},
-	server::server::{AcceptResult, Server, ServerOptions, ServerRole},
+	server::server::{AcceptResult, Server, ServerOptions},
 };
 
 #[cfg(feature = "quic")]
@@ -48,10 +49,7 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 
 	// Server options with control handler config
 	let server_options = ServerOptions {
-		handler_config: HandlerConfig {
-			node_role: "relay".to_string(),
-			..Default::default()
-		},
+		handler_config: HandlerConfig::new(NodeRole::Relay),
 		metrics: Some(Arc::clone(&metrics)),
 	};
 
@@ -134,10 +132,10 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 }
 
 /// Bridge a downstream connection to upstream channels.
-fn bridge_downstream(
-	accept_result: AcceptResult,
-	upstream_instr: &broadcast::Sender<protobuf::v2::HostInstruction>,
-	upstream_resp: &broadcast::Sender<protobuf::v2::AgentResponse>,
+fn bridge_downstream<T: wallhack::transport::Transport>(
+	accept_result: AcceptResult<T>,
+	upstream_instr: &broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
+	upstream_resp: &broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) {
 	crate::info!("Downstream connected: {}", accept_result.client_ident());
 
@@ -190,7 +188,7 @@ fn bridge_downstream(
 async fn connect_quic_upstream(
 	cli: &WallhackCli,
 	addr: std::net::SocketAddr,
-) -> Result<ConnectResult> {
+) -> Result<ConnectResult<wallhack::transport::quic::QuicTransport>> {
 	let client_config = client::config::ClientConfig {
 		addr,
 		hostname: cli.hostname.clone(),
@@ -203,7 +201,7 @@ async fn connect_quic_upstream(
 	loop {
 		let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
 
-		match client.connect(ClientRole::Host).await {
+		match client.connect(NodeRole::Entry).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				crate::info!(
@@ -223,7 +221,7 @@ async fn connect_quic_upstream(
 async fn connect_ws_upstream(
 	cli: &WallhackCli,
 	addr: std::net::SocketAddr,
-) -> Result<ConnectResult> {
+) -> Result<ConnectResult<wallhack::transport::ws::WsTransport>> {
 	use wallhack::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
@@ -246,7 +244,7 @@ async fn connect_ws_upstream(
 	loop {
 		let mut client = WsClient::new(client_config.clone())?;
 
-		match client.connect(ClientRole::Host).await {
+		match client.connect(NodeRole::Entry).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				crate::info!(
@@ -267,14 +265,14 @@ async fn run_quic_downstream(
 	cli: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<protobuf::v2::HostInstruction>,
-	upstream_resp: broadcast::Sender<protobuf::v2::AgentResponse>,
+	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) -> Result<()> {
 	let server_config = build_quic_server_config(cli, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
 
 	loop {
-		match server.accept(ServerRole::Host).await {
+		match server.accept(NodeRole::Entry).await {
 			Ok(Some(accept_result)) => {
 				bridge_downstream(accept_result, &upstream_instr, &upstream_resp);
 			}
@@ -296,8 +294,8 @@ async fn run_ws_downstream(
 	cli: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<protobuf::v2::HostInstruction>,
-	upstream_resp: broadcast::Sender<protobuf::v2::AgentResponse>,
+	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) -> Result<()> {
 	use wallhack::server::{config::ServerConfig, ws::WsServer};
 
@@ -314,7 +312,7 @@ async fn run_ws_downstream(
 	let mut server = WsServer::try_new(server_config, server_options)?;
 
 	loop {
-		match server.accept(ServerRole::Host).await {
+		match server.accept(NodeRole::Entry).await {
 			Ok(Some(accept_result)) => {
 				bridge_downstream(accept_result, &upstream_instr, &upstream_resp);
 			}

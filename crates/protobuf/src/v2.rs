@@ -298,7 +298,11 @@ impl From<IpV6Address> for std::net::IpAddr {
 
 impl Display for TcpDataRecvResponse {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "data:{:#}bytes", self.data.len())
+		write!(f, "data:{:#}bytes", self.data.len())?;
+		if self.fin {
+			write!(f, ",fin")?;
+		}
+		Ok(())
 	}
 }
 
@@ -312,7 +316,11 @@ impl Display for TcpResponse {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match &self.response {
 			Some(tcp_response::Response::DataRecv(res)) => {
-				write!(f, "recv:data:{:#}bytes", res.data.len())
+				write!(f, "recv:data:{:#}bytes", res.data.len())?;
+				if res.fin {
+					write!(f, ",fin")?;
+				}
+				Ok(())
 			}
 			Some(tcp_response::Response::Connected(_)) => {
 				write!(f, "connected")
@@ -374,19 +382,19 @@ impl Display for RuntimeErrorResponse {
 	}
 }
 
-impl Display for AgentResponse {
+impl Display for ExitNodeResponse {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match &self.response {
-			Some(agent_response::Response::IcmpResponse(res)) => {
+			Some(exit_node_response::Response::IcmpResponse(res)) => {
 				write!(f, "icmp:response:{res}")
 			}
-			Some(agent_response::Response::TcpResponse(res)) => {
+			Some(exit_node_response::Response::TcpResponse(res)) => {
 				write!(f, "tcp:response:{res}")
 			}
-			Some(agent_response::Response::UdpResponse(res)) => {
+			Some(exit_node_response::Response::UdpResponse(res)) => {
 				write!(f, "udp:response:{res}")
 			}
-			Some(agent_response::Response::RuntimeError(res)) => {
+			Some(exit_node_response::Response::RuntimeError(res)) => {
 				write!(f, "error:{res}")
 			}
 			None => {
@@ -439,7 +447,11 @@ impl Display for TcpConnectInstruction {
 
 impl Display for TcpSendInstruction {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "data:{:#}bytes", self.data.len())
+		write!(f, "data:{:#}bytes", self.data.len())?;
+		if self.fin {
+			write!(f, ",fin")?;
+		}
+		Ok(())
 	}
 }
 
@@ -473,28 +485,28 @@ impl Display for UdpSendInstruction {
 	}
 }
 
-impl Display for HostInstruction {
+impl Display for EntryNodeInstruction {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match &self.instruction {
-			Some(host_instruction::Instruction::IcmpSend(req)) => {
+			Some(entry_node_instruction::Instruction::IcmpSend(req)) => {
 				write!(f, "icmp:request:{req}")
 			}
-			Some(host_instruction::Instruction::TcpClose(req)) => {
+			Some(entry_node_instruction::Instruction::TcpClose(req)) => {
 				write!(f, "tcp:close:{req}")
 			}
-			Some(host_instruction::Instruction::TcpConnect(req)) => {
+			Some(entry_node_instruction::Instruction::TcpConnect(req)) => {
 				write!(f, "tcp:connect:{req}")
 			}
-			Some(host_instruction::Instruction::TcpSend(req)) => {
+			Some(entry_node_instruction::Instruction::TcpSend(req)) => {
 				write!(f, "tcp:send:{req}")
 			}
-			Some(host_instruction::Instruction::TcpListen(req)) => {
+			Some(entry_node_instruction::Instruction::TcpListen(req)) => {
 				write!(f, "tcp:listen:{req}")
 			}
-			Some(host_instruction::Instruction::TcpListenClose(req)) => {
+			Some(entry_node_instruction::Instruction::TcpListenClose(req)) => {
 				write!(f, "tcp:listen:close:{req}")
 			}
-			Some(host_instruction::Instruction::UdpSend(req)) => {
+			Some(entry_node_instruction::Instruction::UdpSend(req)) => {
 				write!(f, "udp:send:{req}")
 			}
 			None => {
@@ -507,17 +519,17 @@ impl Display for HostInstruction {
 impl Display for TunnelMessage {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match &self.message {
-			Some(tunnel_message::Message::HostInstruction(instruction)) => {
+			Some(tunnel_message::Message::EntryNodeInstruction(instruction)) => {
 				write!(f, "{instruction}")
 			}
-			Some(tunnel_message::Message::AgentResponse(response)) => {
+			Some(tunnel_message::Message::ExitNodeResponse(response)) => {
 				write!(f, "{response}")
 			}
 			Some(tunnel_message::Message::RawPacket(raw_packet)) => {
 				write!(f, "{:02x?}", raw_packet.data.len())
 			}
-			Some(tunnel_message::Message::AgentHello(hello)) => {
-				write!(f, "hello:{}", hello.agent_id)
+			Some(tunnel_message::Message::ExitNodeHello(hello)) => {
+				write!(f, "hello:{}", hello.exit_id)
 			}
 			None => {
 				write!(f, "<none>")
@@ -529,60 +541,60 @@ impl Display for TunnelMessage {
 impl Display for tunnel_message::Message {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			tunnel_message::Message::HostInstruction(instruction) => {
+			tunnel_message::Message::EntryNodeInstruction(instruction) => {
 				write!(f, "instruction:{instruction}")
 			}
-			tunnel_message::Message::AgentResponse(response) => {
+			tunnel_message::Message::ExitNodeResponse(response) => {
 				write!(f, "response:{response}")
 			}
 			tunnel_message::Message::RawPacket(raw_packet) => {
 				write!(f, "raw:{:02x?}", raw_packet.data.len())
 			}
-			tunnel_message::Message::AgentHello(hello) => {
-				write!(f, "hello:{}", hello.agent_id)
+			tunnel_message::Message::ExitNodeHello(hello) => {
+				write!(f, "hello:{}", hello.exit_id)
 			}
 		}
 	}
 }
 
-impl From<HostInstruction> for TunnelMessage {
-	fn from(instruction: HostInstruction) -> Self {
+impl From<EntryNodeInstruction> for TunnelMessage {
+	fn from(instruction: EntryNodeInstruction) -> Self {
 		TunnelMessage {
 			message: Some(instruction.into()),
 		}
 	}
 }
 
-impl From<AgentResponse> for TunnelMessage {
-	fn from(response: AgentResponse) -> Self {
+impl From<ExitNodeResponse> for TunnelMessage {
+	fn from(response: ExitNodeResponse) -> Self {
 		TunnelMessage {
 			message: Some(response.into()),
 		}
 	}
 }
 
-impl From<HostInstruction> for tunnel_message::Message {
-	fn from(instruction: HostInstruction) -> Self {
-		tunnel_message::Message::HostInstruction(instruction)
+impl From<EntryNodeInstruction> for tunnel_message::Message {
+	fn from(instruction: EntryNodeInstruction) -> Self {
+		tunnel_message::Message::EntryNodeInstruction(instruction)
 	}
 }
 
-impl From<AgentResponse> for tunnel_message::Message {
-	fn from(response: AgentResponse) -> Self {
-		tunnel_message::Message::AgentResponse(response)
+impl From<ExitNodeResponse> for tunnel_message::Message {
+	fn from(response: ExitNodeResponse) -> Self {
+		tunnel_message::Message::ExitNodeResponse(response)
 	}
 }
 
-impl From<host_instruction::Instruction> for HostInstruction {
-	fn from(instruction: host_instruction::Instruction) -> Self {
-		HostInstruction {
+impl From<entry_node_instruction::Instruction> for EntryNodeInstruction {
+	fn from(instruction: entry_node_instruction::Instruction) -> Self {
+		EntryNodeInstruction {
 			instruction: Some(instruction),
 		}
 	}
 }
 
-impl From<host_instruction::Instruction> for tunnel_message::Message {
-	fn from(instruction: host_instruction::Instruction) -> Self {
-		tunnel_message::Message::HostInstruction(instruction.into())
+impl From<entry_node_instruction::Instruction> for tunnel_message::Message {
+	fn from(instruction: entry_node_instruction::Instruction) -> Self {
+		tunnel_message::Message::EntryNodeInstruction(instruction.into())
 	}
 }

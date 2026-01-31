@@ -67,7 +67,19 @@ enum ResponseStatus {
   // COMMAND_FAILED = 10;
 }
 
-message HostInstruction {
+enum SessionProtocol {
+  SESSION_PROTOCOL_UNSPECIFIED = 0;
+  SESSION_PROTOCOL_TCP = 1;
+  SESSION_PROTOCOL_UDP = 2;
+}
+
+message SessionInit {
+  string target_addr = 1;
+  string source_addr = 2;
+  SessionProtocol protocol = 3;
+}
+
+message EntryNodeInstruction {
 
   oneof instruction {
     // TcpConnectRequestInstruction tcp_connect_request = 1;
@@ -88,6 +100,7 @@ message TcpConnectInstruction { SocketAddressPair pair = 1; }
 message TcpSendInstruction {
   SocketAddressPair pair = 1;
   bytes data = 3;
+  bool fin = 4;
 }
 
 message TcpCloseInstruction { SocketAddressPair pair = 1; }
@@ -115,7 +128,7 @@ message IcmpEchoRequest {
   bytes data = 3;
 }
 
-message AgentResponse {
+message ExitNodeResponse {
 
   SocketAddressPair pair = 1;
 
@@ -161,7 +174,10 @@ message TcpConnectedResponse { /* uint32 _seq_no = 1; */ }
 // Pure ACK
 message TcpOkResponse {}
 
-message TcpDataRecvResponse { bytes data = 1; }
+message TcpDataRecvResponse {
+  bytes data = 1;
+  bool fin = 2;
+}
 
 // FIN-ACK
 message TcpConnectionClosedResponse {}
@@ -188,16 +204,16 @@ message RawPacket { bytes data = 1; }
 
 message TunnelMessage {
   oneof message {
-    HostInstruction host_instruction = 1;
-    AgentResponse agent_response = 2;
+    EntryNodeInstruction entry_node_instruction = 1;
+    ExitNodeResponse exit_node_response = 2;
     RawPacket raw_packet = 3;
-    AgentHello agent_hello = 4;
+    ExitNodeHello exit_node_hello = 4;
   }
 }
 
-// Sent by agent immediately after connecting to identify itself.
-// Entry uses agent_id for stable TUN naming (tun-<agent_id>).
-message AgentHello {
-  string agent_id = 1;      // Stable identifier (user-provided or auto-generated)
-  string version = 2;       // Agent version for compatibility checks
+// Sent by exit node immediately after connecting to identify itself.
+// Entry uses exit_id for stable TUN naming (tun-<exit_id>).
+message ExitNodeHello {
+  string exit_id = 1;      // Stable identifier (user-provided or auto-generated)
+  string version = 2;       // Exit node version for compatibility checks
 }

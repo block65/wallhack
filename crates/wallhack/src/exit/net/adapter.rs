@@ -1,0 +1,94 @@
+use dashmap::DashMap;
+use exit_adapter::{
+	SocketSet,
+	adapter::{
+		ExitAdapter, RuntimeError, SendResponse, TcpCloseResponse, TcpListenCloseResponse,
+		TcpListenResponse, TcpStreamResponse,
+	},
+	session::Session,
+	session_key::SessionKey,
+	sessions,
+};
+
+pub struct SyscallExitAdapter {
+	pub sessions: DashMap<SessionKey, Session>,
+}
+
+impl Default for SyscallExitAdapter {
+	fn default() -> Self {
+		SyscallExitAdapter {
+			sessions: DashMap::new(),
+		}
+	}
+}
+
+impl SyscallExitAdapter {
+	#[must_use]
+	pub fn new() -> Self {
+		SyscallExitAdapter::default()
+	}
+}
+
+impl ExitAdapter for SyscallExitAdapter {
+	async fn udp_send(
+		&self,
+		set: SocketSet,
+		data: &mut [u8],
+	) -> Result<SendResponse, RuntimeError> {
+		self.udp_send_impl(set, data).await
+	}
+
+	fn udp_recv_session(
+		&self,
+		set: SocketSet,
+	) -> Result<Option<sessions::udp::UdpSession>, RuntimeError> {
+		self.udp_recv_session_impl(set)
+	}
+
+	fn tcp_close(&self, set: SocketSet) -> Result<TcpCloseResponse, RuntimeError> {
+		self.tcp_close_impl(set)
+	}
+
+	// fn tcp_connect_req(&self, set: SocketSet) -> Result<TcpConnectResponse, RuntimeError> {
+	// 	self.tcp_connect_req_impl(set)
+	// }
+
+	async fn tcp_connect(&self, set: SocketSet) -> Result<TcpStreamResponse, RuntimeError> {
+		self.tcp_connect_impl(set).await
+	}
+
+	async fn tcp_send(
+		&self,
+		set: SocketSet,
+		buf: Vec<u8>,
+		fin: bool,
+	) -> Result<SendResponse, RuntimeError> {
+		self.tcp_send_impl(set, buf, fin).await
+	}
+
+	fn tcp_recv_session(
+		&self,
+		set: SocketSet,
+	) -> Result<Option<sessions::tcp::TcpSession>, RuntimeError> {
+		self.tcp_recv_session_impl(set)
+	}
+
+	async fn tcp_listen(&self, pair: SocketSet) -> Result<TcpListenResponse, RuntimeError> {
+		self.tcp_listen_impl(pair)
+	}
+
+	async fn tcp_listen_close(
+		&self,
+		set: SocketSet,
+	) -> Result<TcpListenCloseResponse, RuntimeError> {
+		self.tcp_listen_close_impl(set)
+	}
+
+	async fn icmp_session(
+		&self,
+		set: SocketSet,
+		ident: u16,
+	) -> Result<Option<sessions::icmp::IcmpSession>, RuntimeError> {
+		self.icmp_session_impl(set, ident)
+	}
+}

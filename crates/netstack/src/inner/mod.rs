@@ -1,11 +1,12 @@
 pub mod device;
+pub mod peek_device;
 
 use smoltcp::{
 	iface::{Config, Interface, SocketHandle, SocketSet, SocketStorage},
 	phy::Device,
-	socket::tcp,
+	socket::{Socket, tcp, udp},
 	time::Instant,
-	wire::HardwareAddress,
+	wire::{HardwareAddress, Ipv4Address, Ipv6Address},
 };
 
 use crate::{config::StackConfig, error::Error};
@@ -69,6 +70,23 @@ impl<D: Device> InnerStack<D> {
 
 		let now = Instant::from_millis(0);
 		let mut iface = Interface::new(iface_config, &mut device, now);
+		if config.any_ip {
+			#[cfg(feature = "async")]
+			tracing::info!("Enabling AnyIP mode");
+			iface.set_any_ip(true);
+
+			// Add default routes (required for AnyIP to work with smoltcp)
+			iface
+				.routes_mut()
+				.add_default_ipv4_route(Ipv4Address::UNSPECIFIED)
+				.expect("failed to add default IPv4 route");
+			iface
+				.routes_mut()
+				.add_default_ipv6_route(Ipv6Address::UNSPECIFIED)
+				.expect("failed to add default IPv6 route");
+			#[cfg(feature = "async")]
+			tracing::debug!("Added default routes for AnyIP mode");
+		}
 
 		iface.update_ip_addrs(|addrs| {
 			for cidr in &config.ip_addrs {
@@ -107,7 +125,79 @@ impl<D: Device> InnerStack<D> {
 		self.iface.poll_at(timestamp, &self.sockets)
 	}
 
-	/// Create a TCP socket in the LISTEN state on the given port.
+	/// Peek at the next ingress packet without consuming it.
+	///
+	/// Returns `None` if no packet is pending.
+	///
+	/// # Panics
+	///
+	/// Panics if the device does not implement [`peek_device::PeekDevice`].
+	pub fn peek_ingress(&mut self) -> Option<&[u8]>
+	where
+		D: crate::inner::peek_device::PeekDevice,
+	{
+		self.device.peek_ingress()
+	}
+
+	/// Register a TCP listen socket on the given port if one doesn't already exist.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the socket cannot be created.
+	pub fn ensure_tcp_listener(&mut self, port: u16) -> Result<(), Error> {
+		if self.tcp_listener_exists(port) {
+			return Ok(());
+		}
+
+		let rx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_rx_buffer_size]);
+		let tx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_tx_buffer_size]);
+		let mut socket = tcp::Socket::new(rx_buf, tx_buf);
+		socket.listen(port)?;
+		self.sockets.add(socket);
+		Ok(())
+	}
+
+	/// Register a UDP socket bound to the given port if one doesn't already exist.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the socket cannot be created.
+	pub fn ensure_udp_listener(&mut self, port: u16) -> Result<(), Error> {
+		if self.udp_listener_exists(port) {
+			tracing::trace!(port, "UDP listener already exists");
+			return Ok(());
+		}
+
+		tracing::trace!(port, "Creating JIT UDP listener");
+		let rx_buf = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 64], vec![0u8; 65535]);
+		let tx_buf = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 64], vec![0u8; 65535]);
+		let mut socket = udp::Socket::new(rx_buf, tx_buf);
+		socket.bind(port)?;
+		self.sockets.add(socket);
+		Ok(())
+	}
+
+	fn tcp_listener_exists(&self, port: u16) -> bool {
+		self.sockets.iter().any(|(_, socket)| {
+			let Socket::Tcp(socket) = socket else {
+				return false;
+			};
+			socket.state() == tcp::State::Listen && socket.listen_endpoint().port == port
+		})
+	}
+
+	fn udp_listener_exists(&self, port: u16) -> bool {
+		self.sockets.iter().any(|(_, socket)| {
+			let Socket::Udp(socket) = socket else {
+				return false;
+			};
+			socket.endpoint().port == port
+		})
+	}
+
+	/// Create a new TCP socket in the LISTEN state on the given port.
+	///
+	/// Always creates a new socket, even if one already exists for this port.
 	///
 	/// # Errors
 	///
@@ -125,6 +215,35 @@ impl<D: Device> InnerStack<D> {
 
 		let handle = self.sockets.add(socket);
 		Ok(handle)
+	}
+
+	/// Find an existing TCP socket for this port, or create a new listener.
+	///
+	/// Used by JIT binding to reuse sockets that were created during peek.
+	/// Matches sockets by their `listen_endpoint` port, which persists even after
+	/// the socket transitions to ESTABLISHED state.
+	///
+	/// # Errors
+	///
+	/// Returns [`Error::InvalidPort`] if `port` is 0.
+	/// Returns [`Error::Listen`] if the socket cannot enter the listen state.
+	pub fn tcp_find_or_listen(&mut self, port: u16) -> Result<SocketHandle, Error> {
+		if port == 0 {
+			return Err(Error::InvalidPort { port });
+		}
+
+		// Find socket that was originally listening on this port
+		// listen_endpoint() returns the original listen port even for established sockets
+		for (handle, socket) in self.sockets.iter() {
+			let Socket::Tcp(tcp_socket) = socket else {
+				continue;
+			};
+			if tcp_socket.listen_endpoint().port == port {
+				return Ok(handle);
+			}
+		}
+
+		self.tcp_listen(port)
 	}
 
 	/// Get an immutable reference to a TCP socket by handle.
