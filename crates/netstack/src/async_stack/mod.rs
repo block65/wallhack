@@ -5,8 +5,10 @@ pub mod udp_socket;
 
 use std::{
 	collections::HashSet,
-	sync::{Arc, Mutex},
+	sync::Arc,
 };
+
+use parking_lot::Mutex;
 
 use smoltcp::{
 	phy::Device,
@@ -19,7 +21,7 @@ use crate::inner::{InnerStack, peek_device::PeekDevice};
 
 /// Shared state between the poll loop and async socket handles.
 ///
-/// Uses [`std::sync::Mutex`] because the lock is never held across `.await`.
+/// Uses [`parking_lot::Mutex`] for better performance and no poisoning.
 pub(crate) struct Shared<D: Device> {
 	pub(crate) inner: Mutex<InnerStack<D>>,
 	pub(crate) notify: Notify,
@@ -195,7 +197,7 @@ impl<D: Device + Send + 'static> Drop for Netstack<D> {
 async fn poll_loop_basic<D: Device + Send + 'static>(shared: Arc<Shared<D>>) {
 	loop {
 		let delay = {
-			let mut inner = shared.inner.lock().expect("poll loop mutex poisoned");
+			let mut inner = shared.inner.lock();
 			let now = SmolInstant::from_millis(
 				i64::try_from(
 					std::time::SystemTime::now()
@@ -240,7 +242,7 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 	let mut prune_counter: u32 = 0;
 	loop {
 		let delay = {
-			let mut inner = shared.inner.lock().expect("poll loop mutex poisoned");
+			let mut inner = shared.inner.lock();
 			let now = SmolInstant::from_millis(
 				i64::try_from(
 					std::time::SystemTime::now()
@@ -344,7 +346,7 @@ fn jit_bind_ports<D: Device + Send + 'static>(
 			// so we need one LISTEN socket per incoming connection.
 			tracing::debug!(dst_port, "JIT: SYN packet detected");
 			inner.tcp_listen(dst_port)?;
-			tcp_ports.lock().expect("tcp port lock").insert(dst_port);
+			tcp_ports.lock().insert(dst_port);
 			notify.notify_waiters();
 		}
 		IpProtocol::Udp if jit_udp && dst_port != 0 => {
@@ -354,7 +356,7 @@ fn jit_bind_ports<D: Device + Send + 'static>(
 				"JIT binding UDP listener"
 			);
 			inner.ensure_udp_listener(dst_port)?;
-			udp_ports.lock().expect("udp port lock").insert(dst_port);
+			udp_ports.lock().insert(dst_port);
 			notify.notify_waiters();
 		}
 		_ => {}

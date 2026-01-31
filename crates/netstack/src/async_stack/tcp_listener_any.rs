@@ -1,8 +1,9 @@
 use std::{
 	collections::{HashMap, HashSet},
-	sync::{Arc, Mutex},
+	sync::Arc,
 };
 
+use parking_lot::Mutex;
 use smoltcp::phy::Device;
 use tokio::sync::Notify;
 
@@ -50,7 +51,7 @@ impl<D: Device + Send + 'static> TcpListenerAny<D> {
 	/// Panics if the ports mutex is poisoned.
 	pub async fn accept(&mut self) -> Result<super::tcp_stream::TcpStream<D>, Error> {
 		loop {
-			let ports = self.ports.lock().expect("ports mutex poisoned").clone();
+			let ports = self.ports.lock().clone();
 
 			// Create listeners for new ports
 			for port in &ports {

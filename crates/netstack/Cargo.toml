@@ -19,6 +19,7 @@ smoltcp = { version = "0.12", default-features = false, features = [
     "proto-ipv6",
 ] }
 thiserror = { workspace = true }
+parking_lot = { workspace = true }
 
 tokio = { workspace = true, features = [
     "rt",

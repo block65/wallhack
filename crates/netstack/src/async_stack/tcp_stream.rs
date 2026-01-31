@@ -43,7 +43,7 @@ impl<D: Device + Send + 'static> TcpStream<D> {
 	/// Panics if the mutex is poisoned.
 	#[must_use]
 	pub fn state(&self) -> tcp::State {
-		let inner = self.shared.inner.lock().expect("mutex poisoned");
+		let inner = self.shared.inner.lock();
 		if !socket_exists(&inner, self.handle) {
 			return tcp::State::Closed;
 		}
@@ -57,7 +57,7 @@ impl<D: Device + Send + 'static> TcpStream<D> {
 	/// Panics if the mutex is poisoned.
 	#[must_use]
 	pub fn remote_endpoint(&self) -> Option<smoltcp::wire::IpEndpoint> {
-		let inner = self.shared.inner.lock().expect("mutex poisoned");
+		let inner = self.shared.inner.lock();
 		if !socket_exists(&inner, self.handle) {
 			return None;
 		}
@@ -71,7 +71,7 @@ impl<D: Device + Send + 'static> TcpStream<D> {
 	/// Panics if the mutex is poisoned.
 	#[must_use]
 	pub fn local_endpoint(&self) -> Option<smoltcp::wire::IpEndpoint> {
-		let inner = self.shared.inner.lock().expect("mutex poisoned");
+		let inner = self.shared.inner.lock();
 		if !socket_exists(&inner, self.handle) {
 			return None;
 		}
@@ -85,7 +85,7 @@ impl<D: Device + Send + 'static> AsyncRead for TcpStream<D> {
 		cx: &mut Context<'_>,
 		buf: &mut ReadBuf<'_>,
 	) -> Poll<io::Result<()>> {
-		let mut inner = self.shared.inner.lock().expect("mutex poisoned");
+		let mut inner = self.shared.inner.lock();
 
 		// Check if socket still exists (may have been pruned)
 		if !socket_exists(&inner, self.handle) {
@@ -128,7 +128,7 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 		cx: &mut Context<'_>,
 		buf: &[u8],
 	) -> Poll<io::Result<usize>> {
-		let mut inner = self.shared.inner.lock().expect("mutex poisoned");
+		let mut inner = self.shared.inner.lock();
 
 		// Check if socket still exists (may have been pruned)
 		if !socket_exists(&inner, self.handle) {
@@ -171,7 +171,7 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 	}
 
 	fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-		let mut inner = self.shared.inner.lock().expect("mutex poisoned");
+		let mut inner = self.shared.inner.lock();
 
 		// Check if socket still exists (may have been pruned)
 		if !socket_exists(&inner, self.handle) {
@@ -188,21 +188,21 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
 
 impl<D: Device + Send + 'static> Drop for TcpStream<D> {
 	fn drop(&mut self) {
-		if let Ok(mut inner) = self.shared.inner.lock() {
-			// Check if socket still exists before trying to access it
-			let exists = inner.sockets().iter().any(|(h, _)| h == self.handle);
-			if !exists {
-				tracing::trace!(handle = ?self.handle, "TcpStream dropped but socket already gone");
-				return;
-			}
-
-			// Abort the socket (sends RST, transitions to Closed)
-			// Do NOT remove - let prune_closed_tcp_sockets clean it up after
-			// the RST has been sent by the next poll() cycle
-			let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(self.handle);
-			socket.abort();
-			tracing::debug!(handle = ?self.handle, "TcpStream dropped, socket aborted");
+		let mut inner = self.shared.inner.lock();
+		// Check if socket still exists before trying to access it
+		let exists = inner.sockets().iter().any(|(h, _)| h == self.handle);
+		if !exists {
+			tracing::trace!(handle = ?self.handle, "TcpStream dropped but socket already gone");
+			return;
 		}
+
+		// Abort the socket (sends RST, transitions to Closed)
+		// Do NOT remove - let prune_closed_tcp_sockets clean it up after
+		// the RST has been sent by the next poll() cycle
+		let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(self.handle);
+		socket.abort();
+		tracing::debug!(handle = ?self.handle, "TcpStream dropped, socket aborted");
+		drop(inner);
 		self.shared.notify.notify_one();
 	}
 }

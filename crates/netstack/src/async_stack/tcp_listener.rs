@@ -54,7 +54,7 @@ impl<D: Device + Send + 'static> TcpListener<D> {
 	///
 	/// Panics if the internal mutex is poisoned (another thread panicked while holding the lock).
 	pub fn poll_accept(&mut self) -> Result<Option<TcpStream<D>>, Error> {
-		let inner = self.shared.inner.lock().expect("mutex poisoned");
+		let inner = self.shared.inner.lock();
 
 		// Clean up seen set - remove handles that no longer exist or are closed
 		self.seen.retain(|&h| {

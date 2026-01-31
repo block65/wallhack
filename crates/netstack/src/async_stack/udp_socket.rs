@@ -1,8 +1,9 @@
 use std::{
 	collections::{HashMap, HashSet},
-	sync::{Arc, Mutex},
+	sync::Arc,
 };
 
+use parking_lot::Mutex;
 use smoltcp::{iface::SocketHandle, phy::Device};
 use tokio::sync::Notify;
 
@@ -49,7 +50,7 @@ impl<D: Device + Send + 'static> UdpSocketAny<D> {
 			self.refresh_sockets()?;
 
 			{
-				let mut inner = self.shared.inner.lock().expect("poll loop mutex poisoned");
+				let mut inner = self.shared.inner.lock();
 				for (port, handle) in &self.sockets {
 					let socket: &mut smoltcp::socket::udp::Socket<'_> =
 						inner.sockets_mut().get_mut(*handle);
@@ -83,7 +84,7 @@ impl<D: Device + Send + 'static> UdpSocketAny<D> {
 	) -> Result<(), Error> {
 		self.refresh_sockets()?;
 		let handle = *self.sockets.get(&port).ok_or(Error::InvalidPort { port })?;
-		let mut inner = self.shared.inner.lock().expect("poll loop mutex poisoned");
+		let mut inner = self.shared.inner.lock();
 		let socket: &mut smoltcp::socket::udp::Socket<'_> = inner.sockets_mut().get_mut(handle);
 		let meta_val = meta.into();
 		tracing::trace!(port, data_len = data.len(), endpoint = %meta_val.endpoint, "UDP send_to enqueuing");
@@ -93,12 +94,12 @@ impl<D: Device + Send + 'static> UdpSocketAny<D> {
 	}
 
 	fn refresh_sockets(&mut self) -> Result<(), Error> {
-		let ports = self.ports.lock().expect("udp port lock").clone();
+		let ports = self.ports.lock().clone();
 		if ports.is_empty() {
 			return Ok(());
 		}
 
-		let mut inner = self.shared.inner.lock().expect("poll loop mutex poisoned");
+		let mut inner = self.shared.inner.lock();
 		for port in ports {
 			if self.sockets.contains_key(&port) {
 				continue;
