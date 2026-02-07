@@ -350,6 +350,7 @@ where
 						let conn_peers = Arc::clone(&peers);
 						let conn_routes = Arc::clone(&routes);
 						let hello_rx = accept_result.take_hello_rx();
+						let hello_tx = accept_result.take_hello_tx();
 						let peer_id = accept_result.client_ident().to_string();
 						let peer_addr = peer_id.clone();
 
@@ -359,9 +360,13 @@ where
 						// Register peer in the registry
 						conn_peers.register(peer_id.clone(), peer_addr, NodeRole::Exit);
 
+						// Create ping channel for this peer
+						let mut ping_rx = conn_peers.register_ping_channel(&peer_id);
+						let transport = accept_result.transport();
+
 						// Spawn handler for this connection (each exit node gets its own TUN)
 						tokio::spawn(async move {
-							let result = handle_connection(conn_metrics, accept_result, hello_rx, conn_sessions.clone()).await;
+							let result = handle_connection(conn_metrics, accept_result, hello_rx, hello_tx, conn_sessions.clone(), &mut ping_rx, &transport, &conn_peers).await;
 							// Unregister peer when connection closes
 							conn_peers.unregister(&peer_id);
 							// Clean up routes for this peer
@@ -411,7 +416,17 @@ where
 						break;
 					}
 					Some(ReplCommand::Ping) => {
-						print_ping(&printer);
+						let peer_ids = peers.peer_ids();
+						if peer_ids.is_empty() {
+							printer.print("No connected peers to ping.");
+						} else {
+							for id in &peer_ids {
+								match peers.ping_peer(id).await {
+									Ok(ms) => printer.print(format!("  {id}: {ms:.1}ms")),
+									Err(e) => printer.print(format!("  {id}: ping failed ({e})")),
+								}
+							}
+						}
 					}
 					Some(ReplCommand::Stats) => {
 						print_stats(&metrics, &printer);
@@ -648,11 +663,6 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
-fn print_ping(_printer: &Printer) {
-	// TODO: Implement actual peer ping with latency measurement
-	// For now, use 'peers' command to see peer info
-}
-
 fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 	let list = peers.list();
 	if list.is_empty() {
@@ -830,12 +840,43 @@ fn remove_os_route(cidr: &str, dev: &str) {
 /// Timeout for waiting for `ExitNodeHello` message.
 const HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+// TODO: refactor into a ConnectionContext struct to reduce argument count
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	metrics: Arc<Metrics>,
 	accept_result: wallhack::server::server::AcceptResult<T>,
 	hello_rx: Option<tokio::sync::oneshot::Receiver<protobuf::v2::ExitNodeHello>>,
+	hello_tx: Option<tokio::sync::oneshot::Sender<protobuf::v2::ExitNodeHello>>,
 	sessions: SessionManager,
+	ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack::control::peers::PingRequest>,
+	transport: &Arc<T>,
+	peers: &Arc<wallhack::control::peers::Registry>,
 ) -> Result<String> {
+	// Spawn incoming data handler with pong channel for latency measurement
+	let (pong_tx, mut pong_rx) = tokio::sync::mpsc::channel::<protobuf::v2::Pong>(1);
+	let (instructions_tx, responses_tx) = {
+		let channels = accept_result.channels();
+		(channels.0, channels.1)
+	};
+	{
+		let transport_data = Arc::clone(transport);
+		let instructions = instructions_tx.clone();
+		let responses = responses_tx.clone();
+		tokio::spawn(async move {
+			if let Err(e) = wallhack::transport::bridge::run_incoming_data(
+				&*transport_data,
+				&instructions,
+				&responses,
+				hello_tx,
+				Some(&pong_tx),
+			)
+			.await
+			{
+				tracing::debug!("Incoming data handler finished: {e}");
+			}
+		});
+	}
+
 	// Wait for ExitNodeHello to get exit node identity for session management
 	let exit_id = if let Some(rx) = hello_rx {
 		match tokio::time::timeout(HELLO_TIMEOUT, rx).await {
@@ -868,10 +909,79 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	};
 
 	let actor = TunActor::new(Some(name.clone()))?;
-	let manager = ConnectionManager::new(actor, accept_result.transport(), metrics);
-	manager.run().await?;
+	let manager = ConnectionManager::new(actor, Arc::clone(transport), metrics);
+
+	// Run the connection manager alongside ping handling
+	let ping_transport = Arc::clone(transport);
+	let mut manager_handle = tokio::spawn(async move { manager.run().await });
+
+	loop {
+		tokio::select! {
+			result = &mut manager_handle => {
+				// Connection ended
+				result??;
+				break;
+			}
+			Some(result_tx) = ping_rx.recv() => {
+				match send_ping(&*ping_transport, &mut pong_rx).await {
+					Ok(ms) => {
+						if let Some(ref id) = exit_id {
+							peers.update_latency(id, ms);
+						}
+						let _ = result_tx.send(ms);
+					}
+					Err(e) => {
+						tracing::warn!("Ping failed: {e}");
+						drop(result_tx);
+					}
+				}
+			}
+		}
+	}
 
 	Ok(name)
+}
+
+/// Send a ping via unidirectional stream and wait for pong on the channel.
+async fn send_ping<T: wallhack::transport::Transport>(
+	transport: &T,
+	pong_rx: &mut tokio::sync::mpsc::Receiver<protobuf::v2::Pong>,
+) -> Result<f64> {
+	use prost::Message;
+	use protobuf::v2::{Ping, TunnelMessage, tunnel_message};
+	use tokio::io::AsyncWriteExt;
+
+	#[allow(clippy::cast_possible_truncation)]
+	let ts = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default()
+		.as_millis() as u64;
+
+	let ping_msg = TunnelMessage {
+		message: Some(tunnel_message::Message::Ping(Ping { timestamp_ms: ts })),
+	};
+
+	let start = std::time::Instant::now();
+
+	// Send ping via unidirectional stream
+	let mut send = transport
+		.open_uni()
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to open uni stream: {e}"))?;
+
+	let encoded = ping_msg.encode_to_vec();
+	send.write_all(&encoded)
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to send ping: {e}"))?;
+	drop(send);
+
+	// Wait for pong on the channel (populated by run_incoming_data)
+	let _pong = tokio::time::timeout(std::time::Duration::from_secs(5), pong_rx.recv())
+		.await
+		.map_err(|_| anyhow::anyhow!("Ping timeout"))?
+		.ok_or_else(|| anyhow::anyhow!("Pong channel closed"))?;
+
+	Ok(start.elapsed().as_secs_f64() * 1000.0)
 }
 
 fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
