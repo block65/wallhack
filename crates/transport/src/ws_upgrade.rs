@@ -1,6 +1,7 @@
 //! WebSocket upgrade handler.
 //!
-//! Provides server-side WebSocket upgrade functionality with minimal dependencies.
+//! Provides server-side WebSocket upgrade functionality with minimal
+//! dependencies.
 
 use std::io;
 
@@ -45,8 +46,8 @@ pub struct UpgradeResult {
 
 /// Performs the server-side WebSocket upgrade handshake.
 ///
-/// Reads the HTTP upgrade request from the stream, validates it,
-/// and sends back the appropriate HTTP 101 Switching Protocols response.
+/// Reads the HTTP upgrade request from the stream, validates it, and sends back
+/// the appropriate HTTP 101 Switching Protocols response.
 ///
 /// # Errors
 ///

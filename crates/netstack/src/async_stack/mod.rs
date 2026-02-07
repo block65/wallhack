@@ -3,10 +3,7 @@ pub mod tcp_listener_any;
 pub mod tcp_stream;
 pub mod udp_socket;
 
-use std::{
-	collections::HashSet,
-	sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 
 use parking_lot::Mutex;
 
