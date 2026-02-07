@@ -648,14 +648,9 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
-fn print_ping(printer: &Printer) {
-	let uptime = std::time::Instant::now(); // TODO: track actual start time
-	printer.print(format!(
-		"Version: {} ({})",
-		env!("CARGO_PKG_VERSION"),
-		"entry"
-	));
-	printer.print(format!("Uptime: {:?}", uptime.elapsed()));
+fn print_ping(_printer: &Printer) {
+	// TODO: Implement actual peer ping with latency measurement
+	// For now, use 'peers' command to see peer info
 }
 
 fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
