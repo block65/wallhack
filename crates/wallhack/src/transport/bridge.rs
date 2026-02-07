@@ -12,7 +12,7 @@ use protobuf::{
 };
 use tokio::{
 	io::{AsyncReadExt, AsyncWriteExt},
-	sync::{broadcast, oneshot},
+	sync::{broadcast, mpsc, oneshot},
 };
 
 use crate::control::handler::Handler;
@@ -44,6 +44,7 @@ pub async fn run_incoming_data<T: Transport>(
 	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
 	responses_tx: &broadcast::Sender<ExitNodeResponse>,
 	mut exit_hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
+	pong_tx: Option<&mpsc::Sender<protobuf::v2::Pong>>,
 ) -> Result<(), TransportError> {
 	loop {
 		let Some(recv) = transport.accept_uni().await? else {
@@ -111,16 +112,16 @@ pub async fn run_incoming_data<T: Transport>(
 			Some(tunnel_message::Message::Ping(ping)) => {
 				tracing::trace!("Received Ping, sending Pong");
 				// Immediately respond with pong
-				let pong = TunnelMessage {
+				let pong_msg = TunnelMessage {
 					message: Some(tunnel_message::Message::Pong(protobuf::v2::Pong {
 						timestamp_ms: ping.timestamp_ms,
 					})),
 				};
-				
+
 				// Encode and send the pong
 				match transport.open_uni().await {
 					Ok(mut send) => {
-						let encoded = pong.encode_to_vec();
+						let encoded = pong_msg.encode_to_vec();
 						if let Err(e) = send.write_all(&encoded).await {
 							tracing::warn!("Failed to write Pong: {e}");
 						}
@@ -131,9 +132,11 @@ pub async fn run_incoming_data<T: Transport>(
 					}
 				}
 			}
-			Some(tunnel_message::Message::Pong(_)) => {
-				// Pongs are handled by entry node, not by exit
-				tracing::trace!("Received Pong (unexpected on exit node)");
+			Some(tunnel_message::Message::Pong(pong)) => {
+				tracing::trace!("Received Pong");
+				if let Some(tx) = pong_tx {
+					let _ = tx.send(pong).await;
+				}
 			}
 			None => {
 				tracing::warn!("Received TunnelMessage with no message type");

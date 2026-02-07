@@ -7,8 +7,12 @@ use std::{
 };
 
 use parking_lot::RwLock;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::NodeRole;
+
+/// Request to ping a peer, with a channel to send the result back.
+pub type PingRequest = oneshot::Sender<f64>;
 
 /// Information about a connected peer.
 #[derive(Debug, Clone)]
@@ -38,6 +42,8 @@ pub type SharedRegistry = Arc<Registry>;
 #[derive(Debug, Default)]
 pub struct Registry {
 	peers: RwLock<HashMap<String, PeerInfo>>,
+	/// Channels to request pings from connection handlers.
+	ping_channels: RwLock<HashMap<String, mpsc::Sender<PingRequest>>>,
 }
 
 impl Registry {
@@ -77,7 +83,47 @@ impl Registry {
 
 	/// Unregister a peer.
 	pub fn unregister(&self, id: &str) -> Option<PeerInfo> {
+		self.ping_channels.write().remove(id);
 		self.peers.write().remove(id)
+	}
+
+	/// Register a ping channel for a peer's connection handler.
+	///
+	/// Returns the receiver that the connection handler should listen on.
+	pub fn register_ping_channel(&self, id: &str) -> mpsc::Receiver<PingRequest> {
+		let (tx, rx) = mpsc::channel(1);
+		self.ping_channels.write().insert(id.to_string(), tx);
+		rx
+	}
+
+	/// Ping a peer and return latency in milliseconds.
+	///
+	/// Sends a request to the peer's connection handler, which performs the
+	/// actual ping/pong exchange over the tunnel transport.
+	///
+	/// # Errors
+	///
+	/// Returns error if the peer doesn't exist or ping fails.
+	pub async fn ping_peer(
+		&self,
+		id: &str,
+	) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+		let tx = {
+			let channels = self.ping_channels.read();
+			channels
+				.get(id)
+				.ok_or_else(|| format!("No ping channel for peer: {id}"))?
+				.clone()
+		};
+
+		let (result_tx, result_rx) = oneshot::channel();
+		tx.send(result_tx)
+			.await
+			.map_err(|_| "Peer connection closed")?;
+
+		let latency = result_rx.await.map_err(|_| "Ping timed out")?;
+		self.update_latency(id, latency);
+		Ok(latency)
 	}
 
 	/// Update bytes transferred for a peer.
