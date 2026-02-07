@@ -12,7 +12,7 @@ use crate::control::{
 	routes::SharedRouteTable,
 };
 
-use super::auth::Auth;
+use super::{auth::Auth, node_api::NodeApi};
 
 /// Event types for SSE stream.
 #[derive(Debug, Clone, Serialize)]
@@ -43,7 +43,7 @@ pub enum Event {
 /// Shared state for the API server.
 #[derive(Clone)]
 pub struct State {
-	pub(super) handler: Arc<Handler>,
+	pub(super) node_api: Arc<dyn NodeApi>,
 	pub(super) events_tx: broadcast::Sender<Event>,
 	pub(super) auth: Auth,
 }
@@ -60,7 +60,7 @@ impl State {
 	) -> Self {
 		let (events_tx, _) = broadcast::channel(256);
 		Self {
-			handler: Arc::new(Handler::new(handler_config, metrics, peers, routes)),
+			node_api: Arc::new(Handler::new(handler_config, metrics, peers, routes)),
 			events_tx,
 			auth,
 		}

@@ -239,6 +239,100 @@ impl Handler {
 	}
 }
 
+#[cfg(feature = "api")]
+impl crate::api::node_api::NodeApi for Handler {
+	fn peers(&self) -> Vec<crate::api::node_api::PeerInfo> {
+		self.peers
+			.list()
+			.into_iter()
+			.map(|p| crate::api::node_api::PeerInfo {
+				id: p.id,
+				addr: p.addr,
+				capability: if p.has_relay_capability {
+					crate::api::node_api::NodeCapability::Relay
+				} else {
+					crate::api::node_api::NodeCapability::Exit
+				},
+				status: crate::api::node_api::PeerStatus::Connected,
+				connected_at_secs: p.connected_at.elapsed().as_secs(),
+				bytes_transferred: p.bytes_transferred,
+				latency_ms: p.latency_ms,
+			})
+			.collect()
+	}
+
+	fn routes(&self) -> crate::api::node_api::Result<Vec<crate::api::node_api::RouteEntry>> {
+		Ok(self
+			.routes
+			.list()
+			.into_iter()
+			.map(|r| crate::api::node_api::RouteEntry {
+				cidr: r.cidr,
+				peer_id: r.peer_id,
+			})
+			.collect())
+	}
+
+	fn metrics(&self) -> crate::api::node_api::Metrics {
+		crate::api::node_api::Metrics {
+			bytes_in: self.metrics.bytes_in.load(Ordering::Relaxed),
+			bytes_out: self.metrics.bytes_out.load(Ordering::Relaxed),
+			packets_in: self.metrics.packets_in.load(Ordering::Relaxed),
+			packets_out: self.metrics.packets_out.load(Ordering::Relaxed),
+			active_connections: self.metrics.active_connections.load(Ordering::Relaxed),
+			active_flows: self.metrics.active_flows.load(Ordering::Relaxed),
+		}
+	}
+
+	fn status(&self) -> crate::api::node_api::NodeStatus {
+		crate::api::node_api::NodeStatus {
+			role: self.config.node_role,
+			connected: false,
+			peer_addr: None,
+			has_relay_capability: false,
+			listen_addr: None,
+			version: self.config.version.clone(),
+			uptime_ms: u64::try_from(self.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
+		}
+	}
+
+	fn connect(&self, _addr: std::net::SocketAddr) -> crate::api::node_api::Result<()> {
+		Err(crate::api::node_api::NodeApiError::NotSupported)
+	}
+
+	fn listen(&self, _addr: std::net::SocketAddr) -> crate::api::node_api::Result<()> {
+		Err(crate::api::node_api::NodeApiError::NotSupported)
+	}
+
+	fn disconnect(&self) -> crate::api::node_api::Result<()> {
+		Err(crate::api::node_api::NodeApiError::NotSupported)
+	}
+
+	fn add_route(&self, cidr: crate::Cidr, peer_id: String) -> crate::api::node_api::Result<()> {
+		// Check if peer exists
+		if self.peers.get(&peer_id).is_none() {
+			return Err(crate::api::node_api::NodeApiError::PeerNotFound(peer_id));
+		}
+
+		self.routes.add(cidr, peer_id);
+		Ok(())
+	}
+
+	fn remove_route(&self, cidr: &crate::Cidr) -> crate::api::node_api::Result<()> {
+		self.routes
+			.remove(cidr)
+			.map(|_| ())
+			.ok_or(crate::api::node_api::NodeApiError::RouteNotFound(*cidr))
+	}
+
+	fn disconnect_peer(&self, peer_id: String) -> crate::api::node_api::Result<()> {
+		self.peers
+			.unregister(&peer_id)
+			.map(|_| ())
+			.ok_or(crate::api::node_api::NodeApiError::PeerNotFound(peer_id))
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use std::sync::Arc;

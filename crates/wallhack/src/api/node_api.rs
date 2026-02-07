@@ -55,6 +55,12 @@ pub struct PeerInfo {
 	pub capability: NodeCapability,
 	/// Connection status.
 	pub status: PeerStatus,
+	/// When the peer connected (seconds since epoch).
+	pub connected_at_secs: u64,
+	/// Total bytes transferred through this peer.
+	pub bytes_transferred: u64,
+	/// Latest measured latency in milliseconds.
+	pub latency_ms: Option<f64>,
 }
 
 /// Route table entry mapping CIDR to peer.
@@ -82,14 +88,18 @@ pub struct Metrics {
 pub struct NodeStatus {
 	/// Node's role.
 	pub role: NodeRole,
-	/// Whether node is connected to upstream (for exit/relay).
+	/// Whether node is connected to a peer (for exit/relay).
 	pub connected: bool,
-	/// Upstream address (if connected).
-	pub upstream_addr: Option<String>,
+	/// Peer address (if connected).
+	pub peer_addr: Option<String>,
 	/// Whether node has relay capability.
 	pub has_relay_capability: bool,
 	/// Listen address (if listening).
 	pub listen_addr: Option<SocketAddr>,
+	/// Application version.
+	pub version: String,
+	/// Uptime in milliseconds.
+	pub uptime_ms: u64,
 }
 
 /// Error types for node API operations.
