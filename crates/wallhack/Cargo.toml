@@ -13,7 +13,8 @@ websocket = [
     "dep:tokio-rustls",
     "transport/websocket",
 ]
-full = ["quic", "websocket"]
+api = ["dep:axum", "dep:axum-server", "dep:serde", "dep:serde_json", "dep:tokio-stream", "dep:urlencoding"]
+full = ["quic", "websocket", "api"]
 
 [dependencies]
 exit_adapter = { path = "../exit-adapter" }
@@ -23,6 +24,7 @@ dashmap = "6"
 prost = { version = "0.13" }
 protobuf = { path = "../protobuf" }
 netstack = { path = "../netstack", features = ["async"] }
+parking_lot = { workspace = true }
 quinn = { version = "0.11", default-features = false, features = [
     "runtime-tokio",
     "rustls-ring",
@@ -72,6 +74,14 @@ yamux = { version = "0.13", default-features = false, optional = true }
 # Bridge module dependencies (always needed for transport abstraction)
 bytes = "1"
 futures = { version = "0.3", default-features = false, features = ["std"] }
+
+# REST API (optional)
+axum = { version = "0.7", default-features = false, features = ["tokio", "json", "http1"], optional = true }
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tokio-stream = { version = "0.1", features = ["sync"], optional = true }
+urlencoding = { version = "2", optional = true }
 
 [build-dependencies]
 test-log = { version = "0.2", features = ["trace"] }
