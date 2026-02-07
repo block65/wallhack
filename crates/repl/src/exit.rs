@@ -4,16 +4,21 @@
 //! local network. It can either connect to an upstream peer (default) or
 //! listen for incoming connections (reverse tunnel).
 
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{
+	str::FromStr,
+	sync::{Arc, atomic::Ordering},
+	time::Duration,
+};
 
 use anyhow::{Context, Result};
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use wallhack::{
 	NodeRole,
 	client::client::{Client, ConnectResult},
 	control::metrics::Metrics,
 	exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
+	server::server::Server,
 	transport::{
 		BiStream, Transport,
 		bridge::{SESSION_INIT_MTU, read_length_delimited},
@@ -45,6 +50,20 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 ///
 /// For slower protocols, streams queue on entry node (backpressure).
 const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
+
+use crate::repl_common::Printer;
+
+#[cfg(feature = "readline")]
+use rustyline::ExternalPrinter;
+
+/// REPL commands for exit nodes.
+enum ExitReplCommand {
+	Quit,
+	Stats,
+	Status,
+	Help,
+	Unknown(String),
+}
 
 /// Run as an exit node.
 ///
@@ -135,41 +154,10 @@ async fn run_exit_listen(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let mut server =
+				let server =
 					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
 				crate::info!("Listening on {addr} (QUIC/UDP)");
-				loop {
-					match server.accept(NodeRole::Exit).await {
-						Ok(Some(accept_result)) => {
-							crate::info!(
-								"Accepted connection from {}",
-								accept_result.client_ident()
-							);
-							let transport = accept_result.transport();
-							let adapter = SyscallExitAdapter::new();
-							let orchestrator =
-								Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
-							let stream_fut = run_stream_listener(transport);
-							let (instr, resp) = accept_result.channels();
-							tokio::select! {
-								result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
-									if let Err(e) = result {
-										crate::error!("Orchestrator error: {e}");
-									}
-								}
-								result = stream_fut => {
-									if let Err(e) = result {
-										crate::error!("Stream handler error: {e}");
-									}
-								}
-							}
-						}
-						Ok(None) => break,
-						Err(e) => {
-							crate::error!("Accept error: {e}");
-						}
-					}
-				}
+				run_exit_server_loop(server, metrics).await?;
 			}
 			#[cfg(not(feature = "quic"))]
 			anyhow::bail!("QUIC transport not available (compile with --features quic)")
@@ -177,41 +165,10 @@ async fn run_exit_listen(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				let mut server =
+				let server =
 					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
 				crate::info!("Listening on {addr} (WebSocket/TCP)");
-				loop {
-					match server.accept(NodeRole::Exit).await {
-						Ok(Some(accept_result)) => {
-							crate::info!(
-								"Accepted connection from {}",
-								accept_result.client_ident()
-							);
-							let transport = accept_result.transport();
-							let adapter = SyscallExitAdapter::new();
-							let orchestrator =
-								Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
-							let stream_fut = run_stream_listener(transport);
-							let (instr, resp) = accept_result.channels();
-							tokio::select! {
-								result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
-									if let Err(e) = result {
-										crate::error!("Orchestrator error: {e}");
-									}
-								}
-								result = stream_fut => {
-									if let Err(e) = result {
-										crate::error!("Stream handler error: {e}");
-									}
-								}
-							}
-						}
-						Ok(None) => break,
-						Err(e) => {
-							crate::error!("Accept error: {e}");
-						}
-					}
-				}
+				run_exit_server_loop(server, metrics).await?;
 			}
 			#[cfg(not(feature = "websocket"))]
 			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
@@ -221,17 +178,59 @@ async fn run_exit_listen(
 	Ok(())
 }
 
+/// Generic server accept loop for exit nodes
+async fn run_exit_server_loop<S: Server>(mut server: S, metrics: Arc<Metrics>) -> Result<()>
+where
+	S::Error: std::error::Error + Send + Sync + 'static,
+	S::Transport: Send + Sync + 'static,
+{
+	loop {
+		match server.accept(NodeRole::Exit).await {
+			Ok(Some(accept_result)) => {
+				crate::info!("Accepted connection from {}", accept_result.client_ident());
+				let transport = accept_result.transport();
+				let adapter = SyscallExitAdapter::new();
+				let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
+				let stream_fut = run_stream_listener(transport);
+				let (instr, resp) = accept_result.channels();
+				tokio::select! {
+					result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
+						if let Err(e) = result {
+							crate::error!("Orchestrator error: {e}");
+						}
+					}
+					result = stream_fut => {
+						if let Err(e) = result {
+							crate::error!("Stream handler error: {e}");
+						}
+					}
+				}
+			}
+			Ok(None) => break,
+			Err(e) => {
+				crate::error!("Accept error: {e}");
+			}
+		}
+	}
+	Ok(())
+}
+
 /// Drive the exit node orchestrator with a connected client.
 async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	connect_result: ConnectResult<T>,
+	metrics: Arc<Metrics>,
+	printer: Option<Printer>,
+	upstream_addr: String,
 ) -> Result<()> {
 	crate::info!("Connected to {}", connect_result.client_ident());
 
+	if let Some(ref p) = printer {
+		p.print(format!("Connected to {upstream_addr}"));
+	}
+
 	// Create syscall adapter for local network access
 	let adapter = SyscallExitAdapter::new();
-	let metrics = Arc::new(Metrics::default());
-
-	let orchestrator = Orchestrator::new(Arc::new(adapter), metrics);
+	let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
 
 	let transport = connect_result.transport();
 	let ((instr, resp), mut tasks) = connect_result.into_parts();
@@ -243,11 +242,19 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 			match result {
 				Ok(()) => {
 					crate::info!("Connection closed cleanly");
-					println!("Connection closed, reconnecting...");
+					if let Some(ref p) = printer {
+						p.print("Connection closed, reconnecting...");
+					} else {
+						println!("Connection closed, reconnecting...");
+					}
 				}
 				Err(e) => {
 					crate::error!("Orchestrator error: {}", e);
-					println!("Connection error: {e}, reconnecting...");
+					if let Some(ref p) = printer {
+						p.print(format!("Connection error: {e}, reconnecting..."));
+					} else {
+						println!("Connection error: {e}, reconnecting...");
+					}
 				}
 			}
 		}
@@ -258,7 +265,11 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 		}
 		() = disconnect_fut => {
 			crate::info!("Connection tasks died - transport disconnected");
-			println!("Transport disconnected, reconnecting...");
+			if let Some(ref p) = printer {
+				p.print("Transport disconnected, reconnecting...");
+			} else {
+				println!("Transport disconnected, reconnecting...");
+			}
 		}
 	}
 
@@ -356,22 +367,95 @@ async fn run_quic_exit(
 	let client_config = build_quic_client_config(global, endpoint, exit_id);
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
-	loop {
-		let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
+	// Shared metrics across reconnections
+	let metrics = Arc::new(Metrics::default());
 
-		match client.connect(NodeRole::Exit).await {
-			Ok(connect_result) => {
-				retry_delay = INITIAL_RETRY_DELAY;
-				run_exit_loop(connect_result).await?;
+	// Setup REPL if stdin is a terminal
+	let (mut repl_rx, printer) = if crate::repl_common::is_interactive() {
+		let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
+		let (print_tx, print_rx) = mpsc::unbounded_channel::<String>();
+		let printer = Printer::new(print_tx);
+
+		println!("Type 'help' for commands, 'quit' to exit.\n");
+
+		let tx_clone = tx.clone();
+		std::thread::spawn(move || {
+			run_exit_repl_input(&tx_clone, print_rx);
+		});
+
+		(Some(rx), Some(printer))
+	} else {
+		println!("Running in headless mode (no REPL).\n");
+		(None, None)
+	};
+
+	let upstream_addr = endpoint.to_string();
+
+	loop {
+		tokio::select! {
+			// Handle connection attempts
+			result = async {
+				let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
+				client.connect(NodeRole::Exit).await
+			} => {
+				match result {
+					Ok(connect_result) => {
+						retry_delay = INITIAL_RETRY_DELAY;
+						run_exit_loop(connect_result, Arc::clone(&metrics), printer.clone(), upstream_addr.clone()).await?;
+					}
+					Err(e) => {
+						crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
+						if let Some(ref p) = printer {
+							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
+						} else {
+							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+						}
+						tokio::time::sleep(retry_delay).await;
+						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+					}
+				}
 			}
-			Err(e) => {
-				crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
-				println!("Connection failed: {e}, retrying in {retry_delay:?}...");
-				tokio::time::sleep(retry_delay).await;
-				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+
+			// Handle REPL commands
+			cmd = async {
+				match &mut repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				match cmd {
+					Some(ExitReplCommand::Quit) | None => {
+						if let Some(ref p) = printer {
+							p.print("Shutting down...");
+						}
+						break;
+					}
+					Some(ExitReplCommand::Stats) => {
+						if let Some(ref p) = printer {
+							print_exit_stats(&metrics, p);
+						}
+					}
+					Some(ExitReplCommand::Status) => {
+						if let Some(ref p) = printer {
+							print_exit_status(p, false, &upstream_addr);
+						}
+					}
+					Some(ExitReplCommand::Help) => {
+						if let Some(ref p) = printer {
+							print_exit_help(p);
+						}
+					}
+					Some(ExitReplCommand::Unknown(cmd)) => {
+						if let Some(ref p) = printer {
+							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
+						}
+					}
+				}
 			}
 		}
 	}
+
+	Ok(())
 }
 
 #[cfg(feature = "websocket")]
@@ -399,22 +483,95 @@ async fn run_ws_exit(
 	};
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
-	loop {
-		let mut client = WsClient::new(client_config.clone())?;
+	// Shared metrics across reconnections
+	let metrics = Arc::new(Metrics::default());
 
-		match client.connect(NodeRole::Exit).await {
-			Ok(connect_result) => {
-				retry_delay = INITIAL_RETRY_DELAY;
-				run_exit_loop(connect_result).await?;
+	// Setup REPL if stdin is a terminal
+	let (mut repl_rx, printer) = if crate::repl_common::is_interactive() {
+		let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
+		let (print_tx, print_rx) = mpsc::unbounded_channel::<String>();
+		let printer = Printer::new(print_tx);
+
+		println!("Type 'help' for commands, 'quit' to exit.\n");
+
+		let tx_clone = tx.clone();
+		std::thread::spawn(move || {
+			run_exit_repl_input(&tx_clone, print_rx);
+		});
+
+		(Some(rx), Some(printer))
+	} else {
+		println!("Running in headless mode (no REPL).\n");
+		(None, None)
+	};
+
+	let upstream_addr = endpoint.to_string();
+
+	loop {
+		tokio::select! {
+			// Handle connection attempts
+			result = async {
+				let mut client = WsClient::new(client_config.clone())?;
+				client.connect(NodeRole::Exit).await
+			} => {
+				match result {
+					Ok(connect_result) => {
+						retry_delay = INITIAL_RETRY_DELAY;
+						run_exit_loop(connect_result, Arc::clone(&metrics), printer.clone(), upstream_addr.clone()).await?;
+					}
+					Err(e) => {
+						crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
+						if let Some(ref p) = printer {
+							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
+						} else {
+							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+						}
+						tokio::time::sleep(retry_delay).await;
+						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+					}
+				}
 			}
-			Err(e) => {
-				crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
-				println!("Connection failed: {e}, retrying in {retry_delay:?}...");
-				tokio::time::sleep(retry_delay).await;
-				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+
+			// Handle REPL commands
+			cmd = async {
+				match &mut repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				match cmd {
+					Some(ExitReplCommand::Quit) | None => {
+						if let Some(ref p) = printer {
+							p.print("Shutting down...");
+						}
+						break;
+					}
+					Some(ExitReplCommand::Stats) => {
+						if let Some(ref p) = printer {
+							print_exit_stats(&metrics, p);
+						}
+					}
+					Some(ExitReplCommand::Status) => {
+						if let Some(ref p) = printer {
+							print_exit_status(p, false, &upstream_addr);
+						}
+					}
+					Some(ExitReplCommand::Help) => {
+						if let Some(ref p) = printer {
+							print_exit_help(p);
+						}
+					}
+					Some(ExitReplCommand::Unknown(cmd)) => {
+						if let Some(ref p) = printer {
+							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
+						}
+					}
+				}
 			}
 		}
 	}
+
+	Ok(())
 }
 
 #[cfg(feature = "quic")]
@@ -467,4 +624,166 @@ fn build_server_config(
 	};
 
 	wallhack::server::config::ServerConfig { listen: addr, tls }
+}
+
+/// Parse a line into an exit REPL command.
+fn parse_exit_repl_command(line: &str) -> ExitReplCommand {
+	let cmd = line.split_whitespace().next().unwrap_or("").to_lowercase();
+
+	match cmd.as_str() {
+		"quit" | "exit" | "q" => ExitReplCommand::Quit,
+		"stats" | "s" => ExitReplCommand::Stats,
+		"status" => ExitReplCommand::Status,
+		"help" | "?" => ExitReplCommand::Help,
+		_ => ExitReplCommand::Unknown(line.to_string()),
+	}
+}
+
+fn print_exit_stats(metrics: &wallhack::control::metrics::Metrics, printer: &Printer) {
+	printer.print("Traffic Statistics:");
+	printer.print(format!(
+		"  Bytes In:     {}",
+		crate::repl_common::format_bytes(metrics.bytes_in.load(Ordering::Relaxed))
+	));
+	printer.print(format!(
+		"  Bytes Out:    {}",
+		crate::repl_common::format_bytes(metrics.bytes_out.load(Ordering::Relaxed))
+	));
+	printer.print(format!(
+		"  Packets In:   {}",
+		metrics.packets_in.load(Ordering::Relaxed)
+	));
+	printer.print(format!(
+		"  Packets Out:  {}",
+		metrics.packets_out.load(Ordering::Relaxed)
+	));
+	printer.print(format!(
+		"  Connections:  {}",
+		metrics.active_connections.load(Ordering::Relaxed)
+	));
+	printer.print(format!(
+		"  Flows:        {}",
+		metrics.active_flows.load(Ordering::Relaxed)
+	));
+}
+
+fn print_exit_status(printer: &Printer, connected: bool, upstream: &str) {
+	printer.print("Exit Node Status:");
+	printer.print(format!(
+		"  Connected:    {}",
+		if connected { "Yes" } else { "No" }
+	));
+	if connected {
+		printer.print(format!("  Upstream:     {upstream}"));
+	}
+	printer.print("  Relay:        Disabled (standard exit)");
+}
+
+fn print_exit_help(printer: &Printer) {
+	printer.print("Available commands:");
+	printer.print("  stats, s      - Show traffic statistics");
+	printer.print("  status        - Show node status");
+	printer.print("  help, ?       - Show this help message");
+	printer.print("  quit, q       - Exit wallhack");
+}
+
+/// Run the REPL input loop in a blocking thread (with rustyline).
+#[cfg(feature = "readline")]
+fn run_exit_repl_input(
+	tx: &mpsc::Sender<ExitReplCommand>,
+	mut print_rx: mpsc::UnboundedReceiver<String>,
+) {
+	let mut rl = match rustyline::DefaultEditor::new() {
+		Ok(rl) => rl,
+		Err(e) => {
+			eprintln!("Failed to initialize readline: {e}");
+			let _ = tx.blocking_send(ExitReplCommand::Quit);
+			return;
+		}
+	};
+
+	let mut printer = rl.create_external_printer().ok();
+
+	std::thread::spawn(move || {
+		while let Some(msg) = print_rx.blocking_recv() {
+			if let Some(ref mut p) = printer {
+				let _ = p.print(msg);
+			} else {
+				println!("{msg}");
+			}
+		}
+	});
+
+	loop {
+		match rl.readline("wallhack> ") {
+			Ok(line) => {
+				let line = line.trim();
+				if line.is_empty() {
+					continue;
+				}
+
+				let _ = rl.add_history_entry(line);
+
+				let cmd = parse_exit_repl_command(line);
+				let is_quit = matches!(cmd, ExitReplCommand::Quit);
+				if tx.blocking_send(cmd).is_err() || is_quit {
+					break;
+				}
+			}
+			Err(rustyline::error::ReadlineError::Interrupted) => {
+				// Continue on Ctrl-C
+			}
+			Err(rustyline::error::ReadlineError::Eof | _) => {
+				let _ = tx.blocking_send(ExitReplCommand::Quit);
+				break;
+			}
+		}
+	}
+}
+
+/// Run the REPL input loop in a blocking thread (simple stdin, no readline).
+#[cfg(not(feature = "readline"))]
+fn run_exit_repl_input(
+	tx: &mpsc::Sender<ExitReplCommand>,
+	mut print_rx: mpsc::UnboundedReceiver<String>,
+) {
+	use std::io::{BufRead, Write};
+
+	std::thread::spawn(move || {
+		while let Some(msg) = print_rx.blocking_recv() {
+			println!("{msg}");
+		}
+	});
+
+	let stdin = std::io::stdin();
+	let mut stdout = std::io::stdout();
+
+	loop {
+		print!("wallhack> ");
+		let _ = stdout.flush();
+
+		let mut line = String::new();
+		match stdin.lock().read_line(&mut line) {
+			Ok(0) => {
+				let _ = tx.blocking_send(ExitReplCommand::Quit);
+				break;
+			}
+			Ok(_) => {
+				let line = line.trim();
+				if line.is_empty() {
+					continue;
+				}
+
+				let cmd = parse_exit_repl_command(line);
+				let is_quit = matches!(cmd, ExitReplCommand::Quit);
+				if tx.blocking_send(cmd).is_err() || is_quit {
+					break;
+				}
+			}
+			Err(_) => {
+				let _ = tx.blocking_send(ExitReplCommand::Quit);
+				break;
+			}
+		}
+	}
 }

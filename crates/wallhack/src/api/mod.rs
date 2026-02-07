@@ -7,6 +7,7 @@
 
 mod auth;
 mod handlers;
+pub mod node_api;
 mod state;
 mod validation;
 
@@ -131,8 +132,8 @@ pub async fn serve(
 	}
 
 	// Use the same TLS setup as the main server
-	let (certs, key) = crate::server::tls::configure_crypto(tls_config)
-		.map_err(std::io::Error::other)?;
+	let (certs, key) =
+		crate::server::tls::configure_crypto(tls_config).map_err(std::io::Error::other)?;
 
 	let rustls_config = RustlsConfig::from_der(
 		certs.into_iter().map(|c| c.to_vec()).collect(),

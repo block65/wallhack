@@ -19,6 +19,8 @@ pub struct PeerInfo {
 	pub addr: String,
 	/// What type of node this peer is.
 	pub role: NodeRole,
+	/// Whether this peer has relay capability (connect + listen).
+	pub has_relay_capability: bool,
 	/// When the peer connected.
 	pub connected_at: Instant,
 	/// Total bytes transferred through this peer.
@@ -57,12 +59,20 @@ impl Registry {
 			id: id.clone(),
 			addr,
 			role,
+			has_relay_capability: false,
 			connected_at: Instant::now(),
 			bytes_transferred: 0,
 			latency_ms: None,
 			latency_measured_at: None,
 		};
 		self.peers.write().insert(id, info);
+	}
+
+	/// Update relay capability for a peer.
+	pub fn set_relay_capability(&self, id: &str, has_capability: bool) {
+		if let Some(peer) = self.peers.write().get_mut(id) {
+			peer.has_relay_capability = has_capability;
+		}
 	}
 
 	/// Unregister a peer.

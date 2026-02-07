@@ -88,17 +88,7 @@ impl SessionManager {
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
 
-/// Wrapper for printing to terminal without disrupting readline.
-#[derive(Clone)]
-struct Printer {
-	tx: mpsc::UnboundedSender<String>,
-}
-
-impl Printer {
-	fn print(&self, msg: impl Into<String>) {
-		let _ = self.tx.send(msg.into());
-	}
-}
+use crate::repl_common::Printer;
 
 /// Run as an entry node with interactive REPL.
 ///
@@ -196,10 +186,10 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 /// Entry connects to a remote peer but still creates TUN and runs REPL.
 async fn run_entry_connect(
 	global: &WallhackCli,
-	_cmd: &EntryCommand,
+	cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
 	metrics: Arc<Metrics>,
-	_peers: Arc<Registry>,
+	peers: Arc<Registry>,
 	_sessions: SessionManager,
 ) -> Result<()> {
 	use std::{str::FromStr, time::Duration};
@@ -222,7 +212,7 @@ async fn run_entry_connect(
 	if let Some(api_addr) = cmd.api_addr() {
 		let tls = build_tls_config(global);
 		let routes = RouteTable::shared();
-		start_api(global, api_addr, &metrics, &_peers, &routes, tls);
+		start_api(global, api_addr, &metrics, &peers, &routes, tls);
 	}
 
 	match spec.protocol {
@@ -308,6 +298,7 @@ async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static
 }
 
 /// Generic entry server loop that works with any Server implementation.
+#[allow(clippy::too_many_lines)]
 async fn run_entry_server<S: Server>(
 	mut server: S,
 	metrics: Arc<Metrics>,
@@ -324,7 +315,7 @@ where
 
 	// Channel for async prints (async loop -> input thread)
 	let (print_tx, print_rx) = mpsc::unbounded_channel::<String>();
-	let printer = Printer { tx: print_tx };
+	let printer = Printer::new(print_tx);
 
 	// Only spawn REPL if stdin is a terminal (skip in headless/Docker mode)
 	let interactive = std::io::stdin().is_terminal();
@@ -630,11 +621,11 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	printer.print("Traffic Statistics:");
 	printer.print(format!(
 		"  Bytes In:     {}",
-		format_bytes(metrics.bytes_in.load(Ordering::Relaxed))
+		crate::repl_common::format_bytes(metrics.bytes_in.load(Ordering::Relaxed))
 	));
 	printer.print(format!(
 		"  Bytes Out:    {}",
-		format_bytes(metrics.bytes_out.load(Ordering::Relaxed))
+		crate::repl_common::format_bytes(metrics.bytes_out.load(Ordering::Relaxed))
 	));
 	printer.print(format!(
 		"  Packets In:   {}",
@@ -835,26 +826,6 @@ fn remove_os_route(cidr: &str, dev: &str) {
 		Err(e) => {
 			tracing::debug!("Failed to run ip route del: {e}");
 		}
-	}
-}
-
-fn format_bytes(bytes: u64) -> String {
-	let units = ["B", "KB", "MB", "GB", "TB", "PB"];
-	#[allow(clippy::cast_precision_loss)]
-	let mut value = bytes as f64;
-	let mut i = 0;
-
-	// We suppress the warning here, once, for the initial cast.
-	while value >= 1024.0 && i < units.len() - 1 {
-		value /= 1024.0;
-		i += 1;
-	}
-
-	// Use integer formatting for simple Bytes, float for everything else
-	if i == 0 {
-		format!("{} {}", bytes, units[0])
-	} else {
-		format!("{:.2} {}", value, units[i])
 	}
 }
 
