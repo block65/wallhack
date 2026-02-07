@@ -258,9 +258,14 @@ impl WsClient {
 		let responses_tx = responses.clone();
 
 		let incoming_handle = tokio::spawn(async move {
-			if let Err(e) =
-				bridge::run_incoming_data(&*transport_data, &instructions_tx, &responses_tx, None)
-					.await
+			if let Err(e) = bridge::run_incoming_data(
+				&*transport_data,
+				&instructions_tx,
+				&responses_tx,
+				None,
+				None,
+			)
+			.await
 			{
 				tracing::debug!("Incoming data handler finished: {e}");
 			}
