@@ -115,6 +115,9 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 	let routes = RouteTable::shared();
 
 	match transport {
+		TransportDir::Both { .. } => {
+			anyhow::bail!("Entry nodes do not support both --connect and --listen simultaneously")
+		}
 		TransportDir::Listen(spec) => {
 			let addr = parse_listen_addr(&spec.addr)?;
 

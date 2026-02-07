@@ -138,6 +138,11 @@ pub enum TransportDir {
 	Listen(AddressSpec),
 	/// Node connects to a remote peer.
 	Connect(AddressSpec),
+	/// Node has both connect and listen (relay capability).
+	Both {
+		connect: AddressSpec,
+		listen: AddressSpec,
+	},
 }
 
 impl EntryCommand {
@@ -170,14 +175,18 @@ impl EntryCommand {
 impl ExitCommand {
 	/// Resolve the transport direction.
 	///
-	/// No default — one of `--listen` or `--connect` is required.
+	/// No default — one or both of `--listen` or `--connect` is required.
+	/// When both are specified, the exit node gains relay capability.
 	///
 	/// # Errors
 	///
-	/// Returns error if neither or both flags are specified.
+	/// Returns error if neither flag is specified.
 	pub fn transport(&self) -> Result<TransportDir, String> {
 		match (&self.listen, &self.connect) {
-			(Some(_), Some(_)) => Err("exit requires exactly one of --listen or --connect".into()),
+			(Some(listen), Some(connect)) => Ok(TransportDir::Both {
+				connect: AddressSpec::parse(connect),
+				listen: AddressSpec::parse(listen),
+			}),
 			(Some(addr), None) => Ok(TransportDir::Listen(AddressSpec::parse(addr))),
 			(None, Some(addr)) => Ok(TransportDir::Connect(AddressSpec::parse(addr))),
 			(None, None) => Err("exit requires --listen or --connect".into()),
