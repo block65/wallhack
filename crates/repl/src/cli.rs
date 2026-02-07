@@ -21,6 +21,7 @@ use argh::FromArgs;
 /// Network pivoting and tunneling tool.
 ///
 /// Defaults to entry mode listening on :6565 when invoked without a subcommand.
+#[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
 #[derive(FromArgs, Debug)]
 pub struct WallhackCli {
 	/// TLS certificate file
@@ -179,8 +180,8 @@ impl EntryCommand {
 impl ExitCommand {
 	/// Resolve the transport direction.
 	///
-	/// No default — one or both of `--listen` or `--connect` is required.
-	/// When both are specified, the exit node gains relay capability.
+	/// No default — one or both of `--listen` or `--connect` is required. When
+	/// both are specified, the exit node gains relay capability.
 	///
 	/// # Errors
 	///
