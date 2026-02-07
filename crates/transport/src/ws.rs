@@ -80,7 +80,7 @@ impl BiStream for WsBiStream {
 	}
 }
 
-/// A unidirectional send stream (for open_uni).
+/// A unidirectional send stream (for `open_uni`).
 pub struct WsSendStream {
 	inner: tokio_util::compat::Compat<YamuxStream>,
 }
@@ -111,7 +111,7 @@ impl AsyncWrite for WsSendStream {
 	}
 }
 
-/// A unidirectional receive stream (for accept_uni).
+/// A unidirectional receive stream (for `accept_uni`).
 pub struct WsRecvStream {
 	inner: tokio_util::compat::Compat<YamuxStream>,
 }
@@ -238,8 +238,8 @@ impl Future for Driver {
 							)
 							.await;
 
-							match read_result {
-								Ok(Ok(_)) => match prefix[0] {
+							if let Ok(Ok(())) = read_result {
+								match prefix[0] {
 									STREAM_TYPE_DATA => {
 										let _ = uni_tx.send(stream).await;
 									}
@@ -247,8 +247,7 @@ impl Future for Driver {
 										let _ = bi_tx.send(stream).await;
 									}
 									_ => {}
-								},
-								_ => {}
+								}
 							}
 						});
 						progress = true;
@@ -284,7 +283,7 @@ pub struct WsTransport {
 	incoming_bi_rx: tokio::sync::Mutex<mpsc::Receiver<YamuxStream>>,
 }
 
-/// Trait alias for types that implement both tokio AsyncRead and AsyncWrite.
+/// Trait alias for types that implement both tokio [`AsyncRead`] and [`AsyncWrite`].
 pub trait TokioAsyncReadWrite: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> TokioAsyncReadWrite for T {}
 

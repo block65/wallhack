@@ -20,9 +20,11 @@ use tokio_tungstenite::tungstenite::Message;
 ///
 /// # Implementation Notes
 ///
-/// - Reads buffer partial message data for consumption across multiple read calls
+/// - Reads buffer partial message data for consumption across multiple read
+///   calls
 /// - Writes send binary messages for each write operation
-/// - Only binary WebSocket messages are used for data; text/ping/pong/close are handled separately
+/// - Only binary WebSocket messages are used for data; text/ping/pong/close are
+///   handled separately
 pub struct WsByteStream<S> {
 	inner: S,
 	read_buf: Vec<u8>,
@@ -108,14 +110,10 @@ where
 							// Connection closed
 							return Poll::Ready(Ok(()));
 						}
-						Message::Ping(_) | Message::Pong(_) | Message::Text(_) => {
-							// Ignore non-binary messages, keep reading
-							continue;
-						}
-						Message::Frame(_) => {
-							// Raw frames shouldn't appear in normal usage
-							continue;
-						}
+						Message::Ping(_)
+						| Message::Pong(_)
+						| Message::Text(_)
+						| Message::Frame(_) => {}
 					}
 				}
 				Poll::Ready(Some(Err(e))) => {
