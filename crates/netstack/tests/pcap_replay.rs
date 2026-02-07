@@ -451,7 +451,7 @@ fn pcap_replay_full_handshake() {
 	assert_eq!(&recv_buf[..n], data);
 }
 
-/// Test AnyIP mode with 0.0.0.0/0 address - mirrors TunActor config
+/// Test `AnyIP` mode with 0.0.0.0/0 address - mirrors `TunActor` config
 #[test]
 fn anyip_syn_response() {
 	use smoltcp::wire::{
@@ -478,7 +478,7 @@ fn anyip_syn_response() {
 		src_port: 44678,
 		dst_port: 9999,
 		control: TcpControl::Syn,
-		seq_number: TcpSeqNumber(2078392895),
+		seq_number: TcpSeqNumber(2_078_392_895),
 		ack_number: None,
 		window_len: 64240,
 		window_scale: Some(10),
@@ -570,7 +570,7 @@ fn anyip_jit_binding_flow() {
 		src_port: 44678,
 		dst_port: 9999,
 		control: TcpControl::Syn,
-		seq_number: TcpSeqNumber(2078392895),
+		seq_number: TcpSeqNumber(2_078_392_895),
 		ack_number: None,
 		window_len: 64240,
 		window_scale: Some(10),

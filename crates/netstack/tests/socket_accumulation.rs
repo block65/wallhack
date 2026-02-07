@@ -206,7 +206,7 @@ fn test_socket_accumulation_without_pruning() {
 
 	// Now prune and verify cleanup
 	let pruned = stack.prune_closed_tcp_sockets();
-	println!("Pruned {} sockets", pruned);
+	println!("Pruned {pruned} sockets");
 
 	// After pruning, should have 0 sockets (all were closed)
 	assert_eq!(stack.socket_count(), 0, "All sockets should be pruned");
@@ -239,13 +239,12 @@ fn test_high_volume_connections() {
 		}
 
 		// Check we're not accumulating too many
-		if stack.socket_count() > 200 {
-			panic!(
-				"Socket accumulation at iteration {}: {} sockets",
-				i,
-				stack.socket_count()
-			);
-		}
+		assert!(
+			stack.socket_count() <= 200,
+			"Socket accumulation at iteration {}: {} sockets",
+			i,
+			stack.socket_count()
+		);
 	}
 
 	// Final cleanup
