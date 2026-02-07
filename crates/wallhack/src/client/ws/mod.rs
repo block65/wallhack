@@ -204,7 +204,8 @@ impl WsClient {
 				let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
 					.map_err(|_| Error::InvalidDnsName(hostname.clone()))?;
 				let tls_stream = connector.connect(server_name, tcp_stream).await?;
-				let (ws, _response) = client_async(&url, MaybeTlsStream::Tls(Box::new(tls_stream))).await?;
+				let (ws, _response) =
+					client_async(&url, MaybeTlsStream::Tls(Box::new(tls_stream))).await?;
 				ws
 			} else {
 				let (ws, _response) = client_async(&url, MaybeTlsStream::Plain(tcp_stream)).await?;

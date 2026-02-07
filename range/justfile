@@ -18,6 +18,10 @@ down:
 shell:
     docker exec -it wallhack-range-attacker-1 sh
 
+# Shell into the gateway-perimeter container
+shell2:
+    docker exec -it wallhack-range-gateway-perimeter-1 sh
+
 # Run range validation tests
 test:
     bash test.sh
