@@ -126,7 +126,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	let (mut repl_rx, printer) = setup_exit_repl();
 
 	loop {
-		let action = match (&connect_spec, &listen_spec) {
+		let result = match (&connect_spec, &listen_spec) {
 			(Some(c), Some(l)) => {
 				crate::info!("Exit node with relay capability (exit_id: {exit_id})");
 				run_relay_capability_mode(
@@ -138,7 +138,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 					&mut repl_rx,
 					printer.as_ref(),
 				)
-				.await?
+				.await
 			}
 			(Some(c), None) => {
 				crate::info!("Exit node starting with exit_id: {exit_id}");
@@ -150,13 +150,29 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 					&mut repl_rx,
 					printer.as_ref(),
 				)
-				.await?
+				.await
 			}
 			(None, Some(l)) => {
 				crate::info!("Exit node listening (exit_id: {exit_id})");
-				run_listen_mode(global, l, &metrics, &mut repl_rx, printer.as_ref()).await?
+				run_listen_mode(global, l, &metrics, &mut repl_rx, printer.as_ref()).await
 			}
-			(None, None) => run_idle_mode(&metrics, &mut repl_rx, printer.as_ref()).await?,
+			(None, None) => run_idle_mode(&metrics, &mut repl_rx, printer.as_ref()).await,
+		};
+
+		let action = match result {
+			Ok(action) => action,
+			Err(e) => {
+				crate::error!("{e}");
+				if let Some(p) = printer.as_ref() {
+					p.print(format!("Error: {e}"));
+				} else {
+					eprintln!("Error: {e}");
+				}
+				// Reset to idle so the user can try again
+				connect_spec = None;
+				listen_spec = None;
+				continue;
+			}
 		};
 
 		match action {
@@ -484,64 +500,119 @@ async fn run_idle_mode(
 }
 
 /// Drive the exit node orchestrator with a connected client.
+///
+/// Returns `None` when the connection drops (caller should reconnect),
+/// or `Some(action)` when the user requested a mode transition via REPL.
 async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	connect_result: ConnectResult<T>,
-	metrics: Arc<Metrics>,
-	printer: Option<Printer>,
-	upstream_addr: String,
-) -> Result<()> {
+	metrics: &Arc<Metrics>,
+	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
+	printer: Option<&Printer>,
+	peer_addr: &str,
+) -> Result<Option<ExitAction>> {
 	crate::info!("Connected to {}", connect_result.client_ident());
 
-	if let Some(ref p) = printer {
-		p.print(format!("Connected to {upstream_addr}"));
+	if let Some(p) = printer {
+		p.print(format!("Connected to {peer_addr}"));
 	}
 
 	// Create syscall adapter for local network access
 	let adapter = SyscallExitAdapter::new();
-	let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
+	let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 
 	let transport = connect_result.transport();
 	let ((instr, resp), mut tasks) = connect_result.into_parts();
 	let stream_fut = run_stream_listener(transport);
 	let disconnect_fut = tasks.wait_for_disconnect();
 
-	tokio::select! {
-		result = orchestrator.drive(resp, instr.subscribe()) => {
-			match result {
-				Ok(()) => {
-					crate::info!("Connection closed cleanly");
-					if let Some(ref p) = printer {
-						p.print("Connection closed, reconnecting...");
-					} else {
-						println!("Connection closed, reconnecting...");
+	// Pin the long-running futures so we can select over them + REPL
+	tokio::pin!(stream_fut);
+	tokio::pin!(disconnect_fut);
+	let drive_fut = orchestrator.drive(resp, instr.subscribe());
+	tokio::pin!(drive_fut);
+
+	loop {
+		tokio::select! {
+			result = &mut drive_fut => {
+				match result {
+					Ok(()) => {
+						crate::info!("Connection closed cleanly");
+						if let Some(p) = printer {
+							p.print("Connection closed, reconnecting...");
+						} else {
+							println!("Connection closed, reconnecting...");
+						}
+					}
+					Err(e) => {
+						crate::error!("Orchestrator error: {}", e);
+						if let Some(p) = printer {
+							p.print(format!("Connection error: {e}, reconnecting..."));
+						} else {
+							println!("Connection error: {e}, reconnecting...");
+						}
 					}
 				}
-				Err(e) => {
-					crate::error!("Orchestrator error: {}", e);
-					if let Some(ref p) = printer {
-						p.print(format!("Connection error: {e}, reconnecting..."));
-					} else {
-						println!("Connection error: {e}, reconnecting...");
+				return Ok(None);
+			}
+			result = &mut stream_fut => {
+				if let Err(e) = result {
+					crate::error!("Stream handler error: {e}");
+				}
+				return Ok(None);
+			}
+			() = &mut disconnect_fut => {
+				crate::info!("Connection tasks died - transport disconnected");
+				if let Some(p) = printer {
+					p.print("Transport disconnected, reconnecting...");
+				} else {
+					println!("Transport disconnected, reconnecting...");
+				}
+				return Ok(None);
+			}
+			cmd = async {
+				match repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				match cmd {
+					Some(ExitReplCommand::Quit) | None => return Ok(Some(ExitAction::Quit)),
+					Some(ExitReplCommand::Listen(addr)) => return Ok(Some(ExitAction::StartListen(addr))),
+					Some(ExitReplCommand::Connect(_)) => {
+						if let Some(p) = printer {
+							p.print(format!("Already connected to {peer_addr}. Use 'disconnect' first."));
+						}
+					}
+					Some(ExitReplCommand::Disconnect) => return Ok(Some(ExitAction::StopConnect)),
+					Some(ExitReplCommand::Peers) => {
+						if let Some(p) = printer {
+							p.print(format!("Peer: {peer_addr}"));
+						}
+					}
+					Some(ExitReplCommand::Stats) => {
+						if let Some(p) = printer {
+							print_exit_stats(metrics, p);
+						}
+					}
+					Some(ExitReplCommand::Status) => {
+						if let Some(p) = printer {
+							print_exit_status(p, true, peer_addr);
+						}
+					}
+					Some(ExitReplCommand::Help) => {
+						if let Some(p) = printer {
+							print_connect_help(p);
+						}
+					}
+					Some(ExitReplCommand::Unknown(cmd)) => {
+						if let Some(p) = printer {
+							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
+						}
 					}
 				}
-			}
-		}
-		result = stream_fut => {
-			if let Err(e) = result {
-				crate::error!("Stream handler error: {e}");
-			}
-		}
-		() = disconnect_fut => {
-			crate::info!("Connection tasks died - transport disconnected");
-			if let Some(ref p) = printer {
-				p.print("Transport disconnected, reconnecting...");
-			} else {
-				println!("Transport disconnected, reconnecting...");
 			}
 		}
 	}
-
-	Ok(())
 }
 
 async fn run_stream_listener<T: Transport>(transport: std::sync::Arc<T>) -> Result<()>
@@ -626,6 +697,62 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 	Ok(())
 }
 
+/// Handle a REPL command during the connecting/retrying phase.
+///
+/// Returns `Some(action)` if the command triggers a mode transition, `None` to continue.
+fn handle_connecting_repl_cmd(
+	cmd: Option<ExitReplCommand>,
+	printer: Option<&Printer>,
+	metrics: &Arc<Metrics>,
+	peer_addr: &str,
+) -> Option<ExitAction> {
+	match cmd {
+		Some(ExitReplCommand::Quit) | None => Some(ExitAction::Quit),
+		Some(ExitReplCommand::Listen(addr)) => Some(ExitAction::StartListen(addr)),
+		Some(ExitReplCommand::Connect(_)) => {
+			if let Some(p) = printer {
+				p.print(format!(
+					"Already connecting to {peer_addr}. Use 'disconnect' first."
+				));
+			}
+			None
+		}
+		Some(ExitReplCommand::Disconnect) => Some(ExitAction::StopConnect),
+		Some(ExitReplCommand::Peers) => {
+			if let Some(p) = printer {
+				p.print(format!("Peer: {peer_addr} (connecting...)"));
+			}
+			None
+		}
+		Some(ExitReplCommand::Stats) => {
+			if let Some(p) = printer {
+				print_exit_stats(metrics, p);
+			}
+			None
+		}
+		Some(ExitReplCommand::Status) => {
+			if let Some(p) = printer {
+				print_exit_status(p, false, peer_addr);
+			}
+			None
+		}
+		Some(ExitReplCommand::Help) => {
+			if let Some(p) = printer {
+				print_connect_help(p);
+			}
+			None
+		}
+		Some(ExitReplCommand::Unknown(cmd)) => {
+			if let Some(p) = printer {
+				p.print(format!(
+					"Unknown command: {cmd}. Type 'help' for available commands."
+				));
+			}
+			None
+		}
+	}
+}
+
 #[cfg(feature = "quic")]
 async fn run_quic_exit(
 	global: &WallhackCli,
@@ -650,7 +777,10 @@ async fn run_quic_exit(
 				match result {
 					Ok(connect_result) => {
 						retry_delay = INITIAL_RETRY_DELAY;
-						run_exit_loop(connect_result, Arc::clone(metrics), printer.cloned(), peer_addr.clone()).await?;
+						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr).await? {
+							return Ok(action);
+						}
+						// None = connection dropped, loop will retry
 					}
 					Err(e) => {
 						crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
@@ -665,47 +795,15 @@ async fn run_quic_exit(
 				}
 			}
 
-			// Handle REPL commands
+			// Handle REPL commands (only fires while connecting/retrying)
 			cmd = async {
 				match repl_rx {
 					Some(rx) => rx.recv().await,
 					None => std::future::pending().await,
 				}
 			} => {
-				match cmd {
-					Some(ExitReplCommand::Quit) | None => return Ok(ExitAction::Quit),
-					Some(ExitReplCommand::Listen(addr)) => return Ok(ExitAction::StartListen(addr)),
-					Some(ExitReplCommand::Connect(_)) => {
-						if let Some(p) = printer {
-							p.print(format!("Already connecting to {peer_addr}. Use 'disconnect' first."));
-						}
-					}
-					Some(ExitReplCommand::Disconnect) => return Ok(ExitAction::StopConnect),
-					Some(ExitReplCommand::Peers) => {
-						if let Some(p) = printer {
-							p.print(format!("Peer: {peer_addr}"));
-						}
-					}
-					Some(ExitReplCommand::Stats) => {
-						if let Some(p) = printer {
-							print_exit_stats(metrics, p);
-						}
-					}
-					Some(ExitReplCommand::Status) => {
-						if let Some(p) = printer {
-							print_exit_status(p, true, &peer_addr);
-						}
-					}
-					Some(ExitReplCommand::Help) => {
-						if let Some(p) = printer {
-							print_connect_help(p);
-						}
-					}
-					Some(ExitReplCommand::Unknown(cmd)) => {
-						if let Some(p) = printer {
-							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
-						}
-					}
+				if let Some(action) = handle_connecting_repl_cmd(cmd, printer, metrics, &peer_addr) {
+					return Ok(action);
 				}
 			}
 		}
@@ -752,7 +850,10 @@ async fn run_ws_exit(
 				match result {
 					Ok(connect_result) => {
 						retry_delay = INITIAL_RETRY_DELAY;
-						run_exit_loop(connect_result, Arc::clone(metrics), printer.cloned(), peer_addr.clone()).await?;
+						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr).await? {
+							return Ok(action);
+						}
+						// None = connection dropped, loop will retry
 					}
 					Err(e) => {
 						crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
@@ -767,47 +868,15 @@ async fn run_ws_exit(
 				}
 			}
 
-			// Handle REPL commands
+			// Handle REPL commands (only fires while connecting/retrying)
 			cmd = async {
 				match repl_rx {
 					Some(rx) => rx.recv().await,
 					None => std::future::pending().await,
 				}
 			} => {
-				match cmd {
-					Some(ExitReplCommand::Quit) | None => return Ok(ExitAction::Quit),
-					Some(ExitReplCommand::Listen(addr)) => return Ok(ExitAction::StartListen(addr)),
-					Some(ExitReplCommand::Connect(_)) => {
-						if let Some(p) = printer {
-							p.print(format!("Already connecting to {peer_addr}. Use 'disconnect' first."));
-						}
-					}
-					Some(ExitReplCommand::Disconnect) => return Ok(ExitAction::StopConnect),
-					Some(ExitReplCommand::Peers) => {
-						if let Some(p) = printer {
-							p.print(format!("Peer: {peer_addr}"));
-						}
-					}
-					Some(ExitReplCommand::Stats) => {
-						if let Some(p) = printer {
-							print_exit_stats(metrics, p);
-						}
-					}
-					Some(ExitReplCommand::Status) => {
-						if let Some(p) = printer {
-							print_exit_status(p, true, &peer_addr);
-						}
-					}
-					Some(ExitReplCommand::Help) => {
-						if let Some(p) = printer {
-							print_connect_help(p);
-						}
-					}
-					Some(ExitReplCommand::Unknown(cmd)) => {
-						if let Some(p) = printer {
-							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
-						}
-					}
+				if let Some(action) = handle_connecting_repl_cmd(cmd, printer, metrics, &peer_addr) {
+					return Ok(action);
 				}
 			}
 		}
