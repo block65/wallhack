@@ -11,6 +11,8 @@ mod tls;
 pub mod types;
 
 // public
+#[cfg(feature = "api")]
+pub mod api;
 pub mod client;
 pub mod control;
 pub mod entry;
@@ -21,7 +23,7 @@ pub mod transport;
 // re-exports
 use client::config::ClientConfig;
 use server::config::ServerConfig;
-pub use types::NodeRole;
+pub use types::{Cidr, CidrParseError, NodeRole};
 
 #[cfg(test)]
 pub mod pcap_parser;
