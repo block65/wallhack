@@ -23,6 +23,7 @@ pub struct AcceptResult<T: Transport> {
 	peer_ident: String,
 	metrics: SharedMetrics,
 	hello_rx: Option<oneshot::Receiver<ExitNodeHello>>,
+	exit_hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
 	transport: std::sync::Arc<T>,
 }
 
@@ -40,17 +41,19 @@ impl<T: Transport> AcceptResult<T> {
 			peer_ident,
 			metrics,
 			hello_rx: None,
+			exit_hello_tx: None,
 			transport,
 		}
 	}
 
-	/// Creates a new accept result with an `ExitNodeHello` receiver.
+	/// Creates a new accept result with an `ExitNodeHello` channel pair.
 	#[must_use]
 	pub fn with_exit_hello(
 		transport: std::sync::Arc<T>,
 		channels: Channels,
 		peer_ident: String,
 		metrics: SharedMetrics,
+		hello_tx: oneshot::Sender<ExitNodeHello>,
 		hello_rx: oneshot::Receiver<ExitNodeHello>,
 	) -> Self {
 		Self {
@@ -58,6 +61,7 @@ impl<T: Transport> AcceptResult<T> {
 			peer_ident,
 			metrics,
 			hello_rx: Some(hello_rx),
+			exit_hello_tx: Some(hello_tx),
 			transport,
 		}
 	}
@@ -92,6 +96,14 @@ impl<T: Transport> AcceptResult<T> {
 	/// interfaces.
 	pub fn take_hello_rx(&mut self) -> Option<oneshot::Receiver<ExitNodeHello>> {
 		self.hello_rx.take()
+	}
+
+	/// Takes the `ExitNodeHello` sender, if available.
+	///
+	/// This should be passed to `run_incoming_data` so it can forward the
+	/// hello message when received.
+	pub fn take_hello_tx(&mut self) -> Option<oneshot::Sender<ExitNodeHello>> {
+		self.exit_hello_tx.take()
 	}
 }
 

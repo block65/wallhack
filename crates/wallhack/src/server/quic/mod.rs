@@ -77,7 +77,7 @@ impl Server for QuicServer {
 
 	async fn accept(
 		&mut self,
-		role: NodeRole,
+		_role: NodeRole,
 	) -> Result<Option<AcceptResult<Self::Transport>>, Error> {
 		tracing::debug!("waiting for next connection...");
 
@@ -128,31 +128,14 @@ impl Server for QuicServer {
 			}
 		});
 
-		// Task 1: Incoming data handler - spawns for listening side to receive ExitNodeHello
-		if matches!(role, NodeRole::Entry) {
-			let transport_data = Arc::clone(&transport);
-			let responses_tx = responses.clone();
-			let instructions_tx = instructions.clone();
-
-			tokio::spawn(async move {
-				if let Err(e) = bridge::run_incoming_data(
-					&*transport_data,
-					&instructions_tx,
-					&responses_tx,
-					Some(exit_hello_tx),
-				)
-				.await
-				{
-					tracing::debug!("Incoming data handler finished: {e}");
-				}
-			});
-		}
-
+		// Task 1: Incoming data handler is now spawned by the caller (connection handler)
+		// so it can inject pong channels for latency measurement.
 		Ok(Some(AcceptResult::with_exit_hello(
 			Arc::clone(&transport),
 			(instructions, responses),
 			remote_addr,
 			metrics,
+			exit_hello_tx,
 			exit_hello_rx,
 		)))
 	}
