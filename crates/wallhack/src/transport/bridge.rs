@@ -108,6 +108,33 @@ pub async fn run_incoming_data<T: Transport>(
 					let _ = tx.send(hello);
 				}
 			}
+			Some(tunnel_message::Message::Ping(ping)) => {
+				tracing::trace!("Received Ping, sending Pong");
+				// Immediately respond with pong
+				let pong = TunnelMessage {
+					message: Some(tunnel_message::Message::Pong(protobuf::v2::Pong {
+						timestamp_ms: ping.timestamp_ms,
+					})),
+				};
+				
+				// Encode and send the pong
+				match transport.open_uni().await {
+					Ok(mut send) => {
+						let encoded = pong.encode_to_vec();
+						if let Err(e) = send.write_all(&encoded).await {
+							tracing::warn!("Failed to write Pong: {e}");
+						}
+						// Stream closes when dropped
+					}
+					Err(e) => {
+						tracing::warn!("Failed to open stream for Pong: {e}");
+					}
+				}
+			}
+			Some(tunnel_message::Message::Pong(_)) => {
+				// Pongs are handled by entry node, not by exit
+				tracing::trace!("Received Pong (unexpected on exit node)");
+			}
 			None => {
 				tracing::warn!("Received TunnelMessage with no message type");
 			}

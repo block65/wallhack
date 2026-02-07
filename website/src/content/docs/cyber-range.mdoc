@@ -1,0 +1,83 @@
+---
+title: Cyber Range
+description: Practice network pivoting techniques in a safe, isolated environment
+order: 9
+---
+
+# Cyber Range
+
+Practice network pivoting techniques in a safe, isolated environment using Docker Compose.
+
+{% card title="Practice Environment" icon="flask" description="Spin up a multi-network lab environment to practice pivoting techniques without risk" %}
+
+### Docker Compose Setup
+
+The cyber range includes multiple isolated networks simulating a realistic penetration testing scenario: DMZ, internal network, and isolated subnets.
+
+**Start the environment**
+
+{% codeblock code="docker-compose up -d" /%}
+
+**docker-compose.yml**
+
+```yaml
+version: '3.8'
+
+services:
+  dmz-host:
+    image: alpine:latest
+    container_name: wallhack-dmz
+    networks:
+      dmz:
+        ipv4_address: 10.0.0.10
+      office:
+        ipv4_address: 10.1.0.5
+    command: sleep infinity
+
+  internal-host:
+    image: alpine:latest
+    container_name: wallhack-internal
+    networks:
+      office:
+        ipv4_address: 10.1.0.10
+      secret:
+        ipv4_address: 10.2.0.5
+    command: sleep infinity
+
+  target:
+    image: alpine:latest
+    container_name: wallhack-target
+    networks:
+      secret:
+        ipv4_address: 10.2.0.10
+    command: sleep infinity
+
+networks:
+  dmz:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24
+  office:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.0.0/24
+  secret:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.0.0/24
+```
+
+### Practice Scenarios
+
+- Single-hop pivot from DMZ host to office network
+- Multi-hop pivot chaining through DMZ and office to reach the secret subnet
+- Test routing configuration and network connectivity
+
+{% callout type="note" %}
+Ensure Docker and Docker Compose are installed. Copy the wallhack binary into each container to practice pivoting techniques.
+{% /callout %}
+
+{% /card %}

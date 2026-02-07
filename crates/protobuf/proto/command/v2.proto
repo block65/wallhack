@@ -208,6 +208,8 @@ message TunnelMessage {
     ExitNodeResponse exit_node_response = 2;
     RawPacket raw_packet = 3;
     ExitNodeHello exit_node_hello = 4;
+    Ping ping = 5;
+    Pong pong = 6;
   }
 }
 
@@ -216,4 +218,14 @@ message TunnelMessage {
 message ExitNodeHello {
   string exit_id = 1;      // Stable identifier (user-provided or auto-generated)
   string version = 2;       // Exit node version for compatibility checks
+}
+
+// Ping request for latency measurement.
+message Ping {
+  uint64 timestamp_ms = 1;  // Optional timestamp for sender's reference
+}
+
+// Pong response to ping.
+message Pong {
+  uint64 timestamp_ms = 1;  // Echo back the ping timestamp
 }

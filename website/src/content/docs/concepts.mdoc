@@ -1,0 +1,75 @@
+---
+title: Node Types & Flags
+description: Fundamental building blocks of your tunnel architecture
+order: 3
+---
+
+# Node Types
+
+Three fundamental node types form the building blocks of your tunnel architecture.
+
+{% grid cols=3 %}
+{% card title="Entry" icon="entry" description="Your machine where traffic enters the tunnel chain. Creates a TUN interface and runs an interactive REPL." %}
+```bash
+wallhack entry --listen :PORT
+```
+{% /card %}
+
+{% card title="Relay (Optional)" icon="relay" description="Optional intermediate host that forwards traffic deeper into the network. Connects upstream and listens downstream. Not required for simple entry-to-exit tunnels." %}
+```bash
+wallhack relay --connect HOST:PORT --listen :PORT
+```
+{% /card %}
+
+{% card title="Exit" icon="exit" description="End of the tunnel chain. Unwraps packets and sends them to the target network via syscalls." %}
+```bash
+wallhack exit --connect HOST:PORT
+```
+{% /card %}
+{% /grid %}
+
+The node role is declared explicitly via subcommand. Transport direction (`--listen` / `--connect`) is independent of role — entry and exit nodes can either listen or connect, enabling reverse tunnels. **wallhack can operate with just entry and exit nodes** — relays are only needed when intermediate pivoting is required.
+
+{% separator /%}
+
+# Command Flags
+
+Two primary flags control the behavior of wallhack nodes.
+
+{% card title="--listen :PORT" icon="terminal" %}
+Accept incoming connections on the specified port
+{% /card %}
+
+{% card title="--connect HOST:PORT" icon="terminal" %}
+Establish outgoing connection to specified host and port
+{% /card %}
+
+{% separator /%}
+
+# Additional Flags
+
+{% grid cols=2 %}
+{% card title="--api ADDRESS" icon="terminal" %}
+Enable REST API on entry nodes (e.g., `127.0.0.1:6566`)
+{% /card %}
+
+{% card title="--api-user / --api-pass" icon="terminal" %}
+Basic authentication for the REST API
+{% /card %}
+
+{% card title="--cert / --key" icon="terminal" %}
+TLS certificate and private key for encrypted connections
+{% /card %}
+
+{% card title="--ca" icon="terminal" %}
+CA certificate for mutual TLS authentication
+{% /card %}
+
+{% card title="--dns" icon="terminal" %}
+DNS server for target resolution
+{% /card %}
+
+{% card title="--exit-id" icon="terminal" %}
+Identifier for stable TUN device naming on exit nodes
+{% /card %}
+{% /grid %}

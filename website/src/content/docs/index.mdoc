@@ -1,0 +1,46 @@
+---
+title: Overview
+description: Layer 3 tunneling tool for network pivoting in penetration testing scenarios
+order: 1
+---
+
+# wallhack
+
+{% badge text="v1.0.0" variant="outline" /%}
+
+> **wallhack** (plural **wallhacks**)
+>
+> *(video games)* A patch enabling a player to cheat by modifying the properties of walls, as by making them transparent or nonsolid.
+
+Layer 3 tunneling tool for network pivoting in penetration testing scenarios.
+
+## Performance
+
+{% grid  %}
+{% card title="QUIC Transport" icon="wifi" %}
+- **Single stream:** 585 Mbps
+- **2 streams:** 2.4 Gbps
+- **4 streams:** 2.5 Gbps
+{% /card %}
+{% card title="WebSocket Transport" icon="plug" %}
+- **Single stream:** 360 Mbps
+- **2 streams:** 2.9 Gbps
+- **4 streams:** 4.0 Gbps
+{% /card %}
+{% /grid %}
+
+{% callout type="note" %}
+Benchmarks measured with iperf3 over localhost TUN interface. Real-world performance varies with network conditions.
+{% /callout %}
+
+## Binary Size
+
+| Target | Size |
+|--------|------|
+| Linux x64 (musl, static) | **6.3 MB** |
+| Linux x64 (glibc, dynamic) | 6.2 MB |
+| Linux x64 (glibc, static) | 7.3 MB |
+
+### Quick Install
+
+{% codeblock code="cargo install wallhack" /%}

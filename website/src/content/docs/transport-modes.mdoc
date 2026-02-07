@@ -1,0 +1,105 @@
+---
+title: Transport Modes
+description: Select the transport protocol based on your network environment
+order: 4
+---
+
+# Transport Modes
+
+Select the transport protocol based on your network environment. UDP mode offers performance, while TCP mode provides compatibility and stealth.
+
+## UDP Mode (QUIC)
+
+{% card title="UDP Mode (QUIC)" icon="wifi" description="Uses QUIC protocol over UDP for high-performance tunneling with built-in encryption and multiplexing." %}
+
+`--udp` or append `/udp` to address (default)
+
+**Performance**
+
+| Streams | Throughput |
+|---------|------------|
+| 1 | 585 Mbps |
+| 2 | 2.4 Gbps |
+| 3 | 2.6 Gbps |
+| 4 | 2.5 Gbps |
+
+**Use Cases**
+
+- Direct connections with minimal overhead
+- High-throughput network operations
+- Environments allowing UDP traffic
+- Performance-critical scenarios
+
+**Characteristics**
+
+- Lower latency than TCP
+- Built-in TLS 1.3 encryption
+- Connection migration support
+- 0-RTT connection resumption
+- Efficient multiplexing
+
+{% callout type="note" %}
+**Limitations:** May be blocked by strict firewalls. Not suitable for environments requiring proxy traversal.
+{% /callout %}
+
+{% /card %}
+
+## TCP Mode (WebSockets)
+
+{% card title="TCP Mode (WebSockets)" icon="plug" description="Uses WebSockets over TCP for maximum compatibility and proxy traversal capabilities." %}
+
+`--tcp` or append `/tcp` to address
+
+**Performance**
+
+| Streams | Throughput |
+|---------|------------|
+| 1 | 360 Mbps |
+| 2 | 2.9 Gbps |
+| 3 | 4.0 Gbps |
+| 4 | 4.0 Gbps |
+
+**Use Cases**
+
+- HTTP proxy environments
+- Corporate networks with restrictive firewalls
+- CDN fronting scenarios
+- When UDP is blocked or unavailable
+
+**Characteristics**
+
+- HTTP/HTTPS compatible
+- Traverses HTTP proxies
+- Works with CDN fronting
+- TLS encryption support
+- Universal firewall compatibility
+
+**Advantages**
+
+- Can tunnel through corporate proxies
+- Appears as legitimate HTTPS traffic
+- Compatible with CDN services (potential evasion)
+
+{% /card %}
+
+## Examples
+
+UDP mode for maximum performance:
+
+{% codeblock code="wallhack entry --listen :443/udp" title="Entry node using QUIC" /%}
+
+TCP mode for proxy traversal:
+
+{% codeblock code="wallhack entry --listen :443/tcp" title="Entry node using WebSockets" /%}
+
+TCP mode with TLS for CDN fronting:
+
+{% codeblock code="wallhack entry --listen :443/tcp --tls" title="HTTPS mode for stealth" /%}
+
+{% callout type="warning" title="Default Behavior" %}
+If no transport mode is specified, wallhack defaults to UDP mode (QUIC) for optimal performance. Use `--tcp` when operating through restrictive networks or when stealth is a priority.
+{% /callout %}
+
+{% callout type="info" title="CDN Fronting with TCP Mode" %}
+When using TCP mode with TLS, you can potentially front your traffic through CDN services. This makes the tunnel appear as legitimate HTTPS traffic to a popular CDN domain, providing an additional layer of obfuscation and making detection more difficult.
+{% /callout %}

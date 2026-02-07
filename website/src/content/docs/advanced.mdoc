@@ -1,0 +1,257 @@
+---
+title: Build & Security
+description: Binary size optimization, build modes, mTLS security, and MCP server integration
+order: 7
+---
+
+# Binary Size & Build Modes
+
+wallhack offers different build configurations to balance features against binary size.
+
+{% grid cols=2 %}
+{% card title="Full Build" icon="package" description="All features including MCP server, REPL, and REST API" %}
+```bash
+cargo build --release
+```
+{% /card %}
+
+{% card title="Slim Build" icon="cube" description="Minimal binary with core tunneling only" %}
+```bash
+cargo build --release --no-default-features
+```
+{% /card %}
+{% /grid %}
+
+{% separator /%}
+
+# mTLS Security
+
+wallhack supports mutual TLS authentication to secure tunnel connections. Both endpoints verify each other's identity using certificates, establishing a cryptographically secure tunnel.
+
+{% grid cols=2 %}
+{% card title="Mutual TLS Authentication" icon="cert" description="Both client and server authenticate each other using X.509 certificates, preventing unauthorized tunnel access." /%}
+
+{% card title="End-to-End Encryption" icon="lock" description="All tunnel traffic is encrypted using TLS 1.3, ensuring confidentiality and integrity across the entire tunnel chain." /%}
+
+{% card title="Certificate Validation" icon="shield" description="Strict certificate validation ensures only authorized nodes with valid certificates can join the tunnel infrastructure." /%}
+
+{% card title="Perfect Forward Secrecy" icon="shield" description="Session keys are ephemeral and unique per connection, preventing retroactive decryption if long-term keys are compromised." /%}
+{% /grid %}
+
+### Security Benefits
+
+- Prevents man-in-the-middle attacks on tunnel connections
+- Ensures only authorized nodes can establish tunnels
+- Protects sensitive traffic from eavesdropping
+- Provides cryptographic proof of peer identity
+- Complies with zero-trust security models
+
+### Certificate Generation
+
+Generate a self-signed CA certificate:
+
+```bash
+openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
+  -keyout ca-key.pem -out ca-cert.pem \
+  -subj "/CN=wallhack-ca"
+```
+
+Generate node certificates signed by the CA:
+
+```bash
+openssl req -newkey rsa:4096 -nodes \
+  -keyout node-key.pem -out node-req.pem \
+  -subj "/CN=wallhack-node"
+
+openssl x509 -req -in node-req.pem -days 365 \
+  -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+  -out node-cert.pem
+```
+
+### Using mTLS
+
+Entry node with mTLS:
+
+{% codeblock code="wallhack entry --listen :443 --tls-cert node-cert.pem --tls-key node-key.pem --tls-ca ca-cert.pem" title="Entry node requiring client certificates" /%}
+
+Exit node connecting with mTLS:
+
+{% codeblock code="wallhack exit --connect ENTRY:443 --tls-cert node-cert.pem --tls-key node-key.pem --tls-ca ca-cert.pem" title="Exit node presenting client certificate" /%}
+
+{% callout type="note" %}
+**Best Practice:** Use a separate certificate for each node and rotate certificates regularly. Store private keys securely and never commit them to version control.
+{% /callout %}
+
+{% separator /%}
+
+# REST API
+
+wallhack provides an optional REST API for headless management of entry nodes. Enable it with the `--api` flag. The API uses HTTPS with the same TLS certificate as the tunnel.
+
+{% grid cols=2 %}
+{% card title="Remote Management" icon="arrows" description="Control entry nodes remotely via HTTPS. Add routes, view peers, disconnect nodes, and monitor metrics." /%}
+
+{% card title="Real-time Events" icon="zap" description="Subscribe to Server-Sent Events (SSE) for live updates on peer connections, latency, and errors." /%}
+
+{% card title="Basic Authentication" icon="lock" description="Optional username/password authentication protects API endpoints from unauthorized access." /%}
+
+{% card title="Feature-Gated" icon="cube" description="Compiled only when needed. Slim builds exclude the API to minimize binary size." /%}
+{% /grid %}
+
+### Starting the API
+
+Enable REST API on entry nodes:
+
+{% codeblock code="wallhack entry --listen :443 --api 127.0.0.1:6566" title="Entry node with API on port 6566" /%}
+
+With authentication:
+
+{% codeblock code="wallhack entry --listen :443 --api 127.0.0.1:6566 --api-user admin --api-pass secret" title="Entry node with authenticated API" /%}
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check (no auth required) |
+| GET | `/ping` | Version, uptime, and node role |
+| GET | `/stats` | Traffic statistics and metrics |
+| GET | `/peers` | List connected peers with latency |
+| DELETE | `/peers/{id}` | Disconnect a peer |
+| POST | `/routes` | Add a route (body: `{"cidr": "10.0.0.0/8"}`) |
+| DELETE | `/routes/{cidr}` | Remove a route |
+| GET | `/events` | SSE stream for real-time events |
+
+### Example Usage
+
+```bash
+# Check health (no auth)
+curl -k https://localhost:6566/health
+
+# Get stats (with auth)
+curl -k -u admin:secret https://localhost:6566/stats
+
+# List peers
+curl -k -u admin:secret https://localhost:6566/peers
+
+# Add a route
+curl -k -u admin:secret -X POST https://localhost:6566/routes \
+  -H "Content-Type: application/json" \
+  -d '{"cidr": "10.0.0.0/8"}'
+
+# Disconnect a peer
+curl -k -u admin:secret -X DELETE https://localhost:6566/peers/abc123
+
+# Subscribe to events
+curl -k -N -u admin:secret https://localhost:6566/events
+```
+
+### SSE Events
+
+Event types emitted on `/events`:
+
+- `PeerConnected` - New peer connected
+- `PeerDisconnected` - Peer disconnected
+- `PeerLatency` - Latency measurement updated
+- `Error` - Error occurred
+- `StatsUpdate` - Periodic stats update
+
+{% callout type="note" %}
+The REST API requires the `api` feature: `cargo build --release --features api`
+{% /callout %}
+
+{% separator /%}
+
+# REPL Commands
+
+When running interactively, wallhack provides a command-line interface for control and monitoring.
+
+### Available Commands
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `ping` | `p` | Show version and uptime |
+| `stats` | `s` | Display traffic statistics |
+| `peers` | - | List connected peers |
+| `sessions` | `t`, `tuns` | List active exit node sessions |
+| `route add <cidr>` | - | Add a route (e.g., `route add 10.0.0.0/8`) |
+| `route del <cidr>` | `route rm` | Remove a route |
+| `disconnect <id>` | `kick`, `kill` | Disconnect a peer |
+| `help` | `?` | Show available commands |
+| `quit` | `q`, `exit` | Exit wallhack |
+
+### Example Session
+
+```
+wallhack> stats
+Traffic Statistics:
+  Bytes In:     1.23 MB
+  Bytes Out:    456.78 KB
+  Packets In:   1234
+  Packets Out:  567
+  Connections:  2
+  Flows:        8
+
+wallhack> sessions
+Active sessions (2):
+  exit-abc123 -> tun-exit-abc123
+  exit-def456 -> tun-exit-def456
+
+wallhack> route add 10.0.0.0/8
+Route added: 10.0.0.0/8
+
+wallhack> quit
+Shutting down...
+```
+
+{% callout type="note" %}
+The REPL is automatically disabled when stdin is not a terminal (e.g., in Docker or when running as a daemon). Use the REST API for headless management.
+{% /callout %}
+
+{% separator /%}
+
+# MCP Server Integration
+
+wallhack implements the Model Context Protocol (MCP), enabling AI assistants to manage tunnel infrastructure through standardized interfaces.
+
+{% grid cols=2 %}
+{% card title="Protocol Integration" icon="chat" description="Exposes wallhack functionality through the Model Context Protocol, enabling AI assistants to programmatically manage tunnel infrastructure." /%}
+
+{% card title="Tool Registration" icon="plug" description="Registers wallhack operations as MCP tools that AI models can discover and invoke through standardized interfaces." /%}
+
+{% card title="Context Sharing" icon="cube" description="Shares tunnel status, peer information, and network topology with AI assistants for intelligent decision-making." /%}
+
+{% card title="Dynamic Management" icon="arrows" description="Allows AI agents to establish tunnels, configure routes, and monitor connections based on operational context." /%}
+{% /grid %}
+
+### MCP Capabilities
+
+AI assistants can perform these operations through the MCP interface:
+
+- Establish and tear down tunnel connections
+- Query active peers and connection status
+- Configure routing tables dynamically
+- Monitor traffic metrics and performance
+- Retrieve network topology information
+
+### Starting the MCP Server
+
+Enable MCP server alongside tunnel operations:
+
+{% codeblock code="wallhack entry --listen :443 --mcp-server :9000" title="Entry node with MCP server on port 9000" /%}
+
+Configure MCP server in your AI assistant:
+
+```json
+{
+  "mcpServers": {
+    "wallhack": {
+      "url": "http://localhost:9000",
+      "transport": "stdio"
+    }
+  }
+}
+```
+
+{% callout type="note" %}
+MCP server functionality is only available in full builds. Slim builds exclude MCP support to minimize binary size.
+{% /callout %}

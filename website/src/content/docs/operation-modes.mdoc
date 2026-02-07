@@ -1,0 +1,121 @@
+---
+title: Operation Modes
+description: Choose the appropriate mode based on your traffic patterns
+order: 5
+---
+
+# Operation Modes
+
+Choose the appropriate mode based on your traffic patterns. Each mode is tuned for specific operational requirements.
+
+## Scan Mode
+
+{% card title="Scan Mode" icon="scan" description="Optimized for network discovery and enumeration tools like nmap, masscan, and port scanners." %}
+
+`--scan-mode`
+
+**Use Cases**
+
+- Network mapping and reconnaissance
+- Port scanning across multiple subnets
+- Service enumeration
+- Vulnerability scanning
+
+**Characteristics**
+
+- Low-latency packet forwarding
+- High throughput for many connections
+- Minimal buffering
+- Suitable for UDP-heavy tools
+
+{% /card %}
+
+## Session Mode
+
+{% card title="--session-mode" icon="session" description="Optimized for interactive sessions and persistent connections like SSH, RDP, and database connections." %}
+
+**Use Cases**
+
+- SSH terminal sessions
+- Remote Desktop Protocol (RDP)
+- Database connections (MySQL, PostgreSQL)
+- Long-lived TCP sessions
+
+**Characteristics**
+
+- Connection stability prioritized
+- Automatic reconnection handling
+- Keepalive packet management
+- Lower throughput, higher reliability
+
+{% /card %}
+
+### Examples
+
+Network scanning through a pivot:
+
+{% codeblock code="wallhack entry --listen :443 --scan-mode" title="Entry node optimized for nmap" /%}
+
+Interactive SSH session through a pivot:
+
+{% codeblock code="wallhack entry --listen :443 --session-mode" title="Entry node optimized for SSH/RDP" /%}
+
+{% callout type="note" %}
+If no mode is specified, wallhack uses balanced defaults suitable for general use. Specify a mode when you know your traffic patterns for optimal performance.
+{% /callout %}
+
+{% separator /%}
+
+# Management Interfaces
+
+wallhack provides both interactive and programmatic interfaces for monitoring and managing your tunnel infrastructure.
+
+## REPL Interface
+
+{% card title="REPL Interface" icon="repl" description="Interactive REPL for real-time tunnel management and monitoring." %}
+
+`--repl`
+
+**Features**
+
+- View active connections and their status
+- List connected peers and their roles
+- Monitor traffic statistics per tunnel
+- Execute commands to reconfigure routes
+- Debug connection issues interactively
+
+{% /card %}
+
+## REST API
+
+{% card title="REST API" icon="api" description="HTTP REST API for programmatic control and monitoring of tunnel infrastructure." %}
+
+`--api :PORT`
+
+**Features**
+
+- Query connection status and metrics
+- List all peers in the tunnel chain
+- Add or remove routes dynamically
+- Retrieve performance statistics
+- Integrate with automation tools
+
+{% /card %}
+
+### Usage Examples
+
+Launch wallhack with REPL interface:
+
+{% codeblock code="wallhack entry --listen :443 --repl" title="Entry node with interactive REPL" /%}
+
+Enable REST API on port 8080:
+
+{% codeblock code="wallhack entry --listen :443 --api :8080" title="Entry node with REST API" /%}
+
+Use both interfaces simultaneously:
+
+{% codeblock code="wallhack entry --listen :443 --repl --api :8080" title="Entry node with REPL and REST API" /%}
+
+{% callout type="note" %}
+**Example REPL commands:** `peers` to list connected peers, `connections` to view active tunnels, `stats` to display traffic statistics.
+{% /callout %}

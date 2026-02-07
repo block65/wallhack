@@ -531,6 +531,12 @@ impl Display for TunnelMessage {
 			Some(tunnel_message::Message::ExitNodeHello(hello)) => {
 				write!(f, "hello:{}", hello.exit_id)
 			}
+			Some(tunnel_message::Message::Ping(ping)) => {
+				write!(f, "ping:{}", ping.timestamp_ms)
+			}
+			Some(tunnel_message::Message::Pong(pong)) => {
+				write!(f, "pong:{}", pong.timestamp_ms)
+			}
 			None => {
 				write!(f, "<none>")
 			}
@@ -552,6 +558,12 @@ impl Display for tunnel_message::Message {
 			}
 			tunnel_message::Message::ExitNodeHello(hello) => {
 				write!(f, "hello:{}", hello.exit_id)
+			}
+			tunnel_message::Message::Ping(ping) => {
+				write!(f, "ping:{}", ping.timestamp_ms)
+			}
+			tunnel_message::Message::Pong(pong) => {
+				write!(f, "pong:{}", pong.timestamp_ms)
 			}
 		}
 	}
