@@ -652,6 +652,7 @@ async fn run_relay_capability(
 }
 
 #[cfg(feature = "quic")]
+#[allow(clippy::too_many_lines)]
 async fn run_quic_relay_capability(
 	global: &WallhackCli,
 	peer_addr: std::net::SocketAddr,
@@ -692,19 +693,86 @@ async fn run_quic_relay_capability(
 		listen_addr.port()
 	);
 
+	// Setup REPL if stdin is a terminal
+	let (mut repl_rx, printer) = if crate::repl_common::is_interactive() {
+		let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
+		let (print_tx, print_rx) = mpsc::unbounded_channel::<String>();
+		let printer = Printer::new(print_tx);
+
+		println!("Type 'help' for commands, 'quit' to exit.\n");
+
+		let tx_clone = tx.clone();
+		std::thread::spawn(move || {
+			run_exit_repl_input(&tx_clone, print_rx);
+		});
+
+		(Some(rx), Some(printer))
+	} else {
+		println!("Running in headless mode (no REPL).\n");
+		(None, None)
+	};
+
+	let peer_addr_str = peer_addr.to_string();
+	let listen_port = listen_addr.port();
+
 	// Accept and bridge peer connections
 	loop {
-		match server.accept(NodeRole::Exit).await {
-			Ok(Some(accept_result)) => {
-				crate::info!("Peer connected: {}", accept_result.client_ident());
-				bridge_peer(accept_result, &relay_instr, &relay_resp);
+		tokio::select! {
+			// Handle peer connections
+			result = server.accept(NodeRole::Exit) => {
+				match result {
+					Ok(Some(accept_result)) => {
+						crate::info!("Peer connected: {}", accept_result.client_ident());
+						if let Some(ref p) = printer {
+							p.print(format!("Peer connected: {}", accept_result.client_ident()));
+						}
+						bridge_peer(accept_result, &relay_instr, &relay_resp);
+					}
+					Ok(None) => {
+						crate::info!("Server closed");
+						break;
+					}
+					Err(e) => {
+						crate::error!("Accept error: {e}");
+					}
+				}
 			}
-			Ok(None) => {
-				crate::info!("Server closed");
-				break;
-			}
-			Err(e) => {
-				crate::error!("Accept error: {e}");
+
+			// Handle REPL commands
+			cmd = async {
+				match &mut repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				match cmd {
+					Some(ExitReplCommand::Quit) | None => {
+						if let Some(ref p) = printer {
+							p.print("Shutting down...");
+						}
+						break;
+					}
+					Some(ExitReplCommand::Stats) => {
+						if let Some(ref p) = printer {
+							print_exit_stats(&metrics, p);
+						}
+					}
+					Some(ExitReplCommand::Status) => {
+						if let Some(ref p) = printer {
+							print_relay_status(p, &peer_addr_str, listen_port);
+						}
+					}
+					Some(ExitReplCommand::Help) => {
+						if let Some(ref p) = printer {
+							print_relay_help(p);
+						}
+					}
+					Some(ExitReplCommand::Unknown(cmd)) => {
+						if let Some(ref p) = printer {
+							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
+						}
+					}
+				}
 			}
 		}
 	}
@@ -713,6 +781,7 @@ async fn run_quic_relay_capability(
 }
 
 #[cfg(feature = "websocket")]
+#[allow(clippy::too_many_lines)]
 async fn run_ws_relay_capability(
 	global: &WallhackCli,
 	peer_addr: std::net::SocketAddr,
@@ -769,19 +838,86 @@ async fn run_ws_relay_capability(
 		listen_addr.port()
 	);
 
+	// Setup REPL if stdin is a terminal
+	let (mut repl_rx, printer) = if crate::repl_common::is_interactive() {
+		let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
+		let (print_tx, print_rx) = mpsc::unbounded_channel::<String>();
+		let printer = Printer::new(print_tx);
+
+		println!("Type 'help' for commands, 'quit' to exit.\n");
+
+		let tx_clone = tx.clone();
+		std::thread::spawn(move || {
+			run_exit_repl_input(&tx_clone, print_rx);
+		});
+
+		(Some(rx), Some(printer))
+	} else {
+		println!("Running in headless mode (no REPL).\n");
+		(None, None)
+	};
+
+	let peer_addr_str = peer_addr.to_string();
+	let listen_port = listen_addr.port();
+
 	// Accept and bridge peer connections
 	loop {
-		match server.accept(NodeRole::Exit).await {
-			Ok(Some(accept_result)) => {
-				crate::info!("Peer connected: {}", accept_result.client_ident());
-				bridge_peer(accept_result, &relay_instr, &relay_resp);
+		tokio::select! {
+			// Handle peer connections
+			result = server.accept(NodeRole::Exit) => {
+				match result {
+					Ok(Some(accept_result)) => {
+						crate::info!("Peer connected: {}", accept_result.client_ident());
+						if let Some(ref p) = printer {
+							p.print(format!("Peer connected: {}", accept_result.client_ident()));
+						}
+						bridge_peer(accept_result, &relay_instr, &relay_resp);
+					}
+					Ok(None) => {
+						crate::info!("Server closed");
+						break;
+					}
+					Err(e) => {
+						crate::error!("Accept error: {e}");
+					}
+				}
 			}
-			Ok(None) => {
-				crate::info!("Server closed");
-				break;
-			}
-			Err(e) => {
-				crate::error!("Accept error: {e}");
+
+			// Handle REPL commands
+			cmd = async {
+				match &mut repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				match cmd {
+					Some(ExitReplCommand::Quit) | None => {
+						if let Some(ref p) = printer {
+							p.print("Shutting down...");
+						}
+						break;
+					}
+					Some(ExitReplCommand::Stats) => {
+						if let Some(ref p) = printer {
+							print_exit_stats(&metrics, p);
+						}
+					}
+					Some(ExitReplCommand::Status) => {
+						if let Some(ref p) = printer {
+							print_relay_status(p, &peer_addr_str, listen_port);
+						}
+					}
+					Some(ExitReplCommand::Help) => {
+						if let Some(ref p) = printer {
+							print_relay_help(p);
+						}
+					}
+					Some(ExitReplCommand::Unknown(cmd)) => {
+						if let Some(ref p) = printer {
+							p.print(format!("Unknown command: {cmd}. Type 'help' for available commands."));
+						}
+					}
+				}
 			}
 		}
 	}
@@ -911,22 +1047,38 @@ fn print_exit_stats(metrics: &wallhack::control::metrics::Metrics, printer: &Pri
 	));
 }
 
-fn print_exit_status(printer: &Printer, connected: bool, upstream: &str) {
+fn print_exit_status(printer: &Printer, connected: bool, peer_addr: &str) {
 	printer.print("Exit Node Status:");
 	printer.print(format!(
 		"  Connected:    {}",
 		if connected { "Yes" } else { "No" }
 	));
 	if connected {
-		printer.print(format!("  Upstream:     {upstream}"));
+		printer.print(format!("  Peer:         {peer_addr}"));
 	}
-	printer.print("  Relay:        Disabled (standard exit)");
+	printer.print("  Relay:        No (standard exit)");
+}
+
+fn print_relay_status(printer: &Printer, peer_addr: &str, listen_port: u16) {
+	printer.print("Exit Node Status:");
+	printer.print("  Connected:    Yes");
+	printer.print(format!("  Peer:         {peer_addr}"));
+	printer.print(format!("  Listening:    :{listen_port}"));
+	printer.print("  Relay:        Yes");
 }
 
 fn print_exit_help(printer: &Printer) {
 	printer.print("Available commands:");
 	printer.print("  stats, s      - Show traffic statistics");
 	printer.print("  status        - Show node status");
+	printer.print("  help, ?       - Show this help message");
+	printer.print("  quit, q       - Exit wallhack");
+}
+
+fn print_relay_help(printer: &Printer) {
+	printer.print("Available commands:");
+	printer.print("  stats, s      - Show traffic statistics");
+	printer.print("  status        - Show node status (relay capability)");
 	printer.print("  help, ?       - Show this help message");
 	printer.print("  quit, q       - Exit wallhack");
 }
