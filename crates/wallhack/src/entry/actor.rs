@@ -1,7 +1,6 @@
-use std::{
-	collections::VecDeque,
-	sync::{Arc, Mutex},
-};
+use std::{collections::VecDeque, sync::Arc};
+
+use parking_lot::Mutex;
 
 use netstack::{async_stack::Netstack, config::StackConfig};
 use smoltcp::wire::{IpCidr, Ipv4Address, Ipv6Address};
@@ -111,7 +110,7 @@ impl SmoltcpTunDevice {
 		// on Unix via AsRawFd/etc, but the `tun` crate exposes `recv` (which uses read internally).
 		// Reverting to `recv` but ensuring we're importing the trait if needed,
 		// though `recv` is an inherent method on `Device` usually.
-		let inner = self.inner.lock().expect("tun device lock poisoned");
+		let inner = self.inner.lock();
 		match inner.recv(&mut buf) {
 			Ok(0) => Ok(None),
 			Ok(n) => {
@@ -228,7 +227,7 @@ impl smoltcp::phy::TxToken for TunTxToken {
 	{
 		let mut buf = vec![0u8; len];
 		let result = f(&mut buf);
-		let inner = self.inner.lock().expect("tun device lock poisoned");
+		let inner = self.inner.lock();
 		if let Err(e) = inner.send(&buf)
 			&& e.kind() != std::io::ErrorKind::WouldBlock
 		{
