@@ -76,7 +76,7 @@ impl WsTlsConfig {
 /// A stream that may or may not be TLS-encrypted.
 pub enum MaybeTlsStream {
 	Plain(TcpStream),
-	Tls(tokio_rustls::server::TlsStream<TcpStream>),
+	Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
 }
 
 impl AsyncRead for MaybeTlsStream {
@@ -158,7 +158,7 @@ impl Server for WsServer {
 		// Optionally wrap in TLS and perform WebSocket upgrade
 		let ws_stream = if let Some(tls) = &self.tls {
 			let tls_stream = tls.acceptor.accept(tcp_stream).await?;
-			accept_websocket(MaybeTlsStream::Tls(tls_stream)).await?
+			accept_websocket(MaybeTlsStream::Tls(Box::new(tls_stream))).await?
 		} else {
 			accept_websocket(MaybeTlsStream::Plain(tcp_stream)).await?
 		};
