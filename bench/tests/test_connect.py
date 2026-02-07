@@ -57,7 +57,7 @@ def _stop(proc: subprocess.Popen[bytes]) -> None:
 
 def test_entry_starts(wallhack_bin: str) -> None:
     """Entry node starts and listens without crashing."""
-    proc = _start_wallhack(["-l", f":{WALLHACK_LISTEN_PORT}", "-v"], wallhack_bin)
+    proc = _start_wallhack(["entry", "-l", f":{WALLHACK_LISTEN_PORT}", "-v"], wallhack_bin)
     time.sleep(PROCESS_STARTUP_DELAY)
     try:
         assert proc.poll() is None, (
@@ -69,11 +69,11 @@ def test_entry_starts(wallhack_bin: str) -> None:
 
 def test_exit_connects(wallhack_bin: str) -> None:
     """Exit node connects to entry node without crashing."""
-    entry = _start_wallhack(["-l", f":{WALLHACK_LISTEN_PORT}", "-v"], wallhack_bin)
+    entry = _start_wallhack(["entry", "-l", f":{WALLHACK_LISTEN_PORT}", "-v"], wallhack_bin)
     time.sleep(PROCESS_STARTUP_DELAY)
 
     exit_proc = _start_wallhack(
-        ["-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "-i", EXIT_ID, "-v"],
+        ["exit", "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "-i", EXIT_ID, "-v"],
         wallhack_bin,
     )
     time.sleep(PROCESS_STARTUP_DELAY * 2)
@@ -88,11 +88,11 @@ def test_exit_connects(wallhack_bin: str) -> None:
 
 def test_tun_created(wallhack_bin: str) -> None:
     """TUN interface appears after exit connects to entry."""
-    entry = _start_wallhack(["-l", f":{WALLHACK_LISTEN_PORT}", "-v"], wallhack_bin)
+    entry = _start_wallhack(["entry", "-l", f":{WALLHACK_LISTEN_PORT}", "-v"], wallhack_bin)
     time.sleep(PROCESS_STARTUP_DELAY)
 
     exit_proc = _start_wallhack(
-        ["-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "-i", EXIT_ID, "-v"],
+        ["exit", "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "-i", EXIT_ID, "-v"],
         wallhack_bin,
     )
 

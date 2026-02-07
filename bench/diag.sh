@@ -134,13 +134,13 @@ else
 fi
 
 echo "[4/8] Starting wallhack ENTRY node..."
-RUST_LOG=warn,wallhack=trace,netstack=trace ip netns exec "$NS_ENTRY" "$WALLHACK_BIN" -l ":${WALLHACK_PORT}" --debug </dev/null 2>&1 \
+RUST_LOG=warn,wallhack=trace,netstack=trace ip netns exec "$NS_ENTRY" "$WALLHACK_BIN" entry -l ":${WALLHACK_PORT}" --debug </dev/null 2>&1 \
     | sed -u 's/\x1b\[[0-9;]*m//g' > "${LOG_DIR}/diag-entry.log" &
 ENTRY_PID=$!
 sleep 1
 
 echo "[5/8] Starting wallhack EXIT node..."
-RUST_LOG=warn,wallhack=trace ip netns exec "$NS_EXIT" "$WALLHACK_BIN" -c "${IP_ENTRY_EXIT_SIDE}:${WALLHACK_PORT}" -i "$EXIT_ID" --debug </dev/null 2>&1 \
+RUST_LOG=warn,wallhack=trace ip netns exec "$NS_EXIT" "$WALLHACK_BIN" exit -c "${IP_ENTRY_EXIT_SIDE}:${WALLHACK_PORT}" -i "$EXIT_ID" --debug </dev/null 2>&1 \
     | sed -u 's/\x1b\[[0-9;]*m//g' > "${LOG_DIR}/diag-exit.log" &
 EXIT_PID=$!
 

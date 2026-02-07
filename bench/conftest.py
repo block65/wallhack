@@ -203,7 +203,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
         # Start wallhack entry node (server mode, listens for exit connections)
         entry_proc = WallhackProcess(
             ns=NS_ENTRY,
-            args=["-l", f":{WALLHACK_LISTEN_PORT}", "--debug"],
+            args=["entry", "-l", f":{WALLHACK_LISTEN_PORT}", "--debug"],
             binary=wallhack_bin,
             env={
                 "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
@@ -217,6 +217,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
         exit_proc = WallhackProcess(
             ns=NS_EXIT,
             args=[
+                "exit",
                 "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT}",
                 "-i", EXIT_ID,
                 "--debug",
@@ -260,7 +261,7 @@ def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState
         # Use /tcp suffix to select WebSocket transport
         entry_proc = WallhackProcess(
             ns=NS_ENTRY,
-            args=["-l", f":{WALLHACK_LISTEN_PORT}/tcp", "--debug"],
+            args=["entry", "-l", f":{WALLHACK_LISTEN_PORT}/tcp", "--debug"],
             binary=wallhack_bin,
             env={
                 "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
@@ -274,6 +275,7 @@ def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState
         exit_proc = WallhackProcess(
             ns=NS_EXIT,
             args=[
+                "exit",
                 "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT}/tcp",
                 "-i", EXIT_ID,
                 "--debug",
