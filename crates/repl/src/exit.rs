@@ -78,6 +78,10 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	let exit_id = cmd.exit_id();
 
 	match transport {
+		TransportDir::Both { connect, listen } => {
+			crate::info!("Exit node with relay capability starting (exit_id: {exit_id})");
+			run_relay_capability(global, connect, listen, exit_id).await
+		}
 		TransportDir::Connect(spec) => {
 			crate::info!("Exit node starting with exit_id: {exit_id}");
 			crate::info!("Resolving {}", spec.addr);
@@ -596,6 +600,246 @@ fn build_quic_client_config(
 		exit_id: Some(exit_id),
 		..Default::default()
 	}
+}
+
+/// Run exit node with relay capability (both connect and listen).
+///
+/// Connects to a peer and listens for peers to connect, bridging traffic between them.
+async fn run_relay_capability(
+	global: &WallhackCli,
+	connect_spec: crate::cli::AddressSpec,
+	listen_spec: crate::cli::AddressSpec,
+	_exit_id: String,
+) -> Result<()> {
+	crate::info!("Resolving peer to connect to: {}", connect_spec.addr);
+	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
+	let dns_server = global
+		.dns
+		.as_ref()
+		.map(|s| crate::dns::parse_str_to_addr(s))
+		.transpose()?;
+
+	let peer_addr = crate::dns::resolve(resolvable, dns_server).await?;
+	crate::info!("Connecting to peer: {peer_addr}");
+
+	let listen_addr = parse_listen_addr(&listen_spec.addr)?;
+	crate::info!("Listening for peer connections on: {listen_addr}");
+
+	let metrics = Arc::new(Metrics::default());
+
+	match connect_spec.protocol {
+		Protocol::Udp => {
+			#[cfg(feature = "quic")]
+			{
+				run_quic_relay_capability(global, peer_addr, listen_addr, metrics).await
+			}
+			#[cfg(not(feature = "quic"))]
+			{
+				anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
+			}
+		}
+		Protocol::Tcp => {
+			#[cfg(feature = "websocket")]
+			{
+				run_ws_relay_capability(global, peer_addr, listen_addr, metrics).await
+			}
+			#[cfg(not(feature = "websocket"))]
+			{
+				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
+			}
+		}
+	}
+}
+
+#[cfg(feature = "quic")]
+async fn run_quic_relay_capability(
+	global: &WallhackCli,
+	peer_addr: std::net::SocketAddr,
+	listen_addr: std::net::SocketAddr,
+	metrics: Arc<Metrics>,
+) -> Result<()> {
+	use wallhack::{
+		control::handler::HandlerConfig,
+		server::server::{Server, ServerOptions},
+	};
+
+	// Connect to peer
+	let client_config = build_quic_client_config(global, peer_addr, String::new());
+	let mut client = client::quic::QuicClient::try_new(client_config)?;
+	let connect_result = client.connect(NodeRole::Exit).await?;
+
+	crate::info!("Connected to peer {peer_addr}");
+
+	let (relay_instr, relay_resp) = connect_result.channels().clone();
+
+	// Start listening for peer connections
+	let server_options = ServerOptions {
+		handler_config: HandlerConfig::new(NodeRole::Exit),
+		metrics: Some(Arc::clone(&metrics)),
+		peers: None,
+		routes: None,
+	};
+
+	let server_config = build_server_config(global, listen_addr);
+	let mut server = wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+
+	crate::info!(
+		"Relay capability active: connected to {peer_addr}, listening on :{}",
+		listen_addr.port()
+	);
+	println!(
+		"Relay capability active (connected to {peer_addr}, listening on :{})",
+		listen_addr.port()
+	);
+
+	// Accept and bridge peer connections
+	loop {
+		match server.accept(NodeRole::Exit).await {
+			Ok(Some(accept_result)) => {
+				crate::info!("Peer connected: {}", accept_result.client_ident());
+				bridge_peer(accept_result, &relay_instr, &relay_resp);
+			}
+			Ok(None) => {
+				crate::info!("Server closed");
+				break;
+			}
+			Err(e) => {
+				crate::error!("Accept error: {e}");
+			}
+		}
+	}
+
+	Ok(())
+}
+
+#[cfg(feature = "websocket")]
+async fn run_ws_relay_capability(
+	global: &WallhackCli,
+	peer_addr: std::net::SocketAddr,
+	listen_addr: std::net::SocketAddr,
+	metrics: Arc<Metrics>,
+) -> Result<()> {
+	use wallhack::{
+		client::{
+			config::ClientConfig,
+			ws::{WsClient, WsClientConfig},
+		},
+		control::handler::HandlerConfig,
+		server::server::{Server, ServerOptions},
+	};
+
+	// Connect to peer
+	let client_config = WsClientConfig {
+		base: ClientConfig {
+			addr: peer_addr,
+			hostname: global.hostname.clone(),
+			mtls: None,
+			exit_id: None,
+			..Default::default()
+		},
+		path: "/ws".to_string(),
+		host_header: global.hostname.clone(),
+		use_tls: global.cert.is_some() || global.key.is_some(),
+	};
+
+	let mut client = WsClient::new(client_config)?;
+	let connect_result = client.connect(NodeRole::Exit).await?;
+
+	crate::info!("Connected to peer {peer_addr}");
+
+	let (relay_instr, relay_resp) = connect_result.channels().clone();
+
+	// Start listening for peer connections
+	let server_options = ServerOptions {
+		handler_config: HandlerConfig::new(NodeRole::Exit),
+		metrics: Some(Arc::clone(&metrics)),
+		peers: None,
+		routes: None,
+	};
+
+	let server_config = build_server_config(global, listen_addr);
+	let mut server = wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+
+	crate::info!(
+		"Relay capability active: connected to {peer_addr}, listening on :{}",
+		listen_addr.port()
+	);
+	println!(
+		"Relay capability active (connected to {peer_addr}, listening on :{})",
+		listen_addr.port()
+	);
+
+	// Accept and bridge peer connections
+	loop {
+		match server.accept(NodeRole::Exit).await {
+			Ok(Some(accept_result)) => {
+				crate::info!("Peer connected: {}", accept_result.client_ident());
+				bridge_peer(accept_result, &relay_instr, &relay_resp);
+			}
+			Ok(None) => {
+				crate::info!("Server closed");
+				break;
+			}
+			Err(e) => {
+				crate::error!("Accept error: {e}");
+			}
+		}
+	}
+
+	Ok(())
+}
+
+/// Bridge a peer connection to relay broadcast channels.
+fn bridge_peer<T: wallhack::transport::Transport>(
+	accept_result: wallhack::server::server::AcceptResult<T>,
+	relay_instr: &tokio::sync::broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
+	relay_resp: &tokio::sync::broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+) {
+	crate::info!("Bridging peer connection: {}", accept_result.client_ident());
+
+	let (peer_instr, peer_resp) = accept_result.channels();
+
+	// Bridge this peer to relay broadcast channels
+	let relay_instr_clone = relay_instr.clone();
+	let mut relay_resp_rx = relay_resp.subscribe();
+	let mut peer_instr_rx = peer_instr.subscribe();
+
+	// Forward peer instructions to relay
+	tokio::spawn(async move {
+		loop {
+			match peer_instr_rx.recv().await {
+				Ok(instr) => {
+					if relay_instr_clone.send(instr).is_err() {
+						tracing::warn!("Relay instruction channel closed");
+						break;
+					}
+				}
+				Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+				Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+					tracing::warn!("Lagged {n} instructions");
+				}
+			}
+		}
+	});
+
+	// Forward relay responses to peer
+	let peer_resp_clone = peer_resp.clone();
+	tokio::spawn(async move {
+		loop {
+			match relay_resp_rx.recv().await {
+				Ok(resp) => {
+					if peer_resp_clone.send(resp).is_err() {
+						tracing::warn!("Peer response channel closed");
+						break;
+					}
+				}
+				Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+				Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+					tracing::warn!("Lagged {n} responses");
+				}
+			}
+		}
+	});
 }
 
 fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
