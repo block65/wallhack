@@ -6,13 +6,13 @@
 use std::{sync::atomic::Ordering, time::Instant};
 
 use protobuf::control::{
-	ControlRequest, ControlResponse, ErrorResponse, NodeRole as ProtoNodeRole, PingResponse,
-	StatsResponse, control_request, control_response,
+	ControlRequest, ControlResponse, ErrorResponse, NodeRole as ProtoNodeRole, PeerInfo,
+	PingResponse, RouteInfo, StatsResponse, control_request, control_response,
 };
 
 use crate::NodeRole;
 
-use super::metrics::SharedMetrics;
+use super::{metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable};
 
 /// Configuration for the control handler.
 #[derive(Debug, Clone)]
@@ -41,16 +41,25 @@ impl HandlerConfig {
 pub struct Handler {
 	config: HandlerConfig,
 	metrics: SharedMetrics,
+	peers: SharedRegistry,
+	routes: SharedRouteTable,
 	start_time: Instant,
 }
 
 impl Handler {
 	/// Creates a new control handler.
 	#[must_use]
-	pub fn new(config: HandlerConfig, metrics: SharedMetrics) -> Self {
+	pub fn new(
+		config: HandlerConfig,
+		metrics: SharedMetrics,
+		peers: SharedRegistry,
+		routes: SharedRouteTable,
+	) -> Self {
 		Self {
 			config,
 			metrics,
+			peers,
+			routes,
 			start_time: Instant::now(),
 		}
 	}
@@ -66,10 +75,11 @@ impl Handler {
 		match request.request {
 			Some(control_request::Request::Ping(_)) => self.handle_ping(),
 			Some(control_request::Request::Stats(_)) => self.handle_stats(),
-			Some(control_request::Request::Peers(_)) => Self::handle_peers(),
-			Some(control_request::Request::Disconnect(req)) => Self::handle_disconnect(req),
-			Some(control_request::Request::RouteAdd(req)) => Self::handle_route_add(req),
-			Some(control_request::Request::RouteRemove(req)) => Self::handle_route_remove(req),
+			Some(control_request::Request::Peers(_)) => self.handle_peers(),
+			Some(control_request::Request::Disconnect(req)) => self.handle_disconnect(&req),
+			Some(control_request::Request::RouteAdd(req)) => self.handle_route_add(req),
+			Some(control_request::Request::RouteRemove(req)) => self.handle_route_remove(&req),
+			Some(control_request::Request::RouteList(_)) => self.handle_route_list(),
 			None => Self::error_response("Empty request"),
 		}
 	}
@@ -98,38 +108,124 @@ impl Handler {
 		}
 	}
 
-	fn handle_peers() -> ControlResponse {
-		// TODO: Implement peer tracking
+	fn handle_peers(&self) -> ControlResponse {
+		let peers = self
+			.peers
+			.list()
+			.into_iter()
+			.map(|p| {
+				let connected_at = p.connected_at.elapsed();
+				PeerInfo {
+					id: p.id,
+					addr: p.addr,
+					role: ProtoNodeRole::from(p.role).into(),
+					connected_at: connected_at.as_secs(),
+					bytes_transferred: p.bytes_transferred,
+					latency_ms: p.latency_ms.unwrap_or(0.0),
+				}
+			})
+			.collect();
+
 		ControlResponse {
 			response: Some(control_response::Response::Peers(
-				protobuf::control::PeersResponse { peers: vec![] },
+				protobuf::control::PeersResponse { peers },
 			)),
 		}
 	}
 
-	fn handle_disconnect(_req: protobuf::control::DisconnectRequest) -> ControlResponse {
-		// TODO: Implement peer disconnection
+	fn handle_disconnect(&self, req: &protobuf::control::DisconnectRequest) -> ControlResponse {
+		let success = self.peers.unregister(&req.peer_id).is_some();
 		ControlResponse {
 			response: Some(control_response::Response::Disconnect(
-				protobuf::control::DisconnectResponse { success: false },
+				protobuf::control::DisconnectResponse { success },
 			)),
 		}
 	}
 
-	fn handle_route_add(_req: protobuf::control::RouteAddRequest) -> ControlResponse {
-		// TODO: Implement route addition
+	fn handle_route_add(&self, req: protobuf::control::RouteAddRequest) -> ControlResponse {
+		let cidr = match req.cidr.parse() {
+			Ok(c) => c,
+			Err(e) => {
+				return ControlResponse {
+					response: Some(control_response::Response::RouteAdd(
+						protobuf::control::RouteAddResponse {
+							success: false,
+							message: format!("invalid CIDR: {e}"),
+						},
+					)),
+				};
+			}
+		};
+
+		if req.peer_id.is_empty() {
+			return ControlResponse {
+				response: Some(control_response::Response::RouteAdd(
+					protobuf::control::RouteAddResponse {
+						success: false,
+						message: "peer_id is required".to_string(),
+					},
+				)),
+			};
+		}
+
+		self.routes.add(cidr, req.peer_id);
+
 		ControlResponse {
 			response: Some(control_response::Response::RouteAdd(
-				protobuf::control::RouteAddResponse { success: false },
+				protobuf::control::RouteAddResponse {
+					success: true,
+					message: String::new(),
+				},
 			)),
 		}
 	}
 
-	fn handle_route_remove(_req: protobuf::control::RouteRemoveRequest) -> ControlResponse {
-		// TODO: Implement route removal
+	fn handle_route_remove(&self, req: &protobuf::control::RouteRemoveRequest) -> ControlResponse {
+		let cidr = match req.cidr.parse() {
+			Ok(c) => c,
+			Err(e) => {
+				return ControlResponse {
+					response: Some(control_response::Response::RouteRemove(
+						protobuf::control::RouteRemoveResponse {
+							success: false,
+							message: format!("invalid CIDR: {e}"),
+						},
+					)),
+				};
+			}
+		};
+
+		let removed = self.routes.remove(&cidr);
+		let success = removed.is_some();
 		ControlResponse {
 			response: Some(control_response::Response::RouteRemove(
-				protobuf::control::RouteRemoveResponse { success: false },
+				protobuf::control::RouteRemoveResponse {
+					success,
+					message: if success {
+						String::new()
+					} else {
+						"route not found".to_string()
+					},
+				},
+			)),
+		}
+	}
+
+	fn handle_route_list(&self) -> ControlResponse {
+		let routes = self
+			.routes
+			.list()
+			.into_iter()
+			.map(|entry| RouteInfo {
+				cidr: entry.cidr.to_string(),
+				peer_id: entry.peer_id,
+				added_at_secs: entry.added_at.elapsed().as_secs(),
+			})
+			.collect();
+
+		ControlResponse {
+			response: Some(control_response::Response::RouteList(
+				protobuf::control::RouteListResponse { routes },
 			)),
 		}
 	}
@@ -148,11 +244,13 @@ mod tests {
 	use std::sync::Arc;
 
 	use super::*;
-	use crate::control::metrics::Metrics;
+	use crate::control::{metrics::Metrics, peers::Registry, routes::RouteTable};
 
 	fn test_handler() -> Handler {
 		let metrics = Arc::new(Metrics::default());
-		Handler::new(HandlerConfig::new(NodeRole::Entry), metrics)
+		let peers = Arc::new(Registry::new());
+		let routes = RouteTable::shared();
+		Handler::new(HandlerConfig::new(NodeRole::Entry), metrics, peers, routes)
 	}
 
 	#[test]
@@ -168,7 +266,7 @@ mod tests {
 		match response.response {
 			Some(control_response::Response::Ping(ping)) => {
 				assert!(!ping.version.is_empty());
-				assert_eq!(ping.node_role, ProtoNodeRole::RoleEntry.into());
+				assert_eq!(ping.node_role, i32::from(ProtoNodeRole::RoleEntry));
 			}
 			_ => panic!("Expected ping response"),
 		}
@@ -177,10 +275,12 @@ mod tests {
 	#[test]
 	fn test_stats() {
 		let metrics = Arc::new(Metrics::default());
+		let peers = Arc::new(Registry::new());
+		let routes = RouteTable::shared();
 		metrics.inc_bytes_in(100);
 		metrics.inc_packets_out(5);
 
-		let handler = Handler::new(HandlerConfig::new(NodeRole::Entry), metrics);
+		let handler = Handler::new(HandlerConfig::new(NodeRole::Entry), metrics, peers, routes);
 		let request = ControlRequest {
 			request: Some(control_request::Request::Stats(
 				protobuf::control::StatsRequest {},
@@ -208,6 +308,159 @@ mod tests {
 				assert_eq!(err.message, "Empty request");
 			}
 			_ => panic!("Expected error response"),
+		}
+	}
+
+	#[test]
+	fn test_route_add_success() {
+		let handler = test_handler();
+		let request = ControlRequest {
+			request: Some(control_request::Request::RouteAdd(
+				protobuf::control::RouteAddRequest {
+					cidr: "10.0.0.0/8".to_string(),
+					peer_id: "exit-1".to_string(),
+				},
+			)),
+		};
+		let response = handler.handle(request);
+
+		match response.response {
+			Some(control_response::Response::RouteAdd(r)) => {
+				assert!(r.success);
+				assert!(r.message.is_empty());
+			}
+			_ => panic!("Expected route add response"),
+		}
+	}
+
+	#[test]
+	fn test_route_add_invalid_cidr() {
+		let handler = test_handler();
+		let request = ControlRequest {
+			request: Some(control_request::Request::RouteAdd(
+				protobuf::control::RouteAddRequest {
+					cidr: "not-a-cidr".to_string(),
+					peer_id: "exit-1".to_string(),
+				},
+			)),
+		};
+		let response = handler.handle(request);
+
+		match response.response {
+			Some(control_response::Response::RouteAdd(r)) => {
+				assert!(!r.success);
+				assert!(!r.message.is_empty());
+			}
+			_ => panic!("Expected route add response"),
+		}
+	}
+
+	#[test]
+	fn test_route_add_missing_peer() {
+		let handler = test_handler();
+		let request = ControlRequest {
+			request: Some(control_request::Request::RouteAdd(
+				protobuf::control::RouteAddRequest {
+					cidr: "10.0.0.0/8".to_string(),
+					peer_id: String::new(),
+				},
+			)),
+		};
+		let response = handler.handle(request);
+
+		match response.response {
+			Some(control_response::Response::RouteAdd(r)) => {
+				assert!(!r.success);
+				assert_eq!(r.message, "peer_id is required");
+			}
+			_ => panic!("Expected route add response"),
+		}
+	}
+
+	#[test]
+	fn test_route_remove() {
+		let handler = test_handler();
+
+		// Add first
+		let _ = handler.handle(ControlRequest {
+			request: Some(control_request::Request::RouteAdd(
+				protobuf::control::RouteAddRequest {
+					cidr: "10.0.0.0/8".to_string(),
+					peer_id: "exit-1".to_string(),
+				},
+			)),
+		});
+
+		// Remove
+		let response = handler.handle(ControlRequest {
+			request: Some(control_request::Request::RouteRemove(
+				protobuf::control::RouteRemoveRequest {
+					cidr: "10.0.0.0/8".to_string(),
+				},
+			)),
+		});
+
+		match response.response {
+			Some(control_response::Response::RouteRemove(r)) => {
+				assert!(r.success);
+			}
+			_ => panic!("Expected route remove response"),
+		}
+	}
+
+	#[test]
+	fn test_route_remove_not_found() {
+		let handler = test_handler();
+		let response = handler.handle(ControlRequest {
+			request: Some(control_request::Request::RouteRemove(
+				protobuf::control::RouteRemoveRequest {
+					cidr: "10.0.0.0/8".to_string(),
+				},
+			)),
+		});
+
+		match response.response {
+			Some(control_response::Response::RouteRemove(r)) => {
+				assert!(!r.success);
+				assert_eq!(r.message, "route not found");
+			}
+			_ => panic!("Expected route remove response"),
+		}
+	}
+
+	#[test]
+	fn test_route_list() {
+		let handler = test_handler();
+
+		// Add two routes
+		let _ = handler.handle(ControlRequest {
+			request: Some(control_request::Request::RouteAdd(
+				protobuf::control::RouteAddRequest {
+					cidr: "10.0.0.0/8".to_string(),
+					peer_id: "exit-1".to_string(),
+				},
+			)),
+		});
+		let _ = handler.handle(ControlRequest {
+			request: Some(control_request::Request::RouteAdd(
+				protobuf::control::RouteAddRequest {
+					cidr: "172.16.0.0/12".to_string(),
+					peer_id: "exit-2".to_string(),
+				},
+			)),
+		});
+
+		let response = handler.handle(ControlRequest {
+			request: Some(control_request::Request::RouteList(
+				protobuf::control::RouteListRequest {},
+			)),
+		});
+
+		match response.response {
+			Some(control_response::Response::RouteList(r)) => {
+				assert_eq!(r.routes.len(), 2);
+			}
+			_ => panic!("Expected route list response"),
 		}
 	}
 }

@@ -4,7 +4,10 @@ use transport::Transport;
 
 use crate::{
 	NodeRole,
-	control::{handler::HandlerConfig, metrics::SharedMetrics},
+	control::{
+		handler::HandlerConfig, metrics::SharedMetrics, peers::SharedRegistry,
+		routes::SharedRouteTable,
+	},
 };
 
 use super::config;
@@ -99,6 +102,10 @@ pub struct ServerOptions {
 	pub handler_config: HandlerConfig,
 	/// Shared metrics for statistics.
 	pub metrics: Option<SharedMetrics>,
+	/// Shared peer registry.
+	pub peers: Option<SharedRegistry>,
+	/// Shared route table.
+	pub routes: Option<SharedRouteTable>,
 }
 
 pub trait Server {

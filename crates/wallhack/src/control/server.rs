@@ -13,6 +13,8 @@ use crate::server::tls::{ALPN_QUIC_HTTP, configure_crypto};
 use super::{
 	handler::{Handler, HandlerConfig},
 	metrics::SharedMetrics,
+	peers::Registry,
+	routes::RouteTable,
 };
 
 /// Maximum control message size (1 MB).
@@ -91,7 +93,12 @@ impl ControlServer {
 		transport_config.keep_alive_interval(Some(Duration::from_secs(10)));
 
 		let endpoint = Endpoint::server(server_config, addr)?;
-		let handler = Arc::new(Handler::new(config, metrics));
+		let handler = Arc::new(Handler::new(
+			config,
+			metrics,
+			Arc::new(Registry::new()),
+			RouteTable::shared(),
+		));
 
 		Ok(Self { endpoint, handler })
 	}

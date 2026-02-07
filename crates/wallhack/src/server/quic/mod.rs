@@ -5,7 +5,7 @@ use quinn::{IdleTimeout, crypto::rustls::QuicServerConfig};
 
 use crate::{
 	NodeRole,
-	control::{handler::Handler, metrics::Metrics},
+	control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
 	server::tls::{ALPN_QUIC_HTTP, configure_crypto},
 	transport::{bridge, quic::QuicTransport},
 };
@@ -110,9 +110,19 @@ impl Server for QuicServer {
 		let transport_ctrl = Arc::clone(&transport);
 		let handler_config = self.options.handler_config.clone();
 		let metrics_ctrl = Arc::clone(&metrics);
+		let peers_ctrl = self
+			.options
+			.peers
+			.clone()
+			.unwrap_or_else(|| Arc::new(Registry::new()));
+		let routes_ctrl = self
+			.options
+			.routes
+			.clone()
+			.unwrap_or_else(RouteTable::shared);
 
 		tokio::spawn(async move {
-			let handler = Handler::new(handler_config, metrics_ctrl);
+			let handler = Handler::new(handler_config, metrics_ctrl, peers_ctrl, routes_ctrl);
 			if let Err(e) = bridge::run_control_handler(&*transport_ctrl, &handler).await {
 				tracing::debug!("Control handler finished: {e}");
 			}
