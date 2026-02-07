@@ -33,19 +33,33 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 - [ ] Connection rate heuristic ("RTFM" warning)
 
 ## REST API
-- [ ] HTTP control plane for headless operation
-- [ ] Session management endpoints
-- [ ] Stats/metrics endpoints
-- [ ] Health checks
+- [x] HTTP control plane for headless operation
+- [x] Stats/metrics endpoints
+- [x] Health checks
+- [x] SSE for real-time events
+- [x] Basic auth support
+- [x] Peers endpoint (uses peer registry)
+- [x] Route add/delete endpoints (stub)
+- [x] Peer disconnect endpoint (uses peer registry)
+- [x] Input validation (CIDR, peer ID)
+- [x] DNS rebinding protection (Host header validation)
+- [x] Security headers (CSP, X-Frame-Options, no-sniff, etc.)
+- [x] CORS disabled (same-origin only)
+- [x] TLS always required (HTTPS only)
+- [x] Auth warning when not configured
+- [ ] Periodic latency measurement via control channel ping/pong
 - [ ] OpenAPI spec
+- [ ] Consider: API key auth as alternative to basic auth
 
 ## REPL Commands
+- [x] `ping` - show version and uptime
+- [x] `stats` - bandwidth/latency metrics
+- [x] `peers` - show connected nodes (uses peer registry)
+- [x] `sessions` - list active sessions
+- [x] `route add/del` - manage IP routing (stub)
+- [x] `disconnect` - terminate peer connection (uses peer registry)
 - [ ] `shell` - spawn shell over tunnel
-- [ ] `route` - show/manage IP routing table
-- [ ] `sessions` - list active sessions with stats
-- [ ] `kill <session>` - terminate specific session
-- [ ] `stats` - bandwidth/latency metrics
-- [ ] `peers` - show connected nodes
+- [ ] Implement actual route management (requires routing table abstraction)
 
 ## Transports
 - [ ] DNS tunneling
