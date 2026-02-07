@@ -18,7 +18,10 @@ use wallhack::{
 #[cfg(feature = "quic")]
 use wallhack::{client, server};
 
-use crate::{WallhackCli, cli::Protocol};
+use crate::{
+	WallhackCli,
+	cli::{Protocol, RelayCommand},
+};
 
 /// Initial retry delay for connection attempts.
 const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -29,17 +32,12 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 ///
 /// Connects upstream and listens for downstream connections, forwarding
 /// messages between them. Retries upstream connection forever.
-/// Control commands are handled on the same connection via bidirectional streams.
 ///
 /// # Errors
 ///
 /// Returns error if server fails (connection errors are retried).
-pub async fn run(cli: WallhackCli) -> Result<()> {
-	let connect_spec = cli
-		.connect_spec()
-		.context("Relay node requires --connect")?;
-
-	let listen_spec = cli.listen_spec();
+pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
+	let (connect_spec, listen_spec) = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 
 	// Parse listen address
 	let addr = parse_listen_addr(&listen_spec.addr)?;
@@ -51,12 +49,14 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 	let server_options = ServerOptions {
 		handler_config: HandlerConfig::new(NodeRole::Relay),
 		metrics: Some(Arc::clone(&metrics)),
+		peers: None,
+		routes: None,
 	};
 
 	// Resolve upstream target
 	crate::info!("Resolving upstream: {}", connect_spec.addr);
 	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
-	let dns_server = cli
+	let dns_server = global
 		.dns
 		.as_ref()
 		.map(|s| crate::dns::parse_str_to_addr(s))
@@ -64,7 +64,6 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 
 	let upstream_addr = crate::dns::resolve(resolvable, dns_server).await?;
 
-	// Connect to upstream with retry based on protocol
 	crate::info!(
 		"Connecting to upstream: {} ({:?})",
 		upstream_addr,
@@ -72,16 +71,15 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 	);
 	println!("Connecting to upstream: {upstream_addr}");
 
-	// Connect upstream and run downstream listener based on protocol combination
 	match connect_spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let upstream_client = connect_quic_upstream(&cli, upstream_addr).await?;
+				let upstream_client = connect_quic_upstream(global, upstream_addr).await?;
 				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
 				crate::info!("Connected to upstream (QUIC)");
 				run_downstream(
-					&cli,
+					global,
 					&listen_spec,
 					addr,
 					server_options,
@@ -98,11 +96,11 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				let upstream_client = connect_ws_upstream(&cli, upstream_addr).await?;
+				let upstream_client = connect_ws_upstream(global, upstream_addr).await?;
 				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
 				crate::info!("Connected to upstream (WebSocket)");
 				run_downstream(
-					&cli,
+					global,
 					&listen_spec,
 					addr,
 					server_options,
@@ -120,7 +118,7 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 }
 
 async fn run_downstream(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	listen_spec: &crate::cli::AddressSpec,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
@@ -137,7 +135,8 @@ async fn run_downstream(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_downstream(cli, addr, server_options, upstream_instr, upstream_resp).await
+				run_quic_downstream(global, addr, server_options, upstream_instr, upstream_resp)
+					.await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -147,7 +146,7 @@ async fn run_downstream(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_downstream(&cli, addr, server_options, upstream_instr, upstream_resp).await
+				run_ws_downstream(global, addr, server_options, upstream_instr, upstream_resp).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -212,13 +211,13 @@ fn bridge_downstream<T: wallhack::transport::Transport>(
 
 #[cfg(feature = "quic")]
 async fn connect_quic_upstream(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 ) -> Result<ConnectResult<wallhack::transport::quic::QuicTransport>> {
 	let client_config = client::config::ClientConfig {
 		addr,
-		hostname: cli.hostname.clone(),
-		mtls: None, // TODO: add mTLS support
+		hostname: global.hostname.clone(),
+		mtls: None,
 		..Default::default()
 	};
 
@@ -227,7 +226,7 @@ async fn connect_quic_upstream(
 	loop {
 		let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
 
-		match client.connect(NodeRole::Entry).await {
+		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				crate::info!(
@@ -245,7 +244,7 @@ async fn connect_quic_upstream(
 
 #[cfg(feature = "websocket")]
 async fn connect_ws_upstream(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 ) -> Result<ConnectResult<wallhack::transport::ws::WsTransport>> {
 	use wallhack::client::{
@@ -256,13 +255,13 @@ async fn connect_ws_upstream(
 	let client_config = WsClientConfig {
 		base: ClientConfig {
 			addr,
-			hostname: cli.hostname.clone(),
+			hostname: global.hostname.clone(),
 			mtls: None,
 			..Default::default()
 		},
 		path: "/ws".to_string(),
-		host_header: cli.hostname.clone(),
-		use_tls: cli.cert.is_some() || cli.key.is_some(),
+		host_header: global.hostname.clone(),
+		use_tls: global.cert.is_some() || global.key.is_some(),
 	};
 
 	let mut retry_delay = INITIAL_RETRY_DELAY;
@@ -270,7 +269,7 @@ async fn connect_ws_upstream(
 	loop {
 		let mut client = WsClient::new(client_config.clone())?;
 
-		match client.connect(NodeRole::Entry).await {
+		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				crate::info!(
@@ -288,17 +287,17 @@ async fn connect_ws_upstream(
 
 #[cfg(feature = "quic")]
 async fn run_quic_downstream(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
 	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
 	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) -> Result<()> {
-	let server_config = build_quic_server_config(cli, addr);
+	let server_config = build_server_config(global, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
 
 	loop {
-		match server.accept(NodeRole::Entry).await {
+		match server.accept(NodeRole::Relay).await {
 			Ok(Some(accept_result)) => {
 				bridge_downstream(accept_result, &upstream_instr, &upstream_resp);
 			}
@@ -317,28 +316,19 @@ async fn run_quic_downstream(
 
 #[cfg(feature = "websocket")]
 async fn run_ws_downstream(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
 	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
 	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) -> Result<()> {
-	use wallhack::server::{config::ServerConfig, ws::WsServer};
+	use wallhack::server::ws::WsServer;
 
-	let tls = match (&cli.cert, &cli.key) {
-		(Some(cert), Some(key)) => Some(wallhack::server::config::TlsConfig {
-			cert_pem_file: cert.clone(),
-			key_pem_file: key.clone(),
-			ca_roots: cli.ca.clone(),
-		}),
-		_ => None,
-	};
-
-	let server_config = ServerConfig { listen: addr, tls };
+	let server_config = build_server_config(global, addr);
 	let mut server = WsServer::try_new(server_config, server_options)?;
 
 	loop {
-		match server.accept(NodeRole::Entry).await {
+		match server.accept(NodeRole::Relay).await {
 			Ok(Some(accept_result)) => {
 				bridge_downstream(accept_result, &upstream_instr, &upstream_resp);
 			}
@@ -356,7 +346,6 @@ async fn run_ws_downstream(
 }
 
 fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
-	// Handle short form like ":6565" -> "[::]:6565"
 	let full_addr = if let Some(port) = addr.strip_prefix(':') {
 		format!("[::]:{port}")
 	} else {
@@ -368,16 +357,15 @@ fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
 		.with_context(|| format!("Invalid listen address: {full_addr}"))
 }
 
-#[cfg(feature = "quic")]
-fn build_quic_server_config(
-	cli: &WallhackCli,
+fn build_server_config(
+	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 ) -> server::config::ServerConfig {
-	let tls = match (&cli.cert, &cli.key) {
+	let tls = match (&global.cert, &global.key) {
 		(Some(cert), Some(key)) => Some(server::config::TlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
-			ca_roots: cli.ca.clone(),
+			ca_roots: global.ca.clone(),
 		}),
 		_ => None,
 	};

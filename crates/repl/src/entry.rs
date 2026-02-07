@@ -1,8 +1,9 @@
 //! Entry node implementation.
 //!
-//! The entry node creates a TUN interface and listens for incoming connections
-//! from relay or exit nodes. It captures packets from the TUN and sends them
-//! through the tunnel. Includes an interactive REPL for control.
+//! The entry node creates a TUN interface and accepts connections from exit or
+//! relay nodes. It can either listen for incoming connections (default) or
+//! connect to a remote peer (reverse tunnel). Includes an interactive REPL
+//! when stdin is a TTY.
 
 use std::{
 	collections::HashMap,
@@ -16,7 +17,12 @@ use tokio::sync::mpsc;
 
 use wallhack::{
 	NodeRole,
-	control::{handler::HandlerConfig, metrics::Metrics},
+	control::{
+		handler::HandlerConfig,
+		metrics::Metrics,
+		peers::Registry,
+		routes::{RouteTable, SharedRouteTable},
+	},
 	entry::{actor::TunActor, manager::ConnectionManager},
 	server::{
 		config::ServerConfig,
@@ -24,7 +30,10 @@ use wallhack::{
 	},
 };
 
-use crate::{WallhackCli, cli::Protocol};
+use crate::{
+	WallhackCli,
+	cli::{EntryCommand, Protocol, TransportDir},
+};
 
 /// Manages TUN sessions for connected exit nodes.
 ///
@@ -61,6 +70,11 @@ impl SessionManager {
 		TunActor::random_iface_name()
 	}
 
+	/// Look up the TUN device name for a peer.
+	fn get_tun_for_peer(&self, peer_id: &str) -> Option<String> {
+		self.sessions.lock().get(peer_id).cloned()
+	}
+
 	/// Returns a list of (`exit_id`, `tun_name`) pairs for all active sessions.
 	fn list(&self) -> Vec<(String, String)> {
 		self.sessions
@@ -88,16 +102,15 @@ impl Printer {
 
 /// Run as an entry node with interactive REPL.
 ///
-/// Creates TUN interface and listens for downstream connections. Runs an
-/// interactive REPL for control commands.
+/// Creates TUN interface and either listens for downstream connections or
+/// connects to a remote peer (reverse tunnel). Runs an interactive REPL for
+/// control commands when stdin is a TTY.
 ///
 /// # Errors
 ///
-/// Returns error if server or orchestrator fails.
-pub async fn run(cli: WallhackCli) -> Result<()> {
-	// Parse listen address with protocol
-	let listen_spec = cli.listen_spec();
-	let addr = parse_listen_addr(&listen_spec.addr)?;
+/// Returns error if server or client setup fails.
+pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
+	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 
 	// Session manager keeps TUNs alive across reconnections
 	let sessions = SessionManager::default();
@@ -105,53 +118,201 @@ pub async fn run(cli: WallhackCli) -> Result<()> {
 	// Shared metrics across all connections and control
 	let metrics = Arc::new(Metrics::default());
 
-	// Server options with control handler config
-	let server_options = ServerOptions {
-		handler_config: HandlerConfig::new(NodeRole::Entry),
-		metrics: Some(Arc::clone(&metrics)),
-	};
+	// Peer registry for tracking connected peers
+	let peers = Arc::new(Registry::new());
 
-	// Build server config
-	let server_config = build_server_config(&cli, addr);
+	// Route table for CIDR -> peer mapping
+	let routes = RouteTable::shared();
 
-	// Run with appropriate transport based on protocol
-	match listen_spec.protocol {
-		Protocol::Udp => {
-			#[cfg(feature = "quic")]
-			{
-				let server =
-					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
-				crate::info!("Listening on {addr} (QUIC/UDP)");
-				run_entry_server(cli, server, metrics, sessions).await
-			}
-			#[cfg(not(feature = "quic"))]
-			{
-				anyhow::bail!("QUIC transport not available (compile with --features quic)");
-			}
-		}
-		Protocol::Tcp => {
-			#[cfg(feature = "websocket")]
-			{
-				let server =
-					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
-				crate::info!("Listening on {addr} (WebSocket/TCP)");
-				run_entry_server(cli, server, metrics, sessions).await
-			}
-			#[cfg(not(feature = "websocket"))]
-			{
-				anyhow::bail!(
-					"WebSocket transport not available (compile with --features websocket)"
+	match transport {
+		TransportDir::Listen(spec) => {
+			let addr = parse_listen_addr(&spec.addr)?;
+
+			let server_options = ServerOptions {
+				handler_config: HandlerConfig::new(NodeRole::Entry),
+				metrics: Some(Arc::clone(&metrics)),
+				peers: Some(Arc::clone(&peers)),
+				routes: Some(Arc::clone(&routes)),
+			};
+
+			let server_config = build_server_config(global, addr);
+
+			// Start REST API if enabled
+			#[cfg(feature = "api")]
+			if let Some(api_addr) = cmd.api_addr() {
+				start_api(
+					global,
+					api_addr,
+					&metrics,
+					&peers,
+					&routes,
+					server_config.tls.clone(),
 				);
 			}
+
+			match spec.protocol {
+				Protocol::Udp => {
+					#[cfg(feature = "quic")]
+					{
+						let server = wallhack::server::quic::QuicServer::try_new(
+							server_config,
+							server_options,
+						)?;
+						crate::info!("Listening on {addr} (QUIC/UDP)");
+						run_entry_server(server, metrics, peers, routes, sessions).await
+					}
+					#[cfg(not(feature = "quic"))]
+					{
+						anyhow::bail!(
+							"QUIC transport not available (compile with --features quic)"
+						);
+					}
+				}
+				Protocol::Tcp => {
+					#[cfg(feature = "websocket")]
+					{
+						let server =
+							wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+						crate::info!("Listening on {addr} (WebSocket/TCP)");
+						run_entry_server(server, metrics, peers, routes, sessions).await
+					}
+					#[cfg(not(feature = "websocket"))]
+					{
+						anyhow::bail!(
+							"WebSocket transport not available (compile with --features websocket)"
+						);
+					}
+				}
+			}
+		}
+		TransportDir::Connect(spec) => {
+			run_entry_connect(global, cmd, &spec, metrics, peers, sessions).await
 		}
 	}
 }
 
+/// Run entry node in connect mode (reverse tunnel).
+///
+/// Entry connects to a remote peer but still creates TUN and runs REPL.
+async fn run_entry_connect(
+	global: &WallhackCli,
+	_cmd: &EntryCommand,
+	spec: &crate::cli::AddressSpec,
+	metrics: Arc<Metrics>,
+	_peers: Arc<Registry>,
+	_sessions: SessionManager,
+) -> Result<()> {
+	use std::{str::FromStr, time::Duration};
+	use wallhack::client::client::Client;
+
+	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+	crate::info!("Resolving {}", spec.addr);
+	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
+	let dns_server = global
+		.dns
+		.as_ref()
+		.map(|s| crate::dns::parse_str_to_addr(s))
+		.transpose()?;
+	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
+
+	// Start REST API if enabled
+	#[cfg(feature = "api")]
+	if let Some(api_addr) = cmd.api_addr() {
+		let tls = build_tls_config(global);
+		let routes = RouteTable::shared();
+		start_api(global, api_addr, &metrics, &_peers, &routes, tls);
+	}
+
+	match spec.protocol {
+		Protocol::Udp => {
+			#[cfg(feature = "quic")]
+			{
+				let client_config = build_quic_client_config(global, endpoint);
+				let mut retry_delay = INITIAL_RETRY_DELAY;
+
+				loop {
+					let mut client =
+						wallhack::client::quic::QuicClient::try_new(client_config.clone())?;
+					match client.connect(NodeRole::Entry).await {
+						Ok(connect_result) => {
+							retry_delay = INITIAL_RETRY_DELAY;
+							handle_entry_connect_result(connect_result, &metrics).await?;
+						}
+						Err(e) => {
+							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}");
+							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+							tokio::time::sleep(retry_delay).await;
+							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+						}
+					}
+				}
+			}
+			#[cfg(not(feature = "quic"))]
+			anyhow::bail!("QUIC transport not available (compile with --features quic)")
+		}
+		Protocol::Tcp => {
+			#[cfg(feature = "websocket")]
+			{
+				use wallhack::client::ws::{WsClient, WsClientConfig};
+
+				let client_config = WsClientConfig {
+					base: wallhack::client::config::ClientConfig {
+						addr: endpoint,
+						hostname: global.hostname.clone(),
+						mtls: None,
+						..Default::default()
+					},
+					path: "/ws".to_string(),
+					host_header: global.hostname.clone(),
+					use_tls: global.cert.is_some() || global.key.is_some(),
+				};
+				let mut retry_delay = INITIAL_RETRY_DELAY;
+
+				loop {
+					let mut client = WsClient::new(client_config.clone())?;
+					match client.connect(NodeRole::Entry).await {
+						Ok(connect_result) => {
+							retry_delay = INITIAL_RETRY_DELAY;
+							handle_entry_connect_result(connect_result, &metrics).await?;
+						}
+						Err(e) => {
+							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}");
+							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+							tokio::time::sleep(retry_delay).await;
+							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+						}
+					}
+				}
+			}
+			#[cfg(not(feature = "websocket"))]
+			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
+		}
+	}
+}
+
+/// Handle a successful entry-side connect result by creating TUN + bridge.
+async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static>(
+	connect_result: wallhack::client::client::ConnectResult<T>,
+	metrics: &Arc<Metrics>,
+) -> Result<()> {
+	crate::info!("Connected to {}", connect_result.client_ident());
+
+	let name = SessionManager::create_anonymous();
+	let actor = TunActor::new(Some(name.clone()))?;
+	let manager = ConnectionManager::new(actor, connect_result.transport(), Arc::clone(metrics));
+	manager.run().await?;
+
+	Ok(())
+}
+
 /// Generic entry server loop that works with any Server implementation.
 async fn run_entry_server<S: Server>(
-	_cli: WallhackCli,
 	mut server: S,
 	metrics: Arc<Metrics>,
+	peers: Arc<Registry>,
+	routes: SharedRouteTable,
 	sessions: SessionManager,
 ) -> Result<()>
 where
@@ -192,15 +353,37 @@ where
 						let conn_metrics = accept_result.metrics();
 						let conn_printer = printer.clone();
 						let conn_sessions = sessions.clone();
+						let conn_peers = Arc::clone(&peers);
+						let conn_routes = Arc::clone(&routes);
 						let hello_rx = accept_result.take_hello_rx();
+						let peer_id = accept_result.client_ident().to_string();
+						let peer_addr = peer_id.clone();
 
 						crate::info!("Accepted connection from {}", accept_result.client_ident());
 						printer.print(format!("Connection from {}", accept_result.client_ident()));
 
-						// Spawn handler for this connection (each exit node gets its own
-						// TUN)
+						// Register peer in the registry
+						conn_peers.register(peer_id.clone(), peer_addr, NodeRole::Exit);
+
+						// Spawn handler for this connection (each exit node gets its own TUN)
 						tokio::spawn(async move {
-							match handle_connection(conn_metrics, accept_result, hello_rx, conn_sessions).await {
+							let result = handle_connection(conn_metrics, accept_result, hello_rx, conn_sessions.clone()).await;
+							// Unregister peer when connection closes
+							conn_peers.unregister(&peer_id);
+							// Clean up routes for this peer
+							let removed_routes = conn_routes.remove_by_peer(&peer_id);
+							for entry in &removed_routes {
+								if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_id) {
+									remove_os_route(&entry.cidr.to_string(), &tun);
+								}
+							}
+							if !removed_routes.is_empty() {
+								conn_printer.print(format!(
+									"Removed {} route(s) for disconnected peer {peer_id}",
+									removed_routes.len()
+								));
+							}
+							match result {
 								Ok(tun_name) => {
 									conn_printer.print(format!("Connection closed (tun: {tun_name})"));
 								}
@@ -233,11 +416,29 @@ where
 						printer.print("Shutting down...");
 						break;
 					}
+					Some(ReplCommand::Ping) => {
+						print_ping(&printer);
+					}
 					Some(ReplCommand::Stats) => {
 						print_stats(&metrics, &printer);
 					}
+					Some(ReplCommand::Peers) => {
+						print_peers(&peers, &printer);
+					}
 					Some(ReplCommand::Sessions) => {
 						print_sessions(&sessions, &printer);
+					}
+					Some(ReplCommand::RouteAdd(cidr, peer_id)) => {
+						handle_route_add(&cidr, &peer_id, &routes, &sessions, &printer);
+					}
+					Some(ReplCommand::RouteRemove(cidr)) => {
+						handle_route_remove(&cidr, &routes, &sessions, &printer);
+					}
+					Some(ReplCommand::RouteList) => {
+						handle_route_list(&routes, &sessions, &printer);
+					}
+					Some(ReplCommand::Disconnect(peer_id)) => {
+						handle_disconnect(&peer_id, &peers, &printer);
 					}
 					Some(ReplCommand::Help) => {
 						print_help(&printer);
@@ -256,8 +457,14 @@ where
 /// REPL commands that can be sent from the input thread.
 enum ReplCommand {
 	Quit,
+	Ping,
 	Stats,
+	Peers,
 	Sessions,
+	RouteAdd(String, String),
+	RouteRemove(String),
+	RouteList,
+	Disconnect(String),
 	Help,
 	Unknown(String),
 }
@@ -374,16 +581,46 @@ fn run_repl_input(
 
 /// Parse a line into a REPL command.
 fn parse_repl_command(line: &str) -> ReplCommand {
-	match line
-		.split_whitespace()
-		.next()
-		.unwrap_or("")
-		.to_lowercase()
-		.as_str()
-	{
+	let mut parts = line.split_whitespace();
+	let cmd = parts.next().unwrap_or("").to_lowercase();
+	let arg = parts.next().map(String::from);
+
+	match cmd.as_str() {
 		"quit" | "exit" | "q" => ReplCommand::Quit,
+		"ping" | "p" => ReplCommand::Ping,
 		"stats" | "s" => ReplCommand::Stats,
+		"peers" => ReplCommand::Peers,
 		"sessions" | "tuns" | "t" => ReplCommand::Sessions,
+		"route" => match arg.as_deref() {
+			Some("add") => {
+				let cidr = parts.next();
+				let peer_id = parts.next();
+				match (cidr, peer_id) {
+					(Some(c), Some(p)) => ReplCommand::RouteAdd(c.to_string(), p.to_string()),
+					(Some(_), None) => {
+						ReplCommand::Unknown("route add <cidr> <peer_id>".to_string())
+					}
+					_ => ReplCommand::Unknown("route add <cidr> <peer_id>".to_string()),
+				}
+			}
+			Some("del" | "rm" | "remove") => {
+				if let Some(cidr) = parts.next() {
+					ReplCommand::RouteRemove(cidr.to_string())
+				} else {
+					ReplCommand::Unknown("route del <cidr>".to_string())
+				}
+			}
+			Some("list" | "ls") => ReplCommand::RouteList,
+			_ => ReplCommand::Unknown("route <add|del|list> ...".to_string()),
+		},
+		"routes" => ReplCommand::RouteList,
+		"disconnect" | "kick" | "kill" => {
+			if let Some(peer_id) = arg {
+				ReplCommand::Disconnect(peer_id)
+			} else {
+				ReplCommand::Unknown("disconnect <peer_id>".to_string())
+			}
+		}
 		"help" | "?" => ReplCommand::Help,
 		_ => ReplCommand::Unknown(line.to_string()),
 	}
@@ -417,6 +654,35 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
+fn print_ping(printer: &Printer) {
+	let uptime = std::time::Instant::now(); // TODO: track actual start time
+	printer.print(format!(
+		"Version: {} ({})",
+		env!("CARGO_PKG_VERSION"),
+		"entry"
+	));
+	printer.print(format!("Uptime: {:?}", uptime.elapsed()));
+}
+
+fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
+	let list = peers.list();
+	if list.is_empty() {
+		printer.print("No connected peers.");
+	} else {
+		printer.print(format!("Connected peers ({}):", list.len()));
+		for peer in &list {
+			let latency = peer
+				.latency_ms
+				.map_or_else(|| "N/A".to_string(), |ms| format!("{ms:.1}ms"));
+			let uptime = peer.connected_at.elapsed();
+			printer.print(format!(
+				"  {} ({}) - {} - latency: {}, uptime: {:.0?}",
+				peer.id, peer.role, peer.addr, latency, uptime
+			));
+		}
+	}
+}
+
 fn print_sessions(sessions: &SessionManager, printer: &Printer) {
 	let list = sessions.list();
 	if list.is_empty() {
@@ -429,12 +695,147 @@ fn print_sessions(sessions: &SessionManager, printer: &Printer) {
 	}
 }
 
+fn handle_route_add(
+	cidr: &str,
+	peer_id: &str,
+	routes: &SharedRouteTable,
+	sessions: &SessionManager,
+	printer: &Printer,
+) {
+	let parsed: wallhack::Cidr = match cidr.parse() {
+		Ok(c) => c,
+		Err(e) => {
+			printer.print(format!("Invalid CIDR '{cidr}': {e}"));
+			return;
+		}
+	};
+
+	let Some(tun_name) = sessions.get_tun_for_peer(peer_id) else {
+		printer.print(format!("No TUN session found for peer '{peer_id}'"));
+		return;
+	};
+
+	// Apply OS route first so we can rollback on failure
+	if !apply_os_route(cidr, &tun_name) {
+		printer.print(format!(
+			"Failed to apply OS route for {cidr} via {tun_name}"
+		));
+		return;
+	}
+
+	routes.add(parsed, peer_id.to_string());
+	printer.print(format!("Route added: {cidr} -> {peer_id} (dev {tun_name})"));
+}
+
+fn handle_route_remove(
+	cidr: &str,
+	routes: &SharedRouteTable,
+	sessions: &SessionManager,
+	printer: &Printer,
+) {
+	let parsed: wallhack::Cidr = match cidr.parse() {
+		Ok(c) => c,
+		Err(e) => {
+			printer.print(format!("Invalid CIDR '{cidr}': {e}"));
+			return;
+		}
+	};
+
+	match routes.remove(&parsed) {
+		Some(entry) => {
+			if let Some(tun) = sessions.get_tun_for_peer(&entry.peer_id) {
+				remove_os_route(cidr, &tun);
+			}
+			printer.print(format!("Route removed: {cidr} (was -> {})", entry.peer_id));
+		}
+		None => {
+			printer.print(format!("Route not found: {cidr}"));
+		}
+	}
+}
+
+fn handle_route_list(routes: &SharedRouteTable, sessions: &SessionManager, printer: &Printer) {
+	let list = routes.list();
+	if list.is_empty() {
+		printer.print("No routes configured.");
+	} else {
+		printer.print(format!("Routes ({}):", list.len()));
+		for entry in &list {
+			let tun = sessions
+				.get_tun_for_peer(&entry.peer_id)
+				.unwrap_or_else(|| "?".to_string());
+			let age = entry.added_at.elapsed();
+			printer.print(format!(
+				"  {} -> {} (dev {}, age {:.0?})",
+				entry.cidr, entry.peer_id, tun, age
+			));
+		}
+	}
+}
+
+fn handle_disconnect(peer_id: &str, peers: &Arc<Registry>, printer: &Printer) {
+	if peers.unregister(peer_id).is_some() {
+		printer.print(format!("Disconnected peer: {peer_id}"));
+	} else {
+		printer.print(format!("Peer not found: {peer_id}"));
+	}
+}
+
 fn print_help(printer: &Printer) {
 	printer.print("Available commands:");
-	printer.print("  stats, s       - Show traffic statistics");
-	printer.print("  sessions, t    - List active exit node sessions");
-	printer.print("  help, ?        - Show this help message");
-	printer.print("  quit, q        - Exit wallhack");
+	printer.print("  ping, p                       - Show version and uptime");
+	printer.print("  stats, s                      - Show traffic statistics");
+	printer.print("  peers                         - List connected peers");
+	printer.print("  sessions, t                   - List active exit node sessions");
+	printer.print("  route add <cidr> <peer_id>    - Add a route (e.g., 10.0.0.0/8 exit-1)");
+	printer.print("  route del <cidr>              - Remove a route");
+	printer.print("  route list, routes            - List all routes");
+	printer.print("  disconnect <peer_id>          - Disconnect a peer");
+	printer.print("  help, ?                       - Show this help message");
+	printer.print("  quit, q                       - Exit wallhack");
+}
+
+/// Apply an OS-level route via `ip route add`.
+fn apply_os_route(cidr: &str, dev: &str) -> bool {
+	match std::process::Command::new("ip")
+		.args(["route", "add", cidr, "dev", dev])
+		.output()
+	{
+		Ok(output) => {
+			if output.status.success() {
+				tracing::info!("OS route added: {cidr} dev {dev}");
+				true
+			} else {
+				let stderr = String::from_utf8_lossy(&output.stderr);
+				tracing::warn!("Failed to add OS route: {stderr}");
+				false
+			}
+		}
+		Err(e) => {
+			tracing::warn!("Failed to run ip route add: {e}");
+			false
+		}
+	}
+}
+
+/// Remove an OS-level route via `ip route del`.
+fn remove_os_route(cidr: &str, dev: &str) {
+	match std::process::Command::new("ip")
+		.args(["route", "del", cidr, "dev", dev])
+		.output()
+	{
+		Ok(output) => {
+			if output.status.success() {
+				tracing::info!("OS route removed: {cidr} dev {dev}");
+			} else {
+				let stderr = String::from_utf8_lossy(&output.stderr);
+				tracing::debug!("Failed to remove OS route: {stderr}");
+			}
+		}
+		Err(e) => {
+			tracing::debug!("Failed to run ip route del: {e}");
+		}
+	}
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -505,7 +906,6 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 }
 
 fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
-	// Check if it starts with ':' and capture the part after it in 'port'
 	let full_addr = if let Some(port) = addr.strip_prefix(':') {
 		format!("[::]:{port}")
 	} else {
@@ -518,17 +918,72 @@ fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
 }
 
 fn build_server_config(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 ) -> wallhack::server::config::ServerConfig {
-	let tls = match (&cli.cert, &cli.key) {
+	ServerConfig {
+		listen: addr,
+		tls: build_tls_config(global),
+	}
+}
+
+fn build_tls_config(global: &WallhackCli) -> Option<wallhack::server::config::TlsConfig> {
+	match (&global.cert, &global.key) {
 		(Some(cert), Some(key)) => Some(wallhack::server::config::TlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
-			ca_roots: cli.ca.clone(),
+			ca_roots: global.ca.clone(),
+		}),
+		_ => None,
+	}
+}
+
+#[cfg(feature = "api")]
+fn start_api(
+	_global: &WallhackCli,
+	api_addr: std::net::SocketAddr,
+	metrics: &Arc<Metrics>,
+	peers: &Arc<Registry>,
+	routes: &SharedRouteTable,
+	tls_config: Option<wallhack::server::config::TlsConfig>,
+) {
+	use wallhack::api::{Auth, State as ApiState};
+
+	let handler_config = HandlerConfig::new(NodeRole::Entry);
+	let auth = Auth::default();
+	let state = ApiState::new(
+		handler_config,
+		Arc::clone(metrics),
+		Arc::clone(peers),
+		Arc::clone(routes),
+		auth,
+	);
+
+	tokio::spawn(async move {
+		if let Err(e) = wallhack::api::serve(api_addr, state, tls_config).await {
+			tracing::error!("REST API error: {e}");
+		}
+	});
+}
+
+#[cfg(feature = "quic")]
+fn build_quic_client_config(
+	global: &WallhackCli,
+	endpoint: std::net::SocketAddr,
+) -> wallhack::client::config::ClientConfig {
+	let mtls = match (&global.cert, &global.key) {
+		(Some(cert), Some(key)) => Some(wallhack::client::config::MtlsConfig {
+			cert_pem_file: cert.clone(),
+			key_pem_file: key.clone(),
+			ca_roots: global.ca.clone(),
 		}),
 		_ => None,
 	};
 
-	ServerConfig { listen: addr, tls }
+	wallhack::client::config::ClientConfig {
+		addr: endpoint,
+		hostname: global.hostname.clone(),
+		mtls,
+		..Default::default()
+	}
 }

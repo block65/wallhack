@@ -1,39 +1,28 @@
-//! Unified CLI for wallhack binary.
+//! CLI for the wallhack binary.
 //!
-//! This module contains the argument parsing logic for the wallhack binary. It
-//! uses `argh` to parse command line arguments into a `WallhackCli` struct.
+//! Node role is declared explicitly via subcommand (`entry`, `exit`, `relay`).
+//! Transport direction (`--listen` / `--connect`) is independent of role.
+//!
+//! # Examples
+//!
+//! ```text
+//! wallhack                                         # entry, listen :6565
+//! wallhack entry --listen :6565                    # entry, listen
+//! wallhack entry --connect host:443                # entry, reverse tunnel
+//! wallhack exit --connect host:6565                # exit, connect
+//! wallhack exit --listen :443                      # exit, reverse tunnel
+//! wallhack relay --connect up:443 --listen :6565   # relay, both required
+//! ```
 
 use std::path::PathBuf;
 
 use argh::FromArgs;
 
-// ============================================================================
-// New unified CLI (Single binary architecture)
-// ============================================================================
-
-/// Node role determined by flag combinations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeRole {
-	/// Entry node: has TUN, listens for connections, runs interactive REPL
-	Entry,
-	/// Relay node: connects upstream, listens for downstream
-	Relay,
-	/// Exit node: connects only, makes syscalls to local network
-	Exit,
-}
-
-/// Unified CLI for wallhack binary.
+/// Network pivoting and tunneling tool.
+///
+/// Defaults to entry mode listening on :6565 when invoked without a subcommand.
 #[derive(FromArgs, Debug)]
-#[argh(description = "Network pivoting and tunneling tool")]
 pub struct WallhackCli {
-	/// listen address for incoming connections (e.g., ":6565" or "0.0.0.0:6565")
-	#[argh(option, short = 'l')]
-	pub listen: Option<String>,
-
-	/// target to connect to (hostname:port)
-	#[argh(option, short = 'c')]
-	pub connect: Option<String>,
-
 	/// TLS certificate file
 	#[argh(option)]
 	pub cert: Option<PathBuf>,
@@ -58,7 +47,7 @@ pub struct WallhackCli {
 	#[argh(option, short = 't', default = "10")]
 	pub timeout: u64,
 
-	/// verbose output (-v for verbose, -vv for debug)
+	/// verbose output
 	#[argh(switch, short = 'v')]
 	pub verbose: bool,
 
@@ -70,44 +59,132 @@ pub struct WallhackCli {
 	#[argh(switch, short = 'q')]
 	pub quiet: bool,
 
-	/// exit node identifier for stable TUN naming (exit nodes only) If not
-	/// specified, a random ID is generated.
+	#[argh(subcommand)]
+	pub command: Option<Command>,
+}
+
+/// Subcommand that determines the node role.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand)]
+pub enum Command {
+	Entry(EntryCommand),
+	Exit(ExitCommand),
+	Relay(RelayCommand),
+}
+
+/// Entry node: creates TUN interface, routes traffic, runs interactive REPL.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "entry")]
+pub struct EntryCommand {
+	/// listen address for incoming connections (e.g. ":6565")
+	#[argh(option, short = 'l')]
+	pub listen: Option<String>,
+
+	/// connect to a peer (e.g. "host:6565") for reverse tunnels
+	#[argh(option, short = 'c')]
+	pub connect: Option<String>,
+
+	/// REST API address (e.g. "127.0.0.1:6566")
+	#[argh(option)]
+	pub api: Option<String>,
+
+	/// REST API username for basic auth
+	#[argh(option)]
+	pub api_user: Option<String>,
+
+	/// REST API password for basic auth
+	#[argh(option)]
+	pub api_pass: Option<String>,
+}
+
+/// Exit node: makes syscalls to the local network on behalf of the tunnel.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "exit")]
+pub struct ExitCommand {
+	/// listen address for incoming connections (e.g. ":443") for reverse tunnels
+	#[argh(option, short = 'l')]
+	pub listen: Option<String>,
+
+	/// connect to a peer (e.g. "host:6565")
+	#[argh(option, short = 'c')]
+	pub connect: Option<String>,
+
+	/// stable identifier for TUN naming; random if omitted
 	#[argh(option, short = 'i')]
 	pub exit_id: Option<String>,
 }
 
-impl WallhackCli {
-	/// Determine the node role based on flag combinations.
+/// Relay node: forwards traffic between upstream and downstream peers.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "relay")]
+pub struct RelayCommand {
+	/// listen address for downstream connections (e.g. ":6565")
+	#[argh(option, short = 'l')]
+	pub listen: Option<String>,
+
+	/// connect to upstream peer (e.g. "host:6565")
+	#[argh(option, short = 'c')]
+	pub connect: Option<String>,
+}
+
+// ============================================================================
+// Transport direction
+// ============================================================================
+
+/// The resolved transport direction for a node.
+#[derive(Debug, Clone)]
+pub enum TransportDir {
+	/// Node listens for incoming connections.
+	Listen(AddressSpec),
+	/// Node connects to a remote peer.
+	Connect(AddressSpec),
+}
+
+impl EntryCommand {
+	/// Resolve the transport direction.
 	///
-	/// - Entry: `--listen` only (or no args) - creates TUN, accepts exit nodes
-	/// - Exit: `--connect` only - connects to entry/relay, executes syscalls
-	/// - Relay: `--listen` AND `--connect` - forwards between upstream and
-	///   downstream
-	#[must_use]
-	pub fn node_role(&self) -> NodeRole {
-		let has_listen = self.listen.is_some();
-		let has_connect = self.connect.is_some();
-
-		match (has_listen, has_connect) {
-			// Entry: listen only, or no args (defaults to listen on :6565)
-			(true | false, false) => NodeRole::Entry,
-
-			// Relay: both listen and connect
-			(true, true) => NodeRole::Relay,
-
-			// Exit: connect only
-			(false, true) => NodeRole::Exit,
+	/// Defaults to `Listen(":6565")` when neither flag is provided.
+	///
+	/// # Errors
+	///
+	/// Returns error if both `--listen` and `--connect` are specified.
+	pub fn transport(&self) -> Result<TransportDir, String> {
+		match (&self.listen, &self.connect) {
+			(Some(_), Some(_)) => Err("entry requires exactly one of --listen or --connect".into()),
+			(Some(addr), None) => Ok(TransportDir::Listen(AddressSpec::parse(addr))),
+			(None, Some(addr)) => Ok(TransportDir::Connect(AddressSpec::parse(addr))),
+			(None, None) => Ok(TransportDir::Listen(AddressSpec::parse(":6565"))),
 		}
 	}
 
-	/// Returns the listen address, defaulting to ":6565" for entry nodes.
+	/// Returns the API address if specified, parsing to [`std::net::SocketAddr`].
 	#[must_use]
-	pub fn listen_addr(&self) -> &str {
-		self.listen.as_deref().unwrap_or(":6565")
+	pub fn api_addr(&self) -> Option<std::net::SocketAddr> {
+		self.api.as_ref().map(|addr| {
+			addr.parse()
+				.unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 6566)))
+		})
+	}
+}
+
+impl ExitCommand {
+	/// Resolve the transport direction.
+	///
+	/// No default — one of `--listen` or `--connect` is required.
+	///
+	/// # Errors
+	///
+	/// Returns error if neither or both flags are specified.
+	pub fn transport(&self) -> Result<TransportDir, String> {
+		match (&self.listen, &self.connect) {
+			(Some(_), Some(_)) => Err("exit requires exactly one of --listen or --connect".into()),
+			(Some(addr), None) => Ok(TransportDir::Listen(AddressSpec::parse(addr))),
+			(None, Some(addr)) => Ok(TransportDir::Connect(AddressSpec::parse(addr))),
+			(None, None) => Err("exit requires --listen or --connect".into()),
+		}
 	}
 
-	/// Returns the ID for exit nodes. Uses user-provided ID or generates a random
-	/// 8-character hex string.
+	/// Returns the exit node ID, generating a random one if not specified.
 	#[must_use]
 	pub fn exit_id(&self) -> String {
 		self.exit_id.clone().unwrap_or_else(|| {
@@ -119,7 +196,26 @@ impl WallhackCli {
 	}
 }
 
-/// Parse unified CLI from command line arguments.
+impl RelayCommand {
+	/// Resolve both transport directions.
+	///
+	/// Relay requires **both** `--listen` and `--connect`.
+	///
+	/// # Errors
+	///
+	/// Returns error if either flag is missing.
+	pub fn transport(&self) -> Result<(AddressSpec, AddressSpec), String> {
+		match (&self.connect, &self.listen) {
+			(Some(connect), Some(listen)) => {
+				Ok((AddressSpec::parse(connect), AddressSpec::parse(listen)))
+			}
+			(None, _) => Err("relay requires --connect (upstream peer)".into()),
+			(_, None) => Err("relay requires --listen (downstream port)".into()),
+		}
+	}
+}
+
+/// Parse CLI from command line arguments.
 #[must_use]
 pub fn parse_wallhack() -> WallhackCli {
 	argh::from_env()
@@ -179,19 +275,5 @@ impl AddressSpec {
 				protocol: Protocol::Udp,
 			}
 		}
-	}
-}
-
-impl WallhackCli {
-	/// Returns the parsed listen address spec.
-	#[must_use]
-	pub fn listen_spec(&self) -> AddressSpec {
-		AddressSpec::parse(self.listen.as_deref().unwrap_or(":6565"))
-	}
-
-	/// Returns the parsed connect address spec, if present.
-	#[must_use]
-	pub fn connect_spec(&self) -> Option<AddressSpec> {
-		self.connect.as_deref().map(AddressSpec::parse)
 	}
 }

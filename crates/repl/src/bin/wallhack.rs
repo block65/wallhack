@@ -1,42 +1,52 @@
-//! Unified wallhack binary entry point.
+//! Wallhack binary entry point.
 //!
 //! Usage:
-//!   wallhack                                    # Entry node with REPL (default)
-//!   wallhack --listen :7777                     # Entry node on custom port
-//!   wallhack --connect hostname:6565 --listen :7575 # Relay node
-//!   wallhack --connect hostname:6565                # Exit node
+//!   wallhack                                              # Entry, listen :6565
+//!   wallhack entry --listen :6565                         # Entry, listen
+//!   wallhack entry --connect host:443                     # Entry, reverse tunnel
+//!   wallhack exit --connect host:6565                     # Exit, connect
+//!   wallhack exit --listen :443                           # Exit, reverse tunnel
+//!   wallhack relay --connect upstream:443 --listen :6565  # Relay
 
 use anyhow::Result;
-use repl::{NodeRole, WallhackCli, parse_wallhack, run_entry, run_exit, run_relay};
+use repl::{Command, EntryCommand, parse_wallhack, run_entry, run_exit, run_relay};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
 	let cli = parse_wallhack();
 
-	// Setup tracing based on verbosity flags
 	setup_tracing(&cli);
 
-	let role = cli.node_role();
-
-	match role {
-		NodeRole::Entry => {
+	match &cli.command {
+		Some(Command::Entry(cmd)) => {
 			repl::info!("Starting as entry node");
-			run_entry(cli).await
+			run_entry(&cli, cmd).await
 		}
-		NodeRole::Relay => {
+		Some(Command::Relay(cmd)) => {
 			repl::info!("Starting as relay node");
-			run_relay(cli).await
+			run_relay(&cli, cmd).await
 		}
-		NodeRole::Exit => {
+		Some(Command::Exit(cmd)) => {
 			repl::info!("Starting as exit node");
-			run_exit(cli).await
+			run_exit(&cli, cmd).await
+		}
+		None => {
+			// Default: entry node listening on :6565
+			repl::info!("Starting as entry node (default)");
+			let cmd = EntryCommand {
+				listen: None,
+				connect: None,
+				api: None,
+				api_user: None,
+				api_pass: None,
+			};
+			run_entry(&cli, &cmd).await
 		}
 	}
 }
 
-fn setup_tracing(cli: &WallhackCli) {
-	// Determine default level based on CLI flags
+fn setup_tracing(cli: &repl::WallhackCli) {
 	let default_level = if cli.debug {
 		"debug"
 	} else if cli.verbose {
@@ -47,7 +57,6 @@ fn setup_tracing(cli: &WallhackCli) {
 		"warn"
 	};
 
-	// Build filter that respects RUST_LOG env var, falls back to CLI flags
 	let filter = EnvFilter::builder()
 		.with_default_directive(default_level.parse().expect("valid directive"))
 		.from_env_lossy();

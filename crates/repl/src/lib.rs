@@ -11,7 +11,7 @@ mod relay;
 #[cfg(feature = "color")]
 mod styles;
 
-pub use cli::{NodeRole, WallhackCli, parse_wallhack};
+pub use cli::{Command, EntryCommand, ExitCommand, RelayCommand, WallhackCli, parse_wallhack};
 pub use styles::OutputStyles;
 
 // ============================================================================
@@ -23,24 +23,24 @@ pub use styles::OutputStyles;
 /// # Errors
 ///
 /// Returns error if entry node setup or operation fails.
-pub async fn run_entry(cli: WallhackCli) -> anyhow::Result<()> {
-	entry::run(cli).await
+pub async fn run_entry(global: &WallhackCli, cmd: &EntryCommand) -> anyhow::Result<()> {
+	entry::run(global, cmd).await
 }
 
-/// Run as a relay node (connect + listen).
+/// Run as a relay node.
 ///
 /// # Errors
 ///
 /// Returns error if relay node setup or operation fails.
-pub async fn run_relay(cli: WallhackCli) -> anyhow::Result<()> {
-	relay::run(cli).await
+pub async fn run_relay(global: &WallhackCli, cmd: &RelayCommand) -> anyhow::Result<()> {
+	relay::run(global, cmd).await
 }
 
-/// Run as an exit node (connect only).
+/// Run as an exit node.
 ///
 /// # Errors
 ///
 /// Returns error if exit node setup or operation fails.
-pub async fn run_exit(cli: WallhackCli) -> anyhow::Result<()> {
-	exit::run(cli).await
+pub async fn run_exit(global: &WallhackCli, cmd: &ExitCommand) -> anyhow::Result<()> {
+	exit::run(global, cmd).await
 }

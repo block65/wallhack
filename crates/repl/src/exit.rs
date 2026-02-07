@@ -1,7 +1,8 @@
 //! Exit node implementation.
 //!
-//! The exit node connects to an upstream node (relay or entry) and processes
-//! incoming instructions by making syscalls to the local network.
+//! The exit node processes incoming instructions by making syscalls to the
+//! local network. It can either connect to an upstream peer (default) or
+//! listen for incoming connections (reverse tunnel).
 
 use std::{str::FromStr, sync::Arc, time::Duration};
 
@@ -22,7 +23,10 @@ use wallhack::{
 #[cfg(feature = "quic")]
 use wallhack::client::{self, config::ClientConfig, config::MtlsConfig};
 
-use crate::{WallhackCli, cli::Protocol};
+use crate::{
+	WallhackCli,
+	cli::{ExitCommand, Protocol, TransportDir},
+};
 
 /// Initial retry delay for connection attempts.
 const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -44,54 +48,177 @@ const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Run as an exit node.
 ///
-/// Connects to upstream and processes instructions using local syscalls.
-/// Retries connection forever until successful.
-/// Note: Exit nodes don't run a control server since they connect as clients.
-/// Control is available via the entry/relay node they connect to.
+/// Either connects to an upstream peer or listens for incoming connections
+/// (reverse tunnel). Processes instructions using local syscalls.
 ///
 /// # Errors
 ///
 /// Returns error if orchestrator fails (connection errors are retried).
-pub async fn run(cli: WallhackCli) -> Result<()> {
-	let connect_spec = cli.connect_spec().context("Exit node requires --connect")?;
-	let exit_id = cli.exit_id();
+pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
+	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
+	let exit_id = cmd.exit_id();
 
-	crate::info!("Exit node starting with exit_id: {}", exit_id);
-	crate::info!("Resolving {}", connect_spec.addr);
+	match transport {
+		TransportDir::Connect(spec) => {
+			crate::info!("Exit node starting with exit_id: {exit_id}");
+			crate::info!("Resolving {}", spec.addr);
 
-	// Parse and resolve target address
-	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
-	let dns_server = cli
-		.dns
-		.as_ref()
-		.map(|s| crate::dns::parse_str_to_addr(s))
-		.transpose()?;
+			let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
+			let dns_server = global
+				.dns
+				.as_ref()
+				.map(|s| crate::dns::parse_str_to_addr(s))
+				.transpose()?;
 
-	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
-	crate::verbose!("Resolved as {:?}", endpoint);
+			let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
+			crate::verbose!("Resolved as {endpoint:?}");
 
-	match connect_spec.protocol {
+			match spec.protocol {
+				Protocol::Udp => {
+					#[cfg(feature = "quic")]
+					{
+						run_quic_exit(global, endpoint, exit_id).await
+					}
+					#[cfg(not(feature = "quic"))]
+					{
+						anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
+					}
+				}
+				Protocol::Tcp => {
+					#[cfg(feature = "websocket")]
+					{
+						run_ws_exit(global, endpoint, exit_id).await
+					}
+					#[cfg(not(feature = "websocket"))]
+					{
+						anyhow::bail!(
+							"WebSocket support not compiled in (enable 'websocket' feature)"
+						)
+					}
+				}
+			}
+		}
+		TransportDir::Listen(spec) => run_exit_listen(global, cmd, &spec, exit_id).await,
+	}
+}
+
+/// Run exit node in listen mode (reverse tunnel).
+///
+/// Listens for an incoming connection from an entry node, then processes
+/// instructions using local syscalls.
+async fn run_exit_listen(
+	global: &WallhackCli,
+	_cmd: &ExitCommand,
+	spec: &crate::cli::AddressSpec,
+	exit_id: String,
+) -> Result<()> {
+	use wallhack::{
+		control::handler::HandlerConfig,
+		server::server::{Server, ServerOptions},
+	};
+
+	let addr = parse_listen_addr(&spec.addr)?;
+	let metrics = Arc::new(Metrics::default());
+
+	let server_options = ServerOptions {
+		handler_config: HandlerConfig::new(NodeRole::Exit),
+		metrics: Some(Arc::clone(&metrics)),
+		peers: None,
+		routes: None,
+	};
+
+	let server_config = build_server_config(global, addr);
+
+	crate::info!("Exit node {exit_id} listening on {addr}");
+
+	match spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_exit(&cli, endpoint, exit_id).await
+				let mut server =
+					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+				crate::info!("Listening on {addr} (QUIC/UDP)");
+				loop {
+					match server.accept(NodeRole::Exit).await {
+						Ok(Some(accept_result)) => {
+							crate::info!(
+								"Accepted connection from {}",
+								accept_result.client_ident()
+							);
+							let transport = accept_result.transport();
+							let adapter = SyscallExitAdapter::new();
+							let orchestrator =
+								Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
+							let stream_fut = run_stream_listener(transport);
+							let (instr, resp) = accept_result.channels();
+							tokio::select! {
+								result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
+									if let Err(e) = result {
+										crate::error!("Orchestrator error: {e}");
+									}
+								}
+								result = stream_fut => {
+									if let Err(e) = result {
+										crate::error!("Stream handler error: {e}");
+									}
+								}
+							}
+						}
+						Ok(None) => break,
+						Err(e) => {
+							crate::error!("Accept error: {e}");
+						}
+					}
+				}
 			}
 			#[cfg(not(feature = "quic"))]
-			{
-				anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
-			}
+			anyhow::bail!("QUIC transport not available (compile with --features quic)")
 		}
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_exit(&cli, endpoint, exit_id).await
+				let mut server =
+					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+				crate::info!("Listening on {addr} (WebSocket/TCP)");
+				loop {
+					match server.accept(NodeRole::Exit).await {
+						Ok(Some(accept_result)) => {
+							crate::info!(
+								"Accepted connection from {}",
+								accept_result.client_ident()
+							);
+							let transport = accept_result.transport();
+							let adapter = SyscallExitAdapter::new();
+							let orchestrator =
+								Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
+							let stream_fut = run_stream_listener(transport);
+							let (instr, resp) = accept_result.channels();
+							tokio::select! {
+								result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
+									if let Err(e) = result {
+										crate::error!("Orchestrator error: {e}");
+									}
+								}
+								result = stream_fut => {
+									if let Err(e) = result {
+										crate::error!("Stream handler error: {e}");
+									}
+								}
+							}
+						}
+						Ok(None) => break,
+						Err(e) => {
+							crate::error!("Accept error: {e}");
+						}
+					}
+				}
 			}
 			#[cfg(not(feature = "websocket"))]
-			{
-				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
-			}
+			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
 		}
 	}
+
+	Ok(())
 }
 
 /// Drive the exit node orchestrator with a connected client.
@@ -222,11 +349,11 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 
 #[cfg(feature = "quic")]
 async fn run_quic_exit(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
 	exit_id: String,
 ) -> Result<()> {
-	let client_config = build_quic_client_config(cli, endpoint, exit_id);
+	let client_config = build_quic_client_config(global, endpoint, exit_id);
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
 	loop {
@@ -249,7 +376,7 @@ async fn run_quic_exit(
 
 #[cfg(feature = "websocket")]
 async fn run_ws_exit(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
 	exit_id: String,
 ) -> Result<()> {
@@ -261,14 +388,14 @@ async fn run_ws_exit(
 	let client_config = WsClientConfig {
 		base: ClientConfig {
 			addr: endpoint,
-			hostname: cli.hostname.clone(),
+			hostname: global.hostname.clone(),
 			mtls: None,
 			exit_id: Some(exit_id),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
-		host_header: cli.hostname.clone(),
-		use_tls: cli.cert.is_some() || cli.key.is_some(),
+		host_header: global.hostname.clone(),
+		use_tls: global.cert.is_some() || global.key.is_some(),
 	};
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
@@ -292,24 +419,52 @@ async fn run_ws_exit(
 
 #[cfg(feature = "quic")]
 fn build_quic_client_config(
-	cli: &WallhackCli,
+	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
 	exit_id: String,
 ) -> ClientConfig {
-	let mtls = match (&cli.cert, &cli.key) {
+	let mtls = match (&global.cert, &global.key) {
 		(Some(cert), Some(key)) => Some(MtlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
-			ca_roots: cli.ca.clone(),
+			ca_roots: global.ca.clone(),
 		}),
 		_ => None,
 	};
 
 	ClientConfig {
 		addr: endpoint,
-		hostname: cli.hostname.clone(),
+		hostname: global.hostname.clone(),
 		mtls,
 		exit_id: Some(exit_id),
 		..Default::default()
 	}
+}
+
+fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
+	let full_addr = if let Some(port) = addr.strip_prefix(':') {
+		format!("[::]:{port}")
+	} else {
+		addr.to_string()
+	};
+
+	full_addr
+		.parse()
+		.with_context(|| format!("Invalid listen address: {full_addr}"))
+}
+
+fn build_server_config(
+	global: &WallhackCli,
+	addr: std::net::SocketAddr,
+) -> wallhack::server::config::ServerConfig {
+	let tls = match (&global.cert, &global.key) {
+		(Some(cert), Some(key)) => Some(wallhack::server::config::TlsConfig {
+			cert_pem_file: cert.clone(),
+			key_pem_file: key.clone(),
+			ca_roots: global.ca.clone(),
+		}),
+		_ => None,
+	};
+
+	wallhack::server::config::ServerConfig { listen: addr, tls }
 }
