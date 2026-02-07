@@ -10,6 +10,7 @@ message ControlRequest {
     DisconnectRequest disconnect = 4;
     RouteAddRequest route_add = 5;
     RouteRemoveRequest route_remove = 6;
+    RouteListRequest route_list = 7;
   }
 }
 
@@ -21,6 +22,7 @@ message ControlResponse {
     DisconnectResponse disconnect = 4;
     RouteAddResponse route_add = 5;
     RouteRemoveResponse route_remove = 6;
+    RouteListResponse route_list = 7;
     ErrorResponse error = 100;
   }
 }
@@ -56,10 +58,11 @@ message PeersResponse {
 
 message PeerInfo {
   string id = 1;
-  string remote_addr = 2;
-  string role = 3;  // "upstream", "downstream"
+  string addr = 2;
+  NodeRole role = 3;
   uint64 connected_at = 4;
   uint64 bytes_transferred = 5;
+  double latency_ms = 6;
 }
 
 message DisconnectRequest {
@@ -71,9 +74,11 @@ message DisconnectResponse {
 
 message RouteAddRequest {
   string cidr = 1;  // e.g., "10.0.0.0/8"
+  string peer_id = 2;
 }
 message RouteAddResponse {
   bool success = 1;
+  string message = 2;
 }
 
 message RouteRemoveRequest {
@@ -81,6 +86,18 @@ message RouteRemoveRequest {
 }
 message RouteRemoveResponse {
   bool success = 1;
+  string message = 2;
+}
+
+message RouteListRequest {}
+message RouteListResponse {
+  repeated RouteInfo routes = 1;
+}
+
+message RouteInfo {
+  string cidr = 1;
+  string peer_id = 2;
+  uint64 added_at_secs = 3;
 }
 
 message ErrorResponse {
