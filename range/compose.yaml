@@ -7,13 +7,11 @@ services:
 
   gateway-perimeter:
     build:
-      context: .
-      dockerfile: images/gateway/Dockerfile
+      context: ..
+      dockerfile: range/images/gateway/Dockerfile
     hostname: gateway-perimeter
     ports:
       - "2222:22"
-    volumes:
-      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
@@ -43,11 +41,10 @@ services:
         ipv4_address: 10.99.1.21
 
   attacker:
-    image: alpine:latest
+    build:
+      context: ..
+      dockerfile: range/images/attacker/Dockerfile
     hostname: attacker
-    command: sh -c "apk add --no-cache openssh-client curl nmap netcat-openbsd socat bash && tail -f /dev/null"
-    volumes:
-      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
     devices:
       - /dev/net/tun:/dev/net/tun
     cap_add:
@@ -72,11 +69,9 @@ services:
 
   gateway-office:
     build:
-      context: .
-      dockerfile: images/gateway/Dockerfile
+      context: ..
+      dockerfile: range/images/gateway/Dockerfile
     hostname: gateway-office
-    volumes:
-      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
@@ -125,11 +120,9 @@ services:
 
   gateway-datacenter:
     build:
-      context: .
-      dockerfile: images/gateway/Dockerfile
+      context: ..
+      dockerfile: range/images/gateway/Dockerfile
     hostname: gateway-datacenter
-    volumes:
-      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
@@ -192,11 +185,9 @@ services:
 
   gateway-management:
     build:
-      context: .
-      dockerfile: images/gateway-hardened/Dockerfile
+      context: ..
+      dockerfile: range/images/gateway-hardened/Dockerfile
     hostname: gateway-management
-    volumes:
-      - ../target/x86_64-unknown-linux-musl/release/wallhack:/usr/bin/wallhack:ro
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
