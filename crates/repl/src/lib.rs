@@ -4,6 +4,7 @@ pub mod cli;
 pub mod dns;
 pub mod output;
 pub mod repl_common;
+pub mod version;
 
 mod entry;
 mod exit;

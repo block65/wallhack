@@ -16,6 +16,12 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
 	let cli = parse_wallhack();
 
+	// Handle --version flag
+	if cli.version {
+		repl::version::print_version();
+		return Ok(());
+	}
+
 	setup_tracing(&cli);
 
 	match &cli.command {

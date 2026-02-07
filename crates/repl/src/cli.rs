@@ -59,6 +59,10 @@ pub struct WallhackCli {
 	#[argh(switch, short = 'q')]
 	pub quiet: bool,
 
+	/// print version information and exit
+	#[argh(switch)]
+	pub version: bool,
+
 	#[argh(subcommand)]
 	pub command: Option<Command>,
 }

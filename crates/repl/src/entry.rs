@@ -189,10 +189,10 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 /// Entry connects to a remote peer but still creates TUN and runs REPL.
 async fn run_entry_connect(
 	global: &WallhackCli,
-	cmd: &EntryCommand,
+	_cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
 	metrics: Arc<Metrics>,
-	peers: Arc<Registry>,
+	_peers: Arc<Registry>,
 	_sessions: SessionManager,
 ) -> Result<()> {
 	use std::{str::FromStr, time::Duration};

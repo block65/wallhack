@@ -45,6 +45,9 @@ rand = { version = "0.9", default-features = false, features = [
 ] }
 parking_lot = "0.12.5"
 
+[build-dependencies]
+built = { version = "0.7", features = ["git2", "chrono"] }
+
 
 [lints]
 workspace = true
