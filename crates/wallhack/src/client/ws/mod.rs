@@ -52,7 +52,7 @@ pub enum Error {
 /// A stream that may or may not be TLS-encrypted (client side).
 pub enum MaybeTlsStream {
 	Plain(TcpStream),
-	Tls(tokio_rustls::client::TlsStream<TcpStream>),
+	Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
 }
 
 impl AsyncRead for MaybeTlsStream {
@@ -134,6 +134,7 @@ impl WsClient {
 	/// # Errors
 	///
 	/// Returns an error if TLS configuration fails.
+	#[allow(clippy::result_large_err)]
 	pub fn new(config: WsClientConfig) -> Result<Self, Error> {
 		let tls_connector = if config.use_tls {
 			let tls_config = if let Some(ref mtls) = config.base.mtls {
@@ -162,6 +163,12 @@ impl WsClient {
 	/// # Errors
 	///
 	/// Returns an error if the connection fails.
+	///
+	/// # Panics
+	///
+	/// Panics if protobuf encoding of `ExitNodeHello` fails (should not happen
+	/// when encoding into a `Vec`).
+	#[allow(clippy::result_large_err)]
 	pub async fn connect(&mut self, role: NodeRole) -> Result<ConnectResult<WsTransport>, Error> {
 		let addr = self.config.base.addr;
 		let hostname = self
@@ -197,7 +204,7 @@ impl WsClient {
 				let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
 					.map_err(|_| Error::InvalidDnsName(hostname.clone()))?;
 				let tls_stream = connector.connect(server_name, tcp_stream).await?;
-				let (ws, _response) = client_async(&url, MaybeTlsStream::Tls(tls_stream)).await?;
+				let (ws, _response) = client_async(&url, MaybeTlsStream::Tls(Box::new(tls_stream))).await?;
 				ws
 			} else {
 				let (ws, _response) = client_async(&url, MaybeTlsStream::Plain(tcp_stream)).await?;
