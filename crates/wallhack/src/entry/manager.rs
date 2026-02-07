@@ -1,5 +1,12 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+	collections::HashMap,
+	net::SocketAddr,
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
+	time::Duration,
+};
 
 use netstack::async_stack::{Netstack, udp_socket::UdpSocketAny};
 use smoltcp::phy::Device;
@@ -93,7 +100,8 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 					let now = Instant::now();
 					self.recent_connections.push(now);
 					self.recent_connections.retain(|t| now.duration_since(*t) < RATE_WINDOW);
-					let rate = self.recent_connections.len() as f64 / RATE_WINDOW.as_secs_f64();
+					let count = u32::try_from(self.recent_connections.len()).unwrap_or(u32::MAX);
+					let rate = f64::from(count) / RATE_WINDOW.as_secs_f64();
 					if rate > HIGH_RATE_THRESHOLD && !self.rate_warned.swap(true, Ordering::Relaxed) {
 						tracing::warn!("⚠️  High connection rate detected ({rate:.0}/s)!");
 						tracing::warn!("💡 Tip: For scanning (nmap, masscan), use --scan mode for better performance.");
