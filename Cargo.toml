@@ -23,3 +23,5 @@ opt-level = 0
 strip = true
 opt-level = 3 # all
 lto = true
+panic = "abort"
+codegen-units = 1
