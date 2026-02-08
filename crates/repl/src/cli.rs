@@ -6,7 +6,7 @@
 //! # Examples
 //!
 //! ```text
-//! wallhack                                         # entry, listen :6565
+//! wallhack                                         # entry, listen default port
 //! wallhack entry --listen :6565                    # entry, listen
 //! wallhack entry --connect host:443                # entry, reverse tunnel
 //! wallhack exit --connect host:6565                # exit, connect
@@ -20,7 +20,7 @@ use argh::FromArgs;
 
 /// Network pivoting and tunneling tool.
 ///
-/// Defaults to entry mode listening on :6565 when invoked without a subcommand.
+/// Defaults to entry mode listening on the default port when invoked without a subcommand.
 #[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
 #[derive(FromArgs, Debug)]
 pub struct WallhackCli {
@@ -123,11 +123,11 @@ pub struct ExitCommand {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "relay")]
 pub struct RelayCommand {
-	/// listen address for downstream connections (e.g. ":6565")
+	/// listen address for relay connections (e.g. ":6565")
 	#[argh(option, short = 'l')]
 	pub listen: Option<String>,
 
-	/// connect to upstream peer (e.g. "host:6565")
+	/// connect to a peer (e.g. "host:6565")
 	#[argh(option, short = 'c')]
 	pub connect: Option<String>,
 }
@@ -153,7 +153,7 @@ pub enum TransportDir {
 impl EntryCommand {
 	/// Resolve the transport direction.
 	///
-	/// Defaults to `Listen(":6565")` when neither flag is provided.
+	/// Defaults to listening on the default port when neither flag is provided.
 	///
 	/// # Errors
 	///
@@ -163,7 +163,10 @@ impl EntryCommand {
 			(Some(_), Some(_)) => Err("entry requires exactly one of --listen or --connect".into()),
 			(Some(addr), None) => Ok(TransportDir::Listen(AddressSpec::parse(addr))),
 			(None, Some(addr)) => Ok(TransportDir::Connect(AddressSpec::parse(addr))),
-			(None, None) => Ok(TransportDir::Listen(AddressSpec::parse(":6565"))),
+			(None, None) => {
+				let default_port = wallhack::server::config::DEFAULT_LISTEN_PORT;
+				Ok(TransportDir::Listen(AddressSpec::parse(&format!(":{default_port}"))))
+			}
 		}
 	}
 

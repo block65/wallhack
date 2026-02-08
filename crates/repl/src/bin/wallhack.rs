@@ -1,7 +1,7 @@
 //! Wallhack binary entry point.
 //!
 //! Usage:
-//!   wallhack                                              # Entry, listen :6565
+//!   wallhack                                              # Entry, listen default port
 //!   wallhack entry --listen :6565                         # Entry, listen
 //!   wallhack entry --connect host:443                     # Entry, reverse tunnel
 //!   wallhack exit --connect host:6565                     # Exit, connect
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 			run_exit(&cli, cmd).await
 		}
 		None => {
-			// Default: entry node listening on :6565
+			// Default: entry node listening on default port
 			repl::info!("Starting as entry node (default)");
 			let cmd = EntryCommand {
 				listen: None,
