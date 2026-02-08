@@ -1,7 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use protobuf::v2::{EntryNodeInstruction, ExitNodeResponse};
+use protobuf::{
+	control_v2::{ControlMessage, control_message},
+	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+};
 use quinn::{IdleTimeout, crypto::rustls::QuicServerConfig};
+use transport::Transport;
 
 use crate::{
 	NodeRole,
@@ -100,6 +104,51 @@ impl Server for QuicServer {
 		// Wrap connection in transport abstraction
 		let transport = Arc::new(QuicTransport::new(connection));
 
+		// Accept first bidi stream — this is the control stream.
+		let Some(mut control_stream) = transport.accept_bi().await.map_err(|e| {
+			std::io::Error::other(format!("failed to accept control bidi stream: {e}"))
+		})?
+		else {
+			return Err(Error::Io(std::io::Error::other(
+				"transport closed before control stream accepted",
+			)));
+		};
+
+		// Read the first message — must be a ControlMessage::Hello (with timeout).
+		let hello_result = tokio::time::timeout(
+			Duration::from_secs(10),
+			bridge::read_length_delimited::<ControlMessage, _>(
+				&mut control_stream,
+				bridge::CONTROL_MTU,
+			),
+		)
+		.await;
+
+		let exit_hello: Option<ExitNodeHello> = match hello_result {
+			Ok(Ok(msg)) => match msg.message {
+				Some(control_message::Message::Hello(hello)) => {
+					tracing::info!(
+						"Received Hello: id={}, version={}",
+						hello.exit_id,
+						hello.version,
+					);
+					Some(hello)
+				}
+				other => {
+					tracing::warn!("Expected Hello as first control message, got: {other:?}");
+					None
+				}
+			},
+			Ok(Err(e)) => {
+				tracing::warn!("Failed to read Hello from control stream: {e}");
+				None
+			}
+			Err(_elapsed) => {
+				tracing::warn!("Timed out waiting for Hello on control stream");
+				None
+			}
+		};
+
 		// Get or create shared metrics
 		let metrics = self
 			.options
@@ -110,11 +159,10 @@ impl Server for QuicServer {
 		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
 		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
-		// Create oneshot channel for ExitNodeHello
-		let (exit_hello_tx, exit_hello_rx) = tokio::sync::oneshot::channel();
+		// Create control channel for injecting outgoing control messages
+		let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
 
-		// Task 0: Control stream handler
-		let transport_ctrl = Arc::clone(&transport);
+		// Spawn control stream task with handler
 		let handler_config = self.options.handler_config.clone();
 		let metrics_ctrl = Arc::clone(&metrics);
 		let peers_ctrl = self
@@ -130,20 +178,27 @@ impl Server for QuicServer {
 
 		tokio::spawn(async move {
 			let handler = Handler::new(handler_config, metrics_ctrl, peers_ctrl, routes_ctrl);
-			if let Err(e) = bridge::run_control_handler(&*transport_ctrl, &handler).await {
-				tracing::debug!("Control handler finished: {e}");
-			}
+			let exit = bridge::run_control_loop(
+				&mut control_stream,
+				&mut control_rx,
+				Some(&handler),
+				None, // Hello already read above
+				None, // pong handled inline
+				None, // server doesn't issue ControlRequests
+				Duration::from_secs(30),
+			)
+			.await;
+			tracing::debug!("Control stream finished: {exit:?}");
 		});
 
-		// Task 1: Incoming data handler is now spawned by the caller (connection handler)
-		// so it can inject pong channels for latency measurement.
+		// Data tasks are NOT spawned here — the caller does that after PSK validation.
 		Ok(Some(AcceptResult::with_exit_hello(
 			Arc::clone(&transport),
 			(instructions, responses),
 			remote_addr,
 			metrics,
-			exit_hello_tx,
-			exit_hello_rx,
+			exit_hello,
+			control_tx,
 		)))
 	}
 

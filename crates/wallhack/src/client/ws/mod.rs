@@ -9,11 +9,12 @@ use std::{
 	task::{Context, Poll},
 };
 
-use protobuf::v2::{
-	EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message,
+use protobuf::{
+	control_v2::{ControlMessage, control_message},
+	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
 };
 use tokio::{
-	io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf},
+	io::{AsyncRead, AsyncWrite, ReadBuf},
 	net::TcpStream,
 };
 use tokio_rustls::TlsConnector;
@@ -160,11 +161,6 @@ impl WsClient {
 	/// # Errors
 	///
 	/// Returns an error if the connection fails.
-	///
-	/// # Panics
-	///
-	/// Panics if protobuf encoding of `ExitNodeHello` fails (should not happen
-	/// when encoding into a `Vec`).
 	#[allow(clippy::result_large_err)]
 	pub async fn connect(&mut self, role: NodeRole) -> Result<ConnectResult<WsTransport>, Error> {
 		let addr = self.config.base.addr;
@@ -223,74 +219,97 @@ impl WsClient {
 			}
 		});
 
-		// Send ExitNodeHello if we have an exit_id (exit nodes)
+		// Create control channel
+		let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
+
+		// If exit node, send Hello via the control stream
 		if let Some(ref exit_id) = self.config.base.exit_id {
-			tracing::debug!("Sending ExitNodeHello with id: {}", exit_id);
-			let hello = TunnelMessage {
-				message: Some(tunnel_message::Message::ExitNodeHello(ExitNodeHello {
+			tracing::debug!("Queuing ExitNodeHello with id: {}", exit_id);
+			let hello = ControlMessage {
+				message: Some(control_message::Message::Hello(ExitNodeHello {
 					exit_id: exit_id.clone(),
 					version: env!("CARGO_PKG_VERSION").to_string(),
 					auth_token: self.config.base.psk.clone().unwrap_or_default(),
 				})),
 			};
-			let mut send = transport
-				.open_uni()
-				.await
-				.map_err(|e| Error::Io(std::io::Error::other(e)))?;
-			bridge::write_length_delimited(&mut send, &hello)
-				.await
-				.map_err(|e| Error::Io(std::io::Error::other(e)))?;
-			send.shutdown().await.map_err(Error::Io)?;
-			tracing::debug!("ExitNodeHello sent successfully");
+			let _ = control_tx.send(hello).await;
 		}
+
+		// Spawn control stream task
+		let transport_ctrl = Arc::clone(&transport);
+		let control_handle = tokio::spawn(async move {
+			match bridge::run_control_stream_initiator(
+				&*transport_ctrl,
+				&mut control_rx,
+				None,
+				None,
+				None,
+				std::time::Duration::from_secs(30),
+			)
+			.await
+			{
+				Ok(exit) => tracing::debug!("Control stream finished: {exit:?}"),
+				Err(e) => tracing::debug!("Control stream error: {e}"),
+			}
+		});
 
 		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
 		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
-		// Task 1: Incoming data handler
+		// Data task 1: Incoming data
 		let transport_data = Arc::clone(&transport);
 		let instructions_tx = instructions.clone();
 		let responses_tx = responses.clone();
 
 		let incoming_handle = tokio::spawn(async move {
-			if let Err(e) = bridge::run_incoming_data(
-				&*transport_data,
-				&instructions_tx,
-				&responses_tx,
-				None,
-				None,
-			)
-			.await
-			{
-				tracing::debug!("Incoming data handler finished: {e}");
+			match transport_data.accept_uni().await {
+				Ok(Some(mut recv)) => {
+					if let Err(e) =
+						bridge::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
+					{
+						tracing::debug!("Data-in handler finished: {e}");
+					}
+				}
+				Ok(None) => tracing::debug!("Transport closed before data-in stream accepted"),
+				Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
 			}
 		});
 
-		// Task 2: Outgoing handler based on role
+		// Data task 2: Outgoing data based on role
 		let outgoing_handle = match role {
 			NodeRole::Entry | NodeRole::Relay => {
-				tracing::debug!("Listening for instructions.");
+				tracing::debug!("Opening data-out stream for instructions");
 				let transport_out = Arc::clone(&transport);
 				let instructions_tx = instructions.clone();
 
 				tokio::spawn(async move {
-					if let Err(e) =
-						bridge::run_outgoing_instructions(&*transport_out, &instructions_tx).await
-					{
-						tracing::debug!("Outgoing instructions handler finished: {e}");
+					match transport_out.open_uni().await {
+						Ok(mut send) => {
+							if let Err(e) =
+								bridge::run_data_out_instructions(&mut send, &instructions_tx).await
+							{
+								tracing::debug!("Data-out instructions handler finished: {e}");
+							}
+						}
+						Err(e) => tracing::debug!("Failed to open data-out stream: {e}"),
 					}
 				})
 			}
 			NodeRole::Exit => {
-				tracing::debug!("Listening for responses");
+				tracing::debug!("Opening data-out stream for responses");
 				let transport_out = Arc::clone(&transport);
 				let responses_tx = responses.clone();
 
 				tokio::spawn(async move {
-					if let Err(e) =
-						bridge::run_outgoing_responses(&*transport_out, &responses_tx).await
-					{
-						tracing::debug!("Outgoing responses handler finished: {e}");
+					match transport_out.open_uni().await {
+						Ok(mut send) => {
+							if let Err(e) =
+								bridge::run_data_out_responses(&mut send, &responses_tx).await
+							{
+								tracing::debug!("Data-out responses handler finished: {e}");
+							}
+						}
+						Err(e) => tracing::debug!("Failed to open data-out stream: {e}"),
 					}
 				})
 			}
@@ -299,6 +318,7 @@ impl WsClient {
 		let tasks = ConnectionTasks {
 			incoming: incoming_handle,
 			outgoing: outgoing_handle,
+			control: control_handle,
 		};
 
 		Ok(ConnectResult::new(
@@ -306,6 +326,7 @@ impl WsClient {
 			(instructions, responses),
 			remote_addr_str,
 			tasks,
+			control_tx,
 		))
 	}
 }
