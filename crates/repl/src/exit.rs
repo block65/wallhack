@@ -114,6 +114,9 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let exit_id = cmd.exit_id();
 	let metrics = Arc::new(Metrics::default());
+	let psk = global.resolve_psk();
+	let accept_fingerprint = cmd.accept_fingerprint.clone();
+	let insecure = cmd.insecure;
 
 	// Parse initial transport config
 	let (mut connect_spec, mut listen_spec) = match transport {
@@ -149,6 +152,9 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 					&metrics,
 					&mut repl_rx,
 					printer.as_ref(),
+					psk.clone(),
+					accept_fingerprint.clone(),
+					insecure,
 				)
 				.await
 			}
@@ -200,6 +206,9 @@ async fn run_connect_mode(
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
+	psk: Option<String>,
+	accept_fingerprint: Option<String>,
+	insecure: bool,
 ) -> Result<ExitAction> {
 	crate::info!("Resolving {}", spec.addr);
 
@@ -217,7 +226,18 @@ async fn run_connect_mode(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_exit(global, endpoint, exit_id, metrics, repl_rx, printer).await
+				run_quic_exit(
+					global,
+					endpoint,
+					exit_id,
+					metrics,
+					repl_rx,
+					printer,
+					psk,
+					accept_fingerprint,
+					insecure,
+				)
+				.await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -227,7 +247,18 @@ async fn run_connect_mode(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_exit(global, endpoint, exit_id, metrics, repl_rx, printer).await
+				run_ws_exit(
+					global,
+					endpoint,
+					exit_id,
+					metrics,
+					repl_rx,
+					printer,
+					psk,
+					accept_fingerprint,
+					insecure,
+				)
+				.await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -363,6 +394,10 @@ where
 						}
 						let transport = accept_result.transport();
 						let adapter = SyscallExitAdapter::new();
+						let _reaper = adapter.start_reaper(
+							std::time::Duration::from_secs(60),
+							std::time::Duration::from_secs(300),
+						);
 						let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 						let stream_fut = run_stream_listener(transport);
 						let (instr, resp) = accept_result.channels();
@@ -518,6 +553,10 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 
 	// Create syscall adapter for local network access
 	let adapter = SyscallExitAdapter::new();
+	let _reaper = adapter.start_reaper(
+		std::time::Duration::from_secs(60),
+		std::time::Duration::from_secs(300),
+	);
 	let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 
 	let transport = connect_result.transport();
@@ -761,8 +800,23 @@ async fn run_quic_exit(
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
+	psk: Option<String>,
+	accept_fingerprint: Option<String>,
+	insecure: bool,
 ) -> Result<ExitAction> {
-	let client_config = build_quic_client_config(global, endpoint, exit_id.to_string());
+	let client_config = build_quic_client_config(
+		global,
+		endpoint,
+		exit_id.to_string(),
+		psk.clone(),
+		accept_fingerprint.clone(),
+	);
+
+	if !insecure && psk.is_none() && accept_fingerprint.is_none() {
+		eprintln!("WARNING: Connecting without authentication or certificate verification.");
+		eprintln!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
+	}
+
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
 	let peer_addr = endpoint.to_string();
@@ -818,11 +872,19 @@ async fn run_ws_exit(
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
+	psk: Option<String>,
+	accept_fingerprint: Option<String>,
+	insecure: bool,
 ) -> Result<ExitAction> {
 	use wallhack::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
 	};
+
+	if !insecure && psk.is_none() && accept_fingerprint.is_none() {
+		eprintln!("WARNING: Connecting without authentication or certificate verification.");
+		eprintln!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
+	}
 
 	let client_config = WsClientConfig {
 		base: ClientConfig {
@@ -830,6 +892,8 @@ async fn run_ws_exit(
 			hostname: global.hostname.clone(),
 			mtls: None,
 			exit_id: Some(exit_id.to_string()),
+			psk,
+			accept_fingerprint,
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -888,6 +952,8 @@ fn build_quic_client_config(
 	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
 	exit_id: String,
+	psk: Option<String>,
+	accept_fingerprint: Option<String>,
 ) -> ClientConfig {
 	let mtls = match (&global.cert, &global.key) {
 		(Some(cert), Some(key)) => Some(MtlsConfig {
@@ -903,6 +969,8 @@ fn build_quic_client_config(
 		hostname: global.hostname.clone(),
 		mtls,
 		exit_id: Some(exit_id),
+		psk,
+		accept_fingerprint,
 		..Default::default()
 	}
 }
@@ -923,7 +991,8 @@ async fn run_quic_relay_capability(
 	};
 
 	// Connect to peer
-	let client_config = build_quic_client_config(global, peer_addr, String::new());
+	let psk = global.resolve_psk();
+	let client_config = build_quic_client_config(global, peer_addr, String::new(), psk, None);
 	let mut client = client::quic::QuicClient::try_new(client_config)?;
 	let connect_result = client.connect(NodeRole::Exit).await?;
 
@@ -1053,12 +1122,14 @@ async fn run_ws_relay_capability(
 	};
 
 	// Connect to peer
+	let psk = global.resolve_psk();
 	let client_config = WsClientConfig {
 		base: ClientConfig {
 			addr: peer_addr,
 			hostname: global.hostname.clone(),
 			mtls: None,
 			exit_id: None,
+			psk,
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -1253,7 +1324,12 @@ fn build_server_config(
 		_ => None,
 	};
 
-	wallhack::server::config::ServerConfig { listen: addr, tls }
+	wallhack::server::config::ServerConfig {
+		listen: addr,
+		tls,
+		psk: global.resolve_psk(),
+		max_peers: None,
+	}
 }
 
 /// Parse a line into an exit REPL command.

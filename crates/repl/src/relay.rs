@@ -71,11 +71,24 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 	);
 	println!("Connecting to upstream: {upstream_addr}");
 
+	// Print warning if no auth configured
+	let psk = global.resolve_psk();
+	if psk.is_none() && cmd.accept_fingerprint.is_none() && !cmd.insecure {
+		println!("WARNING: Connecting without authentication or certificate verification.");
+		println!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
+	}
+
 	match connect_spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let upstream_client = connect_quic_upstream(global, upstream_addr).await?;
+				let upstream_client = connect_quic_upstream(
+					global,
+					upstream_addr,
+					psk.as_deref(),
+					cmd.accept_fingerprint.as_deref(),
+				)
+				.await?;
 				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
 				crate::info!("Connected to upstream (QUIC)");
 				run_downstream(
@@ -96,7 +109,13 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				let upstream_client = connect_ws_upstream(global, upstream_addr).await?;
+				let upstream_client = connect_ws_upstream(
+					global,
+					upstream_addr,
+					psk.as_deref(),
+					cmd.accept_fingerprint.as_deref(),
+				)
+				.await?;
 				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
 				crate::info!("Connected to upstream (WebSocket)");
 				run_downstream(
@@ -213,11 +232,15 @@ fn bridge_downstream<T: wallhack::transport::Transport>(
 async fn connect_quic_upstream(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
+	psk: Option<&str>,
+	accept_fingerprint: Option<&str>,
 ) -> Result<ConnectResult<wallhack::transport::quic::QuicTransport>> {
 	let client_config = client::config::ClientConfig {
 		addr,
 		hostname: global.hostname.clone(),
 		mtls: None,
+		psk: psk.map(|s| s.to_string()),
+		accept_fingerprint: accept_fingerprint.map(|s| s.to_string()),
 		..Default::default()
 	};
 
@@ -246,6 +269,8 @@ async fn connect_quic_upstream(
 async fn connect_ws_upstream(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
+	psk: Option<&str>,
+	accept_fingerprint: Option<&str>,
 ) -> Result<ConnectResult<wallhack::transport::ws::WsTransport>> {
 	use wallhack::client::{
 		config::ClientConfig,
@@ -257,6 +282,8 @@ async fn connect_ws_upstream(
 			addr,
 			hostname: global.hostname.clone(),
 			mtls: None,
+			psk: psk.map(|s| s.to_string()),
+			accept_fingerprint: accept_fingerprint.map(|s| s.to_string()),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -370,5 +397,10 @@ fn build_server_config(
 		_ => None,
 	};
 
-	server::config::ServerConfig { listen: addr, tls }
+	server::config::ServerConfig {
+		listen: addr,
+		tls,
+		psk: global.resolve_psk(),
+		max_peers: None,
+	}
 }
