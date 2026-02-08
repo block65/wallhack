@@ -3,7 +3,7 @@ pub mod tcp_listener_any;
 pub mod tcp_stream;
 pub mod udp_socket;
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -15,6 +15,11 @@ use smoltcp::{
 use tokio::{sync::Notify, task::JoinHandle};
 
 use crate::inner::{InnerStack, peek_device::PeekDevice};
+
+/// Factory for readiness futures. Called each poll iteration to get a future
+/// that resolves when the underlying device has data available.
+pub type ReadinessFn =
+	Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Shared state between the poll loop and async socket handles.
 ///
@@ -55,6 +60,7 @@ pub struct Netstack<D: Device + Send + 'static> {
 	tcp_ports: Arc<Mutex<HashSet<u16>>>,
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
 	jit_notify: Arc<Notify>,
+	readable_fn: Option<ReadinessFn>,
 }
 
 impl<D: Device + Send + 'static> Netstack<D> {
@@ -83,6 +89,7 @@ impl<D: Device + Send + 'static> Netstack<D> {
 			tcp_ports: Arc::new(Mutex::new(HashSet::new())),
 			udp_ports: Arc::new(Mutex::new(HashSet::new())),
 			jit_notify: Arc::new(Notify::new()),
+			readable_fn: None,
 		}
 	}
 
@@ -104,6 +111,19 @@ impl<D: Device + Send + 'static> Netstack<D> {
 		self.restart_poll_loop();
 	}
 
+	/// Set a readiness callback for the underlying device.
+	///
+	/// When set, the poll loop will await this callback instead of sleeping
+	/// 1ms between iterations. This eliminates CPU-wasting busy polling when
+	/// the device has no data available.
+	pub fn set_readable_fn(&mut self, f: ReadinessFn)
+	where
+		D: PeekDevice,
+	{
+		self.readable_fn = Some(f);
+		self.restart_poll_loop();
+	}
+
 	fn restart_poll_loop(&mut self)
 	where
 		D: PeekDevice,
@@ -115,8 +135,9 @@ impl<D: Device + Send + 'static> Netstack<D> {
 		let tcp_ports = Arc::clone(&self.tcp_ports);
 		let udp_ports = Arc::clone(&self.udp_ports);
 		let notify = Arc::clone(&self.jit_notify);
+		let readable_fn = self.readable_fn.clone();
 		self.poll_handle = tokio::spawn(poll_loop_jit(
-			shared, jit_tcp, jit_udp, tcp_ports, udp_ports, notify,
+			shared, jit_tcp, jit_udp, tcp_ports, udp_ports, notify, readable_fn,
 		));
 		self.wake();
 	}
@@ -235,6 +256,7 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 	tcp_ports: Arc<Mutex<HashSet<u16>>>,
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
 	notify: Arc<Notify>,
+	readable_fn: Option<ReadinessFn>,
 ) {
 	let mut prune_counter: u32 = 0;
 	loop {
@@ -296,17 +318,26 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 				tokio::task::yield_now().await;
 			}
 			Some(d) => {
-				// Poll at the earlier of the smoltcp deadline or 1ms, since new
-				// packets may arrive on the TUN device requiring JIT binding.
+				// Wait for the earlier of: smoltcp deadline, device readiness, or notify
 				tokio::select! {
-					() = tokio::time::sleep(d.min(tokio::time::Duration::from_millis(1))) => {}
+					() = async {
+						match &readable_fn {
+							Some(f) => f().await,
+							None => tokio::time::sleep(d.min(tokio::time::Duration::from_millis(1))).await,
+						}
+					} => {}
 					() = shared.notify.notified() => {}
 				}
 			}
 			None => {
-				// No smoltcp deadline — wake on notify or check for new packets
+				// No smoltcp deadline — wait for device readiness or notify
 				tokio::select! {
-					() = tokio::time::sleep(tokio::time::Duration::from_millis(1)) => {}
+					() = async {
+						match &readable_fn {
+							Some(f) => f().await,
+							None => tokio::time::sleep(tokio::time::Duration::from_millis(1)).await,
+						}
+					} => {}
 					() = shared.notify.notified() => {}
 				}
 			}

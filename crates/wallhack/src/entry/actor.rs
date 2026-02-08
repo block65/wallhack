@@ -1,9 +1,8 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use parking_lot::Mutex;
-
-use netstack::{async_stack::Netstack, config::StackConfig};
+use netstack::{async_stack::Netstack, async_stack::ReadinessFn, config::StackConfig};
 use smoltcp::wire::{IpCidr, Ipv4Address, Ipv6Address};
+use tokio::io::unix::AsyncFd;
 use tun::{AbstractDevice, Configuration, Device};
 
 #[derive(Debug, thiserror::Error)]
@@ -18,6 +17,7 @@ pub enum Error {
 pub struct TunActor {
 	pub name: String,
 	stack: Netstack<SmoltcpTunDevice>,
+	async_device: Arc<AsyncFd<Device>>,
 }
 
 impl TunActor {
@@ -35,7 +35,10 @@ impl TunActor {
 		device.set_nonblock()?;
 		let name = device.tun_name()?;
 		let mtu = device.mtu().unwrap_or(1500) as usize;
-		let smoltcp_dev = SmoltcpTunDevice::new(device, mtu)?;
+
+		// Wrap the TUN device in AsyncFd for epoll-based readiness notification.
+		let async_device = Arc::new(AsyncFd::new(device)?);
+		let smoltcp_dev = SmoltcpTunDevice::new(Arc::clone(&async_device), mtu);
 
 		// For AnyIP to work, smoltcp needs:
 		// 1. An IP address on the interface (we use 0.0.0.0/0 as a wildcard)
@@ -52,15 +55,32 @@ impl TunActor {
 
 		let stack = Netstack::new(smoltcp_dev, stack_config);
 
-		Ok(Self { name, stack })
+		Ok(Self {
+			name,
+			stack,
+			async_device,
+		})
 	}
 
 	pub fn stack(&mut self) -> &mut Netstack<SmoltcpTunDevice> {
 		&mut self.stack
 	}
 
+	/// Consume the actor, returning the netstack with an epoll-based readiness
+	/// callback already configured. This replaces the 1ms sleep poll with
+	/// proper fd readiness notification.
 	#[must_use]
-	pub fn into_stack(self) -> Netstack<SmoltcpTunDevice> {
+	pub fn into_stack(mut self) -> Netstack<SmoltcpTunDevice> {
+		let fd = self.async_device;
+		let readiness_fn: ReadinessFn = Arc::new(move || {
+			let fd = Arc::clone(&fd);
+			Box::pin(async move {
+				if let Ok(mut guard) = fd.readable().await {
+					guard.clear_ready();
+				}
+			})
+		});
+		self.stack.set_readable_fn(readiness_fn);
 		self.stack
 	}
 }
@@ -90,28 +110,23 @@ fn random_iface_name() -> String {
 }
 
 pub struct SmoltcpTunDevice {
-	inner: Arc<Mutex<Device>>,
+	inner: Arc<AsyncFd<Device>>,
 	mtu: usize,
 	pending: VecDeque<Vec<u8>>,
 }
 
 impl SmoltcpTunDevice {
-	pub fn new(inner: Device, mtu: usize) -> Result<Self, Error> {
-		Ok(Self {
-			inner: Arc::new(Mutex::new(inner)),
+	fn new(inner: Arc<AsyncFd<Device>>, mtu: usize) -> Self {
+		Self {
+			inner,
 			mtu,
 			pending: VecDeque::new(),
-		})
+		}
 	}
 
 	fn read_packet(&self, mtu: usize) -> std::io::Result<Option<Vec<u8>>> {
 		let mut buf = vec![0u8; mtu];
-		// Device here is tun::Device (platform specific), which implements Read
-		// on Unix via AsRawFd/etc, but the `tun` crate exposes `recv` (which uses read internally).
-		// Reverting to `recv` but ensuring we're importing the trait if needed,
-		// though `recv` is an inherent method on `Device` usually.
-		let inner = self.inner.lock();
-		match inner.recv(&mut buf) {
+		match self.inner.get_ref().recv(&mut buf) {
 			Ok(0) => Ok(None),
 			Ok(n) => {
 				buf.truncate(n);
@@ -217,7 +232,7 @@ impl smoltcp::phy::RxToken for TunRxToken {
 }
 
 pub struct TunTxToken {
-	inner: Arc<Mutex<Device>>,
+	inner: Arc<AsyncFd<Device>>,
 }
 
 impl smoltcp::phy::TxToken for TunTxToken {
@@ -227,8 +242,7 @@ impl smoltcp::phy::TxToken for TunTxToken {
 	{
 		let mut buf = vec![0u8; len];
 		let result = f(&mut buf);
-		let inner = self.inner.lock();
-		if let Err(e) = inner.send(&buf)
+		if let Err(e) = self.inner.get_ref().send(&buf)
 			&& e.kind() != std::io::ErrorKind::WouldBlock
 		{
 			tracing::warn!("tun send failed: {e}");
