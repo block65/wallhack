@@ -593,7 +593,9 @@ impl<A: ExitAdapter> Orchestrator<A> {
 					});
 				}
 
-				None => todo!(),
+				None => {
+					tracing::warn!("Received instruction with no variant set, ignoring");
+				}
 			}
 		}
 	}

@@ -152,13 +152,17 @@ impl SyscallExitAdapter {
 	}
 
 	pub fn tcp_listen_impl(&self, _set: SocketSet) -> Result<TcpListenResponse, RuntimeError> {
-		todo!("Implement tcp_listen_impl");
+		Err(io::Error::new(io::ErrorKind::Unsupported, "tcp_listen not yet implemented").into())
 	}
 
 	pub fn tcp_listen_close_impl(
 		&self,
 		_set: SocketSet,
 	) -> Result<TcpListenCloseResponse, RuntimeError> {
-		todo!("Implement tcp_listen_close_impl");
+		Err(io::Error::new(
+			io::ErrorKind::Unsupported,
+			"tcp_listen_close not yet implemented",
+		)
+		.into())
 	}
 }
