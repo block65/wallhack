@@ -24,6 +24,12 @@ pub struct ClientConfig {
 	/// Identifier for stable TUN naming (exit nodes only).
 	/// If set, sent to entry node via `ExitNodeHello` message.
 	pub exit_id: Option<String>,
+
+	/// Pre-shared key for tunnel authentication.
+	pub psk: Option<String>,
+
+	/// Expected server certificate fingerprint (TOFU).
+	pub accept_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +53,8 @@ impl Default for ClientConfig {
 			mtls: None,
 			bind: (DEFAULT_BIND_ADDRESS, DEFAULT_BIND_PORT).into(),
 			exit_id: None,
+			psk: None,
+			accept_fingerprint: None,
 		}
 	}
 }

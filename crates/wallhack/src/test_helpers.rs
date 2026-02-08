@@ -40,6 +40,8 @@ pub fn create_test_server() -> anyhow::Result<(quinn::Endpoint, SocketAddr)> {
 	let server_config = ServerConfig {
 		listen: SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0),
 		tls: None,
+		psk: None,
+		max_peers: None,
 	};
 	let server = server::create(server_config)?;
 	let endpoint = server.local_addr()?;

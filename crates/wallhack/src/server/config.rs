@@ -24,6 +24,12 @@ pub struct ServerConfig {
 	pub listen: std::net::SocketAddr,
 
 	pub tls: Option<TlsConfig>,
+
+	/// Pre-shared key for tunnel authentication.
+	pub psk: Option<String>,
+
+	/// Maximum number of concurrent peer connections.
+	pub max_peers: Option<usize>,
 }
 
 #[cfg(test)]
@@ -32,6 +38,8 @@ impl Default for ServerConfig {
 		Self {
 			listen: SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), DEFAULT_LISTEN_PORT),
 			tls: None,
+			psk: None,
+			max_peers: None,
 		}
 	}
 }
@@ -42,6 +50,8 @@ impl Default for ServerConfig {
 		Self {
 			listen: (DEFAULT_LISTEN_ADDRESS, DEFAULT_LISTEN_PORT).into(),
 			tls: None,
+			psk: None,
+			max_peers: None,
 		}
 	}
 }

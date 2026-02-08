@@ -138,4 +138,10 @@ pub trait Server {
 		role: NodeRole,
 	) -> impl std::future::Future<Output = Result<Option<AcceptResult<Self::Transport>>, Self::Error>>
 	+ Send;
+
+	/// Returns the certificate fingerprint for this server.
+	fn fingerprint(&self) -> &str;
+
+	/// Returns the configured PSK, if any.
+	fn psk(&self) -> Option<&str>;
 }
