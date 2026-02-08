@@ -48,6 +48,10 @@ pub struct WallhackCli {
 	#[argh(option, short = 't', default = "10")]
 	pub timeout: u64,
 
+	/// pre-shared key for tunnel authentication (or set WALLHACK_PSK env var)
+	#[argh(option)]
+	pub psk: Option<String>,
+
 	/// verbose output
 	#[argh(switch, short = 'v')]
 	pub verbose: bool,
@@ -100,6 +104,10 @@ pub struct EntryCommand {
 	/// REST API password for basic auth
 	#[argh(option)]
 	pub api_pass: Option<String>,
+
+	/// maximum number of concurrent peer connections
+	#[argh(option)]
+	pub max_peers: Option<usize>,
 }
 
 /// Exit node: makes syscalls to the local network on behalf of the tunnel.
@@ -117,6 +125,14 @@ pub struct ExitCommand {
 	/// stable identifier for TUN naming; random if omitted
 	#[argh(option, short = 'i')]
 	pub exit_id: Option<String>,
+
+	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
+	#[argh(option)]
+	pub accept_fingerprint: Option<String>,
+
+	/// suppress security warnings when connecting without auth
+	#[argh(switch)]
+	pub insecure: bool,
 }
 
 /// Relay node: forwards traffic between upstream and downstream peers.
@@ -130,6 +146,14 @@ pub struct RelayCommand {
 	/// connect to a peer (e.g. "host:6565")
 	#[argh(option, short = 'c')]
 	pub connect: Option<String>,
+
+	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
+	#[argh(option)]
+	pub accept_fingerprint: Option<String>,
+
+	/// suppress security warnings when connecting without auth
+	#[argh(switch)]
+	pub insecure: bool,
 }
 
 // ============================================================================
@@ -238,6 +262,16 @@ impl RelayCommand {
 #[must_use]
 pub fn parse_wallhack() -> WallhackCli {
 	argh::from_env()
+}
+
+impl WallhackCli {
+	/// Resolve PSK from `--psk` flag or `WALLHACK_PSK` environment variable.
+	#[must_use]
+	pub fn resolve_psk(&self) -> Option<String> {
+		self.psk
+			.clone()
+			.or_else(|| std::env::var("WALLHACK_PSK").ok())
+	}
 }
 
 // ============================================================================

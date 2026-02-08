@@ -39,6 +39,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 wallhack = { path = "../wallhack" }
+subtle = "2"
 console-subscriber = { workspace = true, optional = true }
 rand = { version = "0.9", default-features = false, features = [
   "std",
