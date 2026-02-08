@@ -26,14 +26,13 @@ struct MetricsSender {
 }
 
 impl MetricsSender {
-	fn send(
-		&self,
-		msg: ExitNodeResponse,
-	) -> Result<usize, tokio::sync::broadcast::error::SendError<ExitNodeResponse>> {
+	fn send(&self, msg: ExitNodeResponse) -> Result<usize, Error> {
 		use prost::Message;
 		self.metrics.inc_packets_out(1);
 		self.metrics.inc_bytes_out(msg.encoded_len() as u64);
-		self.sender.send(msg)
+		self.sender
+			.send(msg)
+			.map_err(|e| Error::ChannelSend(Box::new(e)))
 	}
 }
 
@@ -43,7 +42,7 @@ pub enum Error {
 	ChannelRecv(#[from] tokio::sync::broadcast::error::RecvError),
 
 	#[error(transparent)]
-	ChannelSend(#[from] tokio::sync::broadcast::error::SendError<ExitNodeResponse>),
+	ChannelSend(Box<tokio::sync::broadcast::error::SendError<ExitNodeResponse>>),
 
 	#[error(transparent)]
 	Runtime(#[from] RuntimeError),

@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{fmt::Write, fs, io};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -12,7 +12,10 @@ pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 #[must_use]
 pub fn cert_fingerprint(cert_der: &[u8]) -> String {
 	let hash = ring::digest::digest(&ring::digest::SHA256, cert_der);
-	let hex: String = hash.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+	let mut hex = String::with_capacity(hash.as_ref().len() * 2);
+	for b in hash.as_ref() {
+		let _ = write!(hex, "{b:02x}");
+	}
 	format!("sha256:{hex}")
 }
 

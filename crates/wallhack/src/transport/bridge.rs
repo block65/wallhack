@@ -425,10 +425,8 @@ mod tests {
 	}
 
 	impl transport::BiStream for MockBiStream {
-		fn finish(
-			&mut self,
-		) -> impl std::future::Future<Output = Result<(), TransportError>> + Send {
-			async { Ok(()) }
+		async fn finish(&mut self) -> Result<(), TransportError> {
+			Ok(())
 		}
 	}
 
@@ -437,39 +435,25 @@ mod tests {
 		type RecvStream = DuplexStream;
 		type BiStream = MockBiStream;
 
-		fn open_uni(
-			&self,
-		) -> impl std::future::Future<Output = Result<Self::SendStream, TransportError>> + Send {
-			async {
-				let (writer, reader) = duplex(64 * 1024);
-				self.outgoing_tx
-					.send(reader)
-					.map_err(|_| TransportError::stream("peer closed"))?;
-				Ok(writer)
-			}
+		async fn open_uni(&self) -> Result<Self::SendStream, TransportError> {
+			let (writer, reader) = duplex(64 * 1024);
+			self.outgoing_tx
+				.send(reader)
+				.map_err(|_| TransportError::stream("peer closed"))?;
+			Ok(writer)
 		}
-		fn open_bi(
-			&self,
-		) -> impl std::future::Future<Output = Result<Self::BiStream, TransportError>> + Send {
-			async { Err(TransportError::stream("not implemented")) }
+		async fn open_bi(&self) -> Result<Self::BiStream, TransportError> {
+			Err(TransportError::stream("not implemented"))
 		}
-		fn accept_uni(
-			&self,
-		) -> impl std::future::Future<Output = Result<Option<Self::RecvStream>, TransportError>> + Send
-		{
-			async {
-				let mut rx = self.incoming_rx.lock().await;
-				Ok(rx.recv().await)
-			}
+		async fn accept_uni(&self) -> Result<Option<Self::RecvStream>, TransportError> {
+			let mut rx = self.incoming_rx.lock().await;
+			Ok(rx.recv().await)
 		}
-		fn accept_bi(
-			&self,
-		) -> impl std::future::Future<Output = Result<Option<Self::BiStream>, TransportError>> + Send
-		{
-			async { Err(TransportError::stream("not implemented")) }
+		async fn accept_bi(&self) -> Result<Option<Self::BiStream>, TransportError> {
+			Err(TransportError::stream("not implemented"))
 		}
-		fn close(&self) -> impl std::future::Future<Output = Result<(), TransportError>> + Send {
-			async { Ok(()) }
+		async fn close(&self) -> Result<(), TransportError> {
+			Ok(())
 		}
 		fn remote_addr(&self) -> Option<SocketAddr> {
 			None
@@ -510,12 +494,12 @@ mod tests {
 		write_length_delimited(&mut send, &hello).await.unwrap();
 		send.shutdown().await.unwrap();
 
-		let received = tokio::time::timeout(std::time::Duration::from_secs(2), hello_rx)
+		let hello_msg = tokio::time::timeout(std::time::Duration::from_secs(2), hello_rx)
 			.await
 			.expect("timed out waiting for hello")
 			.expect("hello channel closed");
-		assert_eq!(received.exit_id, "test-exit");
-		assert_eq!(received.version, "1.0.0");
+		assert_eq!(hello_msg.exit_id, "test-exit");
+		assert_eq!(hello_msg.version, "1.0.0");
 
 		drop(sender);
 		let _ = tokio::time::timeout(std::time::Duration::from_secs(1), recv_handle).await;

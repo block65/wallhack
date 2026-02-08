@@ -208,10 +208,10 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 /// Entry connects to a remote peer but still creates TUN and runs REPL.
 async fn run_entry_connect(
 	global: &WallhackCli,
-	_cmd: &EntryCommand,
+	cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
 	metrics: Arc<Metrics>,
-	_peers: Arc<Registry>,
+	peers: Arc<Registry>,
 	_sessions: SessionManager,
 ) -> Result<()> {
 	use std::{str::FromStr, time::Duration};
@@ -219,6 +219,9 @@ async fn run_entry_connect(
 
 	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+	// Used only with the `api` feature.
+	let _ = (&cmd, &peers);
 
 	crate::info!("Resolving {}", spec.addr);
 	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
@@ -370,11 +373,11 @@ where
 				match accept_result {
 					Ok(Some(mut accept_result)) => {
 						// Enforce max peers limit
-						let permit = if let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() { permit } else {
-									  crate::info!("Max peers reached, rejecting connection from {}", accept_result.client_ident());
-									  printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.client_ident()));
-									  continue;
-								  };
+						let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() else {
+							crate::info!("Max peers reached, rejecting connection from {}", accept_result.client_ident());
+							printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.client_ident()));
+							continue;
+						};
 
 						let conn_metrics = accept_result.metrics();
 						let conn_printer = printer.clone();
@@ -1126,9 +1129,7 @@ mod tests {
 	#[test]
 	fn peer_semaphore_default_does_not_panic() {
 		// Regression: using usize::MAX exceeded tokio's MAX_PERMITS and panicked.
-		let max_peers: Option<usize> = None;
-		let _sem =
-			tokio::sync::Semaphore::new(max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS));
+		let _sem = tokio::sync::Semaphore::new(tokio::sync::Semaphore::MAX_PERMITS);
 	}
 
 	#[test]

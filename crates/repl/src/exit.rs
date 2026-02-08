@@ -69,6 +69,13 @@ enum ExitReplCommand {
 	Unknown(String),
 }
 
+/// Security-related connection parameters.
+struct SecurityConfig {
+	psk: Option<String>,
+	accept_fingerprint: Option<String>,
+	insecure: bool,
+}
+
 /// Action returned from exit loop functions to trigger mode transitions.
 enum ExitAction {
 	/// User requested quit.
@@ -114,9 +121,11 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let exit_id = cmd.exit_id();
 	let metrics = Arc::new(Metrics::default());
-	let psk = global.resolve_psk();
-	let accept_fingerprint = cmd.accept_fingerprint.clone();
-	let insecure = cmd.insecure;
+	let security = SecurityConfig {
+		psk: global.resolve_psk(),
+		accept_fingerprint: cmd.accept_fingerprint.clone(),
+		insecure: cmd.insecure,
+	};
 
 	// Parse initial transport config
 	let (mut connect_spec, mut listen_spec) = match transport {
@@ -152,9 +161,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 					&metrics,
 					&mut repl_rx,
 					printer.as_ref(),
-					psk.clone(),
-					accept_fingerprint.clone(),
-					insecure,
+					&security,
 				)
 				.await
 			}
@@ -206,9 +213,7 @@ async fn run_connect_mode(
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
-	psk: Option<String>,
-	accept_fingerprint: Option<String>,
-	insecure: bool,
+	security: &SecurityConfig,
 ) -> Result<ExitAction> {
 	crate::info!("Resolving {}", spec.addr);
 
@@ -227,15 +232,7 @@ async fn run_connect_mode(
 			#[cfg(feature = "quic")]
 			{
 				run_quic_exit(
-					global,
-					endpoint,
-					exit_id,
-					metrics,
-					repl_rx,
-					printer,
-					psk,
-					accept_fingerprint,
-					insecure,
+					global, endpoint, exit_id, metrics, repl_rx, printer, security,
 				)
 				.await
 			}
@@ -248,15 +245,7 @@ async fn run_connect_mode(
 			#[cfg(feature = "websocket")]
 			{
 				run_ws_exit(
-					global,
-					endpoint,
-					exit_id,
-					metrics,
-					repl_rx,
-					printer,
-					psk,
-					accept_fingerprint,
-					insecure,
+					global, endpoint, exit_id, metrics, repl_rx, printer, security,
 				)
 				.await
 			}
@@ -573,39 +562,21 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	loop {
 		tokio::select! {
 			result = &mut drive_fut => {
-				match result {
-					Ok(()) => {
-						crate::info!("Connection closed cleanly");
-						if let Some(p) = printer {
-							p.print("Connection closed, reconnecting...");
-						} else {
-							println!("Connection closed, reconnecting...");
-						}
-					}
-					Err(e) => {
-						crate::error!("Orchestrator error: {}", e);
-						if let Some(p) = printer {
-							p.print(format!("Connection error: {e}, reconnecting..."));
-						} else {
-							println!("Connection error: {e}, reconnecting...");
-						}
-					}
-				}
+				let msg = match result {
+					Ok(()) => { crate::info!("Connection closed cleanly"); "Connection closed, reconnecting...".into() }
+					Err(e) => { crate::error!("Orchestrator error: {}", e); format!("Connection error: {e}, reconnecting...") }
+				};
+				if let Some(p) = printer { p.print(msg); } else { println!("{msg}"); }
 				return Ok(None);
 			}
 			result = &mut stream_fut => {
-				if let Err(e) = result {
-					crate::error!("Stream handler error: {e}");
-				}
+				if let Err(e) = result { crate::error!("Stream handler error: {e}"); }
 				return Ok(None);
 			}
 			() = &mut disconnect_fut => {
 				crate::info!("Connection tasks died - transport disconnected");
-				if let Some(p) = printer {
-					p.print("Transport disconnected, reconnecting...");
-				} else {
-					println!("Transport disconnected, reconnecting...");
-				}
+				let msg = "Transport disconnected, reconnecting...";
+				if let Some(p) = printer { p.print(msg); } else { println!("{msg}"); }
 				return Ok(None);
 			}
 			cmd = async {
@@ -800,19 +771,17 @@ async fn run_quic_exit(
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
-	psk: Option<String>,
-	accept_fingerprint: Option<String>,
-	insecure: bool,
+	security: &SecurityConfig,
 ) -> Result<ExitAction> {
 	let client_config = build_quic_client_config(
 		global,
 		endpoint,
 		exit_id.to_string(),
-		psk.clone(),
-		accept_fingerprint.clone(),
+		security.psk.clone(),
+		security.accept_fingerprint.clone(),
 	);
 
-	if !insecure && psk.is_none() && accept_fingerprint.is_none() {
+	if !security.insecure && security.psk.is_none() && security.accept_fingerprint.is_none() {
 		eprintln!("WARNING: Connecting without authentication or certificate verification.");
 		eprintln!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
 	}
@@ -872,16 +841,14 @@ async fn run_ws_exit(
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
-	psk: Option<String>,
-	accept_fingerprint: Option<String>,
-	insecure: bool,
+	security: &SecurityConfig,
 ) -> Result<ExitAction> {
 	use wallhack::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
 	};
 
-	if !insecure && psk.is_none() && accept_fingerprint.is_none() {
+	if !security.insecure && security.psk.is_none() && security.accept_fingerprint.is_none() {
 		eprintln!("WARNING: Connecting without authentication or certificate verification.");
 		eprintln!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
 	}
@@ -892,8 +859,8 @@ async fn run_ws_exit(
 			hostname: global.hostname.clone(),
 			mtls: None,
 			exit_id: Some(exit_id.to_string()),
-			psk,
-			accept_fingerprint,
+			psk: security.psk.clone(),
+			accept_fingerprint: security.accept_fingerprint.clone(),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
