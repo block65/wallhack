@@ -1,5 +1,8 @@
-use protobuf::v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse};
-use tokio::sync::oneshot;
+use protobuf::{
+	control_v2::ControlMessage,
+	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+};
+use tokio::sync::mpsc;
 use transport::Transport;
 
 use crate::{
@@ -22,9 +25,11 @@ pub struct AcceptResult<T: Transport> {
 	channels: Channels,
 	peer_ident: String,
 	metrics: SharedMetrics,
-	hello_rx: Option<oneshot::Receiver<ExitNodeHello>>,
-	exit_hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
+	/// The already-received `ExitNodeHello` (extracted from the control stream).
+	exit_hello: Option<ExitNodeHello>,
 	transport: std::sync::Arc<T>,
+	/// Channel for injecting messages into the control stream.
+	control_tx: mpsc::Sender<ControlMessage>,
 }
 
 impl<T: Transport> AcceptResult<T> {
@@ -35,34 +40,35 @@ impl<T: Transport> AcceptResult<T> {
 		channels: Channels,
 		peer_ident: String,
 		metrics: SharedMetrics,
+		control_tx: mpsc::Sender<ControlMessage>,
 	) -> Self {
 		Self {
 			channels,
 			peer_ident,
 			metrics,
-			hello_rx: None,
-			exit_hello_tx: None,
+			exit_hello: None,
 			transport,
+			control_tx,
 		}
 	}
 
-	/// Creates a new accept result with an `ExitNodeHello` channel pair.
+	/// Creates a new accept result with an already-received `ExitNodeHello`.
 	#[must_use]
 	pub fn with_exit_hello(
 		transport: std::sync::Arc<T>,
 		channels: Channels,
 		peer_ident: String,
 		metrics: SharedMetrics,
-		hello_tx: oneshot::Sender<ExitNodeHello>,
-		hello_rx: oneshot::Receiver<ExitNodeHello>,
+		exit_hello: Option<ExitNodeHello>,
+		control_tx: mpsc::Sender<ControlMessage>,
 	) -> Self {
 		Self {
 			channels,
 			peer_ident,
 			metrics,
-			hello_rx: Some(hello_rx),
-			exit_hello_tx: Some(hello_tx),
+			exit_hello,
 			transport,
+			control_tx,
 		}
 	}
 
@@ -90,20 +96,15 @@ impl<T: Transport> AcceptResult<T> {
 		std::sync::Arc::clone(&self.transport)
 	}
 
-	/// Takes the `ExitNodeHello` receiver, if available.
-	///
-	/// This can be used to wait for exit node identity before creating TUN
-	/// interfaces.
-	pub fn take_hello_rx(&mut self) -> Option<oneshot::Receiver<ExitNodeHello>> {
-		self.hello_rx.take()
+	/// Takes the `ExitNodeHello` data, if available.
+	pub fn take_exit_hello(&mut self) -> Option<ExitNodeHello> {
+		self.exit_hello.take()
 	}
 
-	/// Takes the `ExitNodeHello` sender, if available.
-	///
-	/// This should be passed to `run_incoming_data` so it can forward the
-	/// hello message when received.
-	pub fn take_hello_tx(&mut self) -> Option<oneshot::Sender<ExitNodeHello>> {
-		self.exit_hello_tx.take()
+	/// Returns a clone of the control message sender.
+	#[must_use]
+	pub fn control_tx(&self) -> &mpsc::Sender<ControlMessage> {
+		&self.control_tx
 	}
 }
 

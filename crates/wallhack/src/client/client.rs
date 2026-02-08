@@ -1,6 +1,9 @@
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 
-use protobuf::v2::{EntryNodeInstruction, ExitNodeResponse};
+use protobuf::{
+	control_v2::ControlMessage,
+	v2::{EntryNodeInstruction, ExitNodeResponse},
+};
 
 use crate::NodeRole;
 
@@ -18,6 +21,8 @@ pub struct ConnectionTasks {
 	pub incoming: JoinHandle<()>,
 	/// Task handling outgoing data to the transport.
 	pub outgoing: JoinHandle<()>,
+	/// Task running the persistent control bidi stream.
+	pub control: JoinHandle<()>,
 }
 
 impl ConnectionTasks {
@@ -30,6 +35,9 @@ impl ConnectionTasks {
 			_ = &mut self.outgoing => {
 				tracing::debug!("Outgoing task completed - connection dead");
 			}
+			_ = &mut self.control => {
+				tracing::debug!("Control task completed - connection dead");
+			}
 		}
 	}
 }
@@ -39,6 +47,8 @@ pub struct ConnectResult<T: transport::Transport + ?Sized> {
 	peer_ident: String,
 	tasks: ConnectionTasks,
 	transport: std::sync::Arc<T>,
+	/// Channel for injecting messages into the control stream.
+	control_tx: mpsc::Sender<ControlMessage>,
 }
 
 impl<T: transport::Transport + ?Sized> ConnectResult<T> {
@@ -48,12 +58,14 @@ impl<T: transport::Transport + ?Sized> ConnectResult<T> {
 		channels: Channels,
 		peer_ident: String,
 		tasks: ConnectionTasks,
+		control_tx: mpsc::Sender<ControlMessage>,
 	) -> Self {
 		Self {
 			channels,
 			peer_ident,
 			tasks,
 			transport,
+			control_tx,
 		}
 	}
 
@@ -75,6 +87,11 @@ impl<T: transport::Transport + ?Sized> ConnectResult<T> {
 	#[must_use]
 	pub fn transport(&self) -> std::sync::Arc<T> {
 		std::sync::Arc::clone(&self.transport)
+	}
+
+	#[must_use]
+	pub fn control_tx(&self) -> &mpsc::Sender<ControlMessage> {
+		&self.control_tx
 	}
 }
 
