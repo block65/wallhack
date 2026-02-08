@@ -253,8 +253,8 @@ impl WsClient {
 			}
 		});
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(2048);
-		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(2048);
+		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
+		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
 		// Data task 1: Incoming data
 		let transport_data = Arc::clone(&transport);
