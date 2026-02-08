@@ -5,9 +5,9 @@ iperf3_version := "3.20"
 iperf3_bin := justfile_directory() / "bin" / "iperf3"
 wallhack_bin := root / "target" / "release" / "wallhack"
 
-# Build wallhack in release mode
+# Build wallhack in release mode with all transports
 build:
-    cd {{root}} && cargo build -q --release
+    cd {{root}} && cargo build -q --release --features full
 
 # Download static iperf3 binary
 fetch-iperf3:
@@ -40,9 +40,10 @@ smoketest: build
 
 # Run benchmarks (requires iperf3)
 benchmark: build fetch-iperf3
-    sudo python3 -m pytest tests/ -m benchmark --tb=short -q \
+    sudo python3 -m pytest tests/ -m benchmark --tb=short -q -s \
         --wallhack-bin "{{wallhack_bin}}" \
-        --iperf3-bin "{{iperf3_bin}}"
+        --iperf3-bin "{{iperf3_bin}}" \
+        2>&1 | tee results/benchmark_latest.txt
 
 # Run all tests
 test: build fetch-iperf3

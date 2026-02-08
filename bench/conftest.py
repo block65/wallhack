@@ -11,6 +11,7 @@ import pytest
 
 from lib.constants import (
     EXIT_ID,
+    EXIT_ID_WS,
     ECHO_PORT,
     IP_CLIENT,
     IP_ENTRY_CLIENT_SIDE,
@@ -27,6 +28,7 @@ from lib.constants import (
     SUBNET_CLIENT_ENTRY,
     SUBNET_EXIT_TARGET,
     TUN_NAME,
+    TUN_NAME_WS,
     VETH_CE_CLIENT,
     VETH_CE_ENTRY,
     VETH_EE_ENTRY,
@@ -34,6 +36,7 @@ from lib.constants import (
     VETH_ET_EXIT,
     VETH_ET_TARGET,
     WALLHACK_LISTEN_PORT,
+    WALLHACK_LISTEN_PORT_WS,
 )
 from lib.echo_server import EchoServer
 from lib.iperf import Iperf3Server
@@ -203,7 +206,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
         # Start wallhack entry node (server mode, listens for exit connections)
         entry_proc = WallhackProcess(
             ns=NS_ENTRY,
-            args=["entry", "-l", f":{WALLHACK_LISTEN_PORT}", "--debug"],
+            args=["--debug", "entry", "-l", f":{WALLHACK_LISTEN_PORT}"],
             binary=wallhack_bin,
             env={
                 "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
@@ -217,10 +220,10 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
         exit_proc = WallhackProcess(
             ns=NS_EXIT,
             args=[
+                "--debug",
                 "exit",
                 "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT}",
                 "-i", EXIT_ID,
-                "--debug",
             ],
             binary=wallhack_bin,
         )
@@ -261,7 +264,7 @@ def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState
         # Use /tcp suffix to select WebSocket transport
         entry_proc = WallhackProcess(
             ns=NS_ENTRY,
-            args=["entry", "-l", f":{WALLHACK_LISTEN_PORT}/tcp", "--debug"],
+            args=["--debug", "entry", "-l", f":{WALLHACK_LISTEN_PORT_WS}/tcp"],
             binary=wallhack_bin,
             env={
                 "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
@@ -275,21 +278,21 @@ def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState
         exit_proc = WallhackProcess(
             ns=NS_EXIT,
             args=[
-                "exit",
-                "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT}/tcp",
-                "-i", EXIT_ID,
                 "--debug",
+                "exit",
+                "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT_WS}/tcp",
+                "-i", EXIT_ID_WS,
             ],
             binary=wallhack_bin,
         )
         exit_proc.start(log_file="/tmp/wallhack-exit-ws.log")
 
         # Wait for TUN interface
-        entry_proc.wait_for_tun(ns=NS_ENTRY)
+        entry_proc.wait_for_tun(ns=NS_ENTRY, tun_name=TUN_NAME_WS)
 
-        # Add routes
-        add_route(NS_ENTRY, SUBNET_EXIT_TARGET, TUN_NAME)
-        ns_exec(NS_CLIENT, f"ip route add {SUBNET_EXIT_TARGET} via {IP_ENTRY_CLIENT_SIDE}")
+        # Add routes (use 'replace' since QUIC topology may have added the client route already)
+        add_route(NS_ENTRY, SUBNET_EXIT_TARGET, TUN_NAME_WS)
+        ns_exec(NS_CLIENT, f"ip route replace {SUBNET_EXIT_TARGET} via {IP_ENTRY_CLIENT_SIDE}")
 
         state = TopologyState(entry_proc, exit_proc)
         print(f"\n[WebSocket] {state.dump()}")

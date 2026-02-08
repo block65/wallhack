@@ -51,7 +51,7 @@ def create_veth_pair(
 
 
 def add_route(ns: str, dest: str, dev: str) -> None:
-    ns_exec(ns, f"ip route add {dest} dev {dev}")
+    ns_exec(ns, f"ip route replace {dest} dev {dev}")
 
 
 def link_exists(ns: str, name: str) -> bool:

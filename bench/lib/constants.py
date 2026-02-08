@@ -47,6 +47,11 @@ WALLHACK_LISTEN_PORT = 6565
 EXIT_ID = "bench"
 TUN_NAME = f"tun-{EXIT_ID}"
 
+# WebSocket topology uses separate port/id to avoid conflicts with QUIC topology
+WALLHACK_LISTEN_PORT_WS = 6566
+EXIT_ID_WS = "benchws"
+TUN_NAME_WS = f"tun-{EXIT_ID_WS}"
+
 # Echo server
 ECHO_PORT = 9999
 
