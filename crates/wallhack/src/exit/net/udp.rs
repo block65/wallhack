@@ -1,4 +1,4 @@
-use super::adapter::SyscallExitAdapter;
+use super::adapter::{SyscallExitAdapter, TimestampedSession};
 
 use exit_adapter::{
 	SocketSet,
@@ -34,7 +34,8 @@ impl SyscallExitAdapter {
 
 				let socket = tokio::net::UdpSocket::bind(local_addr).await?;
 				let session = Session::Udp(sessions::udp::UdpSession::new(socket));
-				self.sessions.insert(key.clone(), session);
+				self.sessions
+					.insert(key.clone(), TimestampedSession::new(session));
 				true
 			};
 
@@ -42,10 +43,9 @@ impl SyscallExitAdapter {
 
 		let response = match self.sessions.get(&key) {
 			Some(session) => {
-				tracing::trace!("Session: {:?}", session);
+				tracing::trace!("Session: {:?}", session.session);
 
-				// match the session and send data
-				if let Session::Udp(session) = session.value() {
+				if let Session::Udp(session) = &session.value().session {
 					tracing::trace!("Sending data");
 					match session.send(dest, data).await {
 						Ok(sessions::common::SessionStatus::DataIo { size, .. }) => {
@@ -73,6 +73,11 @@ impl SyscallExitAdapter {
 			},
 		};
 
+		// Touch the session to update last_activity
+		if let Some(mut session) = self.sessions.get_mut(&key) {
+			session.touch();
+		}
+
 		Ok(response)
 	}
 
@@ -82,14 +87,12 @@ impl SyscallExitAdapter {
 	) -> Result<Option<sessions::udp::UdpSession>, RuntimeError> {
 		let key = SessionKey::Udp(pair);
 		let maybe_session = self.sessions.get(&key);
-		tracing::trace!("Flow: {:?}", maybe_session);
 
 		match maybe_session {
 			Some(session) => {
-				if let Session::Udp(session) = session.value() {
+				if let Session::Udp(session) = &session.value().session {
 					Ok(Some(session.clone()))
 				} else {
-					// non-tcp session - should not happen
 					Err(RuntimeError::SessionInvalid(key))
 				}
 			}

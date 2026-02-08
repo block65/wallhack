@@ -1,6 +1,6 @@
 use std::io;
 
-use super::adapter::SyscallExitAdapter;
+use super::adapter::{SyscallExitAdapter, TimestampedSession};
 
 use exit_adapter::{
 	SocketSet,
@@ -46,8 +46,10 @@ impl SyscallExitAdapter {
 			Ok(stream) => {
 				tracing::debug!("Connected to {}", dst_addr);
 				let key = SessionKey::Tcp(set);
-				self.sessions
-					.insert(key, Session::Tcp(sessions::tcp::TcpSession::new(stream)));
+				self.sessions.insert(
+					key,
+					TimestampedSession::new(Session::Tcp(sessions::tcp::TcpSession::new(stream))),
+				);
 				Ok(TcpStreamResponse::Connected { set })
 			}
 			Err(e) => match e.kind() {
@@ -69,64 +71,71 @@ impl SyscallExitAdapter {
 		tracing::trace!("Received send data request: {:?}", set,);
 
 		let key = SessionKey::Tcp(set);
-		let maybe_session = self.sessions.get(&key);
-		tracing::trace!("Flow: {:?}", maybe_session);
 
 		let (_, dest) = set.into();
 
-		let response = match maybe_session {
-			Some(session) => {
-				if let Session::Tcp(session) = session.value() {
-					// Write data if present
-					if !buf.is_empty() {
-						tracing::trace!("Sending data");
-						match session.send(dest, &mut buf).await {
-							Ok(sessions::common::SessionStatus::DataIo { size, .. }) => {
-								tracing::trace!("Sent {size} bytes to socket");
-								if fin {
-									tracing::trace!("Shutting down write side for {set}");
-									session.shutdown_write()?;
+		let response = {
+			let maybe_session = self.sessions.get(&key);
+
+			match maybe_session {
+				Some(session) => {
+					if let Session::Tcp(session) = &session.value().session {
+						// Write data if present
+						if !buf.is_empty() {
+							tracing::trace!("Sending data");
+							match session.send(dest, &mut buf).await {
+								Ok(sessions::common::SessionStatus::DataIo { size, .. }) => {
+									tracing::trace!("Sent {size} bytes to socket");
+									if fin {
+										tracing::trace!("Shutting down write side for {set}");
+										session.shutdown_write()?;
+									}
+									SendResponse::Ok {
+										size,
+										set,
+										is_new: None,
+									}
 								}
-								SendResponse::Ok {
-									size,
-									set,
-									is_new: None,
+								Ok(sessions::common::SessionStatus::PeerClosed) => {
+									SendResponse::Reset {
+										set,
+										reason: "peer closed".to_string(),
+									}
 								}
+								Err(e) => return Err(e),
 							}
-							Ok(sessions::common::SessionStatus::PeerClosed) => {
-								SendResponse::Reset {
-									set,
-									reason: "peer closed".to_string(),
-								}
+						} else if fin {
+							// No data, just shutdown
+							tracing::trace!("FIN-only: shutting down write side for {set}");
+							session.shutdown_write()?;
+							SendResponse::Ok {
+								size: 0,
+								set,
+								is_new: None,
 							}
-							Err(e) => return Err(e),
-						}
-					} else if fin {
-						// No data, just shutdown
-						tracing::trace!("FIN-only: shutting down write side for {set}");
-						session.shutdown_write()?;
-						SendResponse::Ok {
-							size: 0,
-							set,
-							is_new: None,
+						} else {
+							// No data and no fin — nothing to do
+							SendResponse::Ok {
+								size: 0,
+								set,
+								is_new: None,
+							}
 						}
 					} else {
-						// No data and no fin — nothing to do
-						SendResponse::Ok {
-							size: 0,
-							set,
-							is_new: None,
-						}
+						return Err(RuntimeError::SessionInvalid(key));
 					}
-				} else {
-					return Err(RuntimeError::SessionInvalid(key));
 				}
+				None => SendResponse::Reset {
+					set,
+					reason: "session disappeared".to_string(),
+				},
 			}
-			None => SendResponse::Reset {
-				set,
-				reason: "session disappeared".to_string(),
-			},
 		};
+
+		// Touch session to update last_activity
+		if let Some(mut session) = self.sessions.get_mut(&key) {
+			session.touch();
+		}
 
 		Ok(response)
 	}
@@ -137,13 +146,11 @@ impl SyscallExitAdapter {
 	) -> Result<Option<sessions::tcp::TcpSession>, RuntimeError> {
 		let key = SessionKey::Tcp(set);
 		let maybe_session = self.sessions.get(&key);
-		tracing::trace!("maybe_session: {:?}", maybe_session);
 		match maybe_session {
 			Some(session) => {
-				if let Session::Tcp(session) = session.value() {
+				if let Session::Tcp(session) = &session.value().session {
 					Ok(Some(session.clone()))
 				} else {
-					// non-tcp session - should not happen
 					Err(RuntimeError::SessionInvalid(key))
 				}
 			}

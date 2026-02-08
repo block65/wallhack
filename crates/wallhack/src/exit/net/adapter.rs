@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use dashmap::DashMap;
 use exit_adapter::{
 	SocketSet,
@@ -10,8 +12,28 @@ use exit_adapter::{
 	sessions,
 };
 
+/// Wraps a session with a last-activity timestamp for reaping idle entries.
+#[derive(Clone)]
+pub struct TimestampedSession {
+	pub session: Session,
+	pub last_activity: Instant,
+}
+
+impl TimestampedSession {
+	pub fn new(session: Session) -> Self {
+		Self {
+			session,
+			last_activity: Instant::now(),
+		}
+	}
+
+	pub fn touch(&mut self) {
+		self.last_activity = Instant::now();
+	}
+}
+
 pub struct SyscallExitAdapter {
-	pub sessions: DashMap<SessionKey, Session>,
+	pub sessions: DashMap<SessionKey, TimestampedSession>,
 }
 
 impl Default for SyscallExitAdapter {
@@ -26,6 +48,27 @@ impl SyscallExitAdapter {
 	#[must_use]
 	pub fn new() -> Self {
 		SyscallExitAdapter::default()
+	}
+
+	/// Start a background task that reaps idle sessions.
+	pub fn start_reaper(
+		&self,
+		interval: std::time::Duration,
+		ttl: std::time::Duration,
+	) -> tokio::task::JoinHandle<()> {
+		let sessions = self.sessions.clone();
+		tokio::spawn(async move {
+			let mut ticker = tokio::time::interval(interval);
+			loop {
+				ticker.tick().await;
+				let before = sessions.len();
+				sessions.retain(|_, ts| ts.last_activity.elapsed() < ttl);
+				let reaped = before.saturating_sub(sessions.len());
+				if reaped > 0 {
+					tracing::debug!("Reaped {reaped} idle session(s)");
+				}
+			}
+		})
 	}
 }
 

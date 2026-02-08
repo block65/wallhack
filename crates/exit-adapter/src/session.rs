@@ -1,6 +1,6 @@
 use crate::sessions;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Session {
 	Tcp(sessions::tcp::TcpSession),
 	Udp(sessions::udp::UdpSession),

@@ -4,7 +4,7 @@ use std::{
 	os::fd::AsRawFd,
 };
 
-use super::adapter::SyscallExitAdapter;
+use super::adapter::{SyscallExitAdapter, TimestampedSession};
 
 use exit_adapter::{
 	SocketSet,
@@ -141,15 +141,15 @@ impl SyscallExitAdapter {
 
 			let socket = create_async(local_addr.ip())?;
 			let session = Session::Icmp(sessions::icmp::IcmpSession::new(socket, set));
-			self.sessions.insert(key.clone(), session);
+			self.sessions
+				.insert(key.clone(), TimestampedSession::new(session));
 			true
 		};
 
 		let maybe_session = self.sessions.get(&key);
-		tracing::trace!("maybe_session: {:?}", maybe_session);
 		match maybe_session {
 			Some(session) => {
-				if let Session::Icmp(session) = session.value() {
+				if let Session::Icmp(session) = &session.value().session {
 					Ok(Some(session.clone()))
 				} else {
 					// non-icmp session - should not happen
