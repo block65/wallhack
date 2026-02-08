@@ -281,7 +281,7 @@ async fn run_entry_connect(
 					},
 					path: "/ws".to_string(),
 					host_header: global.hostname.clone(),
-					use_tls: global.cert.is_some() || global.key.is_some(),
+					use_tls: true,
 				};
 				let mut retry_delay = INITIAL_RETRY_DELAY;
 

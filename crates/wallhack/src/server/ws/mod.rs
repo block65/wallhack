@@ -62,21 +62,15 @@ impl WsTlsConfig {
 	/// # Errors
 	///
 	/// Returns an error if the TLS configuration cannot be created.
-	pub fn new(config: Option<super::config::TlsConfig>) -> Result<(Option<Self>, String), Error> {
-		let Some(tls_config) = config else {
-			// Even without TLS config, we generate a self-signed cert for fingerprint
-			let (_cert_der, _priv_key, fingerprint) = super::tls::configure_crypto(None)?;
-			return Ok((None, fingerprint));
-		};
-
-		let (cert_der, priv_key, fingerprint) = super::tls::configure_crypto(Some(tls_config))?;
+	pub fn new(config: Option<super::config::TlsConfig>) -> Result<(Self, String), Error> {
+		let (cert_der, priv_key, fingerprint) = super::tls::configure_crypto(config)?;
 
 		let server_config = rustls::ServerConfig::builder()
 			.with_no_client_auth()
 			.with_single_cert(cert_der, priv_key)?;
 
 		let acceptor = TlsAcceptor::from(Arc::new(server_config));
-		Ok((Some(Self { acceptor }), fingerprint))
+		Ok((Self { acceptor }, fingerprint))
 	}
 }
 
@@ -129,7 +123,7 @@ impl AsyncWrite for MaybeTlsStream {
 /// WebSocket server for tunnel connections.
 pub struct WsServer {
 	listener: TcpListener,
-	tls: Option<WsTlsConfig>,
+	tls: WsTlsConfig,
 	options: ServerOptions,
 	fingerprint: String,
 	psk: Option<String>,
@@ -144,7 +138,9 @@ impl Server for WsServer {
 		std_listener.set_nonblocking(true)?;
 		let listener = TcpListener::from_std(std_listener)?;
 
-		let (tls, fingerprint) = WsTlsConfig::new(config.tls)?;
+		let (tls, fingerprint) = WsTlsConfig::new(config.tls).inspect(|_| {
+			tracing::debug!("WebSocket TLS enabled (self-signed if no cert provided)")
+		})?;
 
 		tracing::info!("WebSocket server listening on {:?}", listener.local_addr());
 
@@ -166,13 +162,9 @@ impl Server for WsServer {
 		let (tcp_stream, peer_addr) = self.listener.accept().await?;
 		tracing::debug!("TCP connection from {peer_addr}");
 
-		// Optionally wrap in TLS and perform WebSocket upgrade
-		let ws_stream = if let Some(tls) = &self.tls {
-			let tls_stream = tls.acceptor.accept(tcp_stream).await?;
-			accept_websocket(MaybeTlsStream::Tls(Box::new(tls_stream))).await?
-		} else {
-			accept_websocket(MaybeTlsStream::Plain(tcp_stream)).await?
-		};
+		// Wrap in TLS and perform WebSocket upgrade
+		let tls_stream = self.tls.acceptor.accept(tcp_stream).await?;
+		let ws_stream = accept_websocket(MaybeTlsStream::Tls(Box::new(tls_stream))).await?;
 
 		// Convert to byte stream and wrap in yamux transport
 		let byte_stream = WsByteStream::new(ws_stream);

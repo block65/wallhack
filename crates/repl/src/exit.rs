@@ -866,7 +866,7 @@ async fn run_ws_exit(
 		},
 		path: "/ws".to_string(),
 		host_header: global.hostname.clone(),
-		use_tls: global.cert.is_some() || global.key.is_some(),
+		use_tls: true,
 	};
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
@@ -1102,7 +1102,7 @@ async fn run_ws_relay_capability(
 		},
 		path: "/ws".to_string(),
 		host_header: global.hostname.clone(),
-		use_tls: global.cert.is_some() || global.key.is_some(),
+		use_tls: true,
 	};
 
 	let mut client = WsClient::new(client_config)?;
