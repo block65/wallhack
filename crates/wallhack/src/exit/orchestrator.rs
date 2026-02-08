@@ -380,43 +380,41 @@ async fn run_udp_recv<A: ExitAdapter>(
 	let mtu = 1500;
 	let mut recv_buf = vec![0; mtu];
 
-	let response = match session.recv(&mut recv_buf).await {
-		Ok(sessions::common::SessionStatus::DataIo { size }) => {
-			tracing::trace!("Received {} bytes from UDP session: {:?}", size, set);
-			ExitNodeResponse {
-				pair: Some(set.into()),
-				response: Some(exit_node_response::Response::UdpResponse(v2::UdpResponse {
-					response: Some(v2::udp_response::Response::DataRecv(
-						v2::UdpDataRecvResponse {
-							data: Bytes::copy_from_slice(&recv_buf[..size]),
+	loop {
+		match session.recv(&mut recv_buf).await {
+			Ok(sessions::common::SessionStatus::DataIo { size }) => {
+				tracing::trace!("Received {size} bytes from UDP session {set}");
+				responses.send(ExitNodeResponse {
+					pair: Some(set.into()),
+					response: Some(exit_node_response::Response::UdpResponse(v2::UdpResponse {
+						response: Some(v2::udp_response::Response::DataRecv(
+							v2::UdpDataRecvResponse {
+								data: Bytes::copy_from_slice(&recv_buf[..size]),
+							},
+						)),
+					})),
+				})?;
+			}
+			Ok(sessions::common::SessionStatus::PeerClosed) => {
+				tracing::debug!("UDP session {set} closed");
+				break;
+			}
+			Err(e) => {
+				tracing::error!("UDP recv error for {set}: {e}");
+				responses.send(ExitNodeResponse {
+					pair: Some(set.into()),
+					response: Some(exit_node_response::Response::RuntimeError(
+						RuntimeErrorResponse {
+							reason: e.to_string(),
 						},
 					)),
-				})),
+				})?;
+				break;
 			}
 		}
-		Ok(sessions::common::SessionStatus::PeerClosed) => {
-			tracing::warn!("Unexpected Peer closed for UDP");
-			ExitNodeResponse {
-				pair: Some(set.into()),
-				response: Some(exit_node_response::Response::UdpResponse(v2::UdpResponse {
-					response: None,
-				})),
-			}
-		}
-		Err(e) => {
-			tracing::error!("Error receiving data: {e}");
-			ExitNodeResponse {
-				pair: Some(set.into()),
-				response: Some(exit_node_response::Response::RuntimeError(
-					RuntimeErrorResponse {
-						reason: e.to_string(),
-					},
-				)),
-			}
-		}
-	};
+	}
 
-	responses.send(response)?;
+	tracing::trace!("UDP recv task for {set} finished.");
 	Ok(())
 }
 
