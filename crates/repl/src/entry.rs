@@ -334,7 +334,9 @@ where
 	S::Transport: Send + Sync + 'static,
 {
 	let server_psk = server.psk().map(String::from);
-	let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(max_peers.unwrap_or(usize::MAX)));
+	let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(
+		max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
+	));
 
 	// Channel for REPL commands (input thread -> async loop)
 	let (repl_tx, repl_rx) = mpsc::channel::<ReplCommand>(16);
@@ -1121,5 +1123,21 @@ fn build_quic_client_config(
 		mtls,
 		psk: global.resolve_psk(),
 		..Default::default()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	#[test]
+	fn peer_semaphore_default_does_not_panic() {
+		// Regression: using usize::MAX exceeded tokio's MAX_PERMITS and panicked.
+		let max_peers: Option<usize> = None;
+		let _sem =
+			tokio::sync::Semaphore::new(max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS));
+	}
+
+	#[test]
+	fn peer_semaphore_with_limit() {
+		let _sem = tokio::sync::Semaphore::new(10);
 	}
 }
