@@ -90,6 +90,8 @@ impl<D: Device + Send + 'static> UdpSocketAny<D> {
 		tracing::trace!(port, data_len = data.len(), endpoint = %meta_val.endpoint, "UDP send_to enqueuing");
 		socket.send_slice(data, meta_val)?;
 		tracing::trace!(port, "UDP send_to enqueued successfully");
+		drop(inner);
+		self.shared.notify.notify_one();
 		Ok(())
 	}
 
