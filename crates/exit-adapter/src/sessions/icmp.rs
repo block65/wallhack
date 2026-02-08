@@ -81,11 +81,7 @@ impl IcmpSession {
 }
 
 impl RxSession for IcmpSession {
-	async fn send(
-		&self,
-		dst_addr: SocketAddr,
-		buf: &[u8],
-	) -> Result<SessionStatus, RuntimeError> {
+	async fn send(&self, dst_addr: SocketAddr, buf: &[u8]) -> Result<SessionStatus, RuntimeError> {
 		let dst_addr2: socket2::SockAddr = dst_addr.into();
 
 		loop {

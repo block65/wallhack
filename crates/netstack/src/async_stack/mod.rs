@@ -18,8 +18,7 @@ use crate::inner::{InnerStack, peek_device::PeekDevice};
 
 /// Factory for readiness futures. Called each poll iteration to get a future
 /// that resolves when the underlying device has data available.
-pub type ReadinessFn =
-	Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type ReadinessFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Shared state between the poll loop and async socket handles.
 ///
@@ -137,7 +136,13 @@ impl<D: Device + Send + 'static> Netstack<D> {
 		let notify = Arc::clone(&self.jit_notify);
 		let readable_fn = self.readable_fn.clone();
 		self.poll_handle = tokio::spawn(poll_loop_jit(
-			shared, jit_tcp, jit_udp, tcp_ports, udp_ports, notify, readable_fn,
+			shared,
+			jit_tcp,
+			jit_udp,
+			tcp_ports,
+			udp_ports,
+			notify,
+			readable_fn,
 		));
 		self.wake();
 	}

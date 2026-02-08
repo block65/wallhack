@@ -74,11 +74,7 @@ impl SyscallExitAdapter {
 }
 
 impl ExitAdapter for SyscallExitAdapter {
-	async fn udp_send(
-		&self,
-		set: SocketSet,
-		data: &[u8],
-	) -> Result<SendResponse, RuntimeError> {
+	async fn udp_send(&self, set: SocketSet, data: &[u8]) -> Result<SendResponse, RuntimeError> {
 		self.udp_send_impl(set, data).await
 	}
 

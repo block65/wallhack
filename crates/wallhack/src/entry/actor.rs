@@ -1,6 +1,9 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use netstack::{async_stack::Netstack, async_stack::ReadinessFn, config::StackConfig};
+use netstack::{
+	async_stack::{Netstack, ReadinessFn},
+	config::StackConfig,
+};
 use smoltcp::wire::{IpCidr, Ipv4Address, Ipv6Address};
 use tokio::io::unix::AsyncFd;
 use tun::{AbstractDevice, Configuration, Device};
