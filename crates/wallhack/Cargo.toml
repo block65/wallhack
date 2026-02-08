@@ -91,6 +91,8 @@ ring = { version = "0.17", default-features = false }
 test-log = { version = "0.2", features = ["trace"] }
 
 [dev-dependencies]
+bytes = "1"
+protobuf = { path = "../protobuf" }
 tempfile = "3"
 test-log = { version = "0.2", features = ["trace"] }
 tokio-test = "0.4"
