@@ -3,15 +3,6 @@ use std::fmt::Display;
 
 use crate::{helpers::ConversionError, v2};
 
-// #[derive(Debug, thiserror::Error)]
-// pub enum Error {
-// 	#[error("Invalid socket set")]
-// 	InvalidSocketSet,
-
-// 	#[error("Invalid socket address tuple")]
-// 	InvalidTuple,
-// }
-
 #[derive(Hash, Eq, PartialEq, Debug, Copy, Clone)]
 pub enum SocketSet {
 	Ipv4((std::net::SocketAddrV4, std::net::SocketAddrV4)),

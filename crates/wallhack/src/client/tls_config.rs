@@ -34,13 +34,6 @@ fn with_great_danger() -> rustls::ClientConfig {
 		.with_no_client_auth()
 }
 
-fn _with_no_client_auth() -> rustls::ClientConfig {
-	let root_store = rustls::RootCertStore::empty();
-	rustls::ClientConfig::builder()
-		.with_root_certificates(root_store)
-		.with_no_client_auth()
-}
-
 fn with_client_auth(config: MtlsConfig) -> Result<rustls::ClientConfig, Error> {
 	let mut roots = rustls::RootCertStore::empty();
 
@@ -78,7 +71,6 @@ pub fn client_config(config: Option<MtlsConfig>) -> Result<rustls::ClientConfig,
 
 	let mut config = match config {
 		Some(config) => with_client_auth(config)?,
-		// None => with_no_client_auth()?,
 		None => with_great_danger(),
 	};
 
