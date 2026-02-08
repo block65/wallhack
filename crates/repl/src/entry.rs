@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
+use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
 use wallhack::{
@@ -114,6 +115,8 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 	// Route table for CIDR -> peer mapping
 	let routes = RouteTable::shared();
 
+	let psk = global.resolve_psk();
+
 	match transport {
 		TransportDir::Both { .. } => {
 			anyhow::bail!("Entry nodes do not support both --connect and --listen simultaneously")
@@ -128,7 +131,7 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 				routes: Some(Arc::clone(&routes)),
 			};
 
-			let server_config = build_server_config(global, addr);
+			let server_config = build_server_config(global, addr, psk.clone(), cmd.max_peers);
 
 			// Start REST API if enabled
 			#[cfg(feature = "api")]
@@ -152,7 +155,15 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 							server_options,
 						)?;
 						crate::info!("Listening on {addr} (QUIC/UDP)");
-						run_entry_server(server, metrics, peers, routes, sessions).await
+						println!("Certificate fingerprint: {}", server.fingerprint());
+						if server.psk().is_none() {
+							eprintln!(
+								"WARNING: No authentication configured. Any client can connect."
+							);
+							eprintln!("Use --psk <SECRET> to require authentication.");
+						}
+						run_entry_server(server, metrics, peers, routes, sessions, cmd.max_peers)
+							.await
 					}
 					#[cfg(not(feature = "quic"))]
 					{
@@ -167,7 +178,15 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 						let server =
 							wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
 						crate::info!("Listening on {addr} (WebSocket/TCP)");
-						run_entry_server(server, metrics, peers, routes, sessions).await
+						println!("Certificate fingerprint: {}", server.fingerprint());
+						if server.psk().is_none() {
+							eprintln!(
+								"WARNING: No authentication configured. Any client can connect."
+							);
+							eprintln!("Use --psk <SECRET> to require authentication.");
+						}
+						run_entry_server(server, metrics, peers, routes, sessions, cmd.max_peers)
+							.await
 					}
 					#[cfg(not(feature = "websocket"))]
 					{
@@ -308,11 +327,15 @@ async fn run_entry_server<S: Server>(
 	peers: Arc<Registry>,
 	routes: SharedRouteTable,
 	sessions: SessionManager,
+	max_peers: Option<usize>,
 ) -> Result<()>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
 	S::Transport: Send + Sync + 'static,
 {
+	let server_psk = server.psk().map(String::from);
+	let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(max_peers.unwrap_or(usize::MAX)));
+
 	// Channel for REPL commands (input thread -> async loop)
 	let (repl_tx, repl_rx) = mpsc::channel::<ReplCommand>(16);
 
@@ -344,6 +367,16 @@ where
 			accept_result = server.accept(NodeRole::Entry) => {
 				match accept_result {
 					Ok(Some(mut accept_result)) => {
+						// Enforce max peers limit
+						let permit = match Arc::clone(&peer_semaphore).try_acquire_owned() {
+							Ok(permit) => permit,
+							Err(_) => {
+								crate::info!("Max peers reached, rejecting connection from {}", accept_result.client_ident());
+								printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.client_ident()));
+								continue;
+							}
+						};
+
 						let conn_metrics = accept_result.metrics();
 						let conn_printer = printer.clone();
 						let conn_sessions = sessions.clone();
@@ -365,8 +398,11 @@ where
 						let transport = accept_result.transport();
 
 						// Spawn handler for this connection (each exit node gets its own TUN)
+						let conn_psk = server_psk.clone();
 						tokio::spawn(async move {
-							let result = handle_connection(conn_metrics, accept_result, hello_rx, hello_tx, conn_sessions.clone(), &mut ping_rx, &transport, &conn_peers).await;
+							// Hold the permit for the lifetime of this connection
+							let _permit = permit;
+							let result = handle_connection(conn_metrics, accept_result, hello_rx, hello_tx, conn_sessions.clone(), &mut ping_rx, &transport, &conn_peers, conn_psk).await;
 							// Unregister peer when connection closes
 							conn_peers.unregister(&peer_id);
 							// Clean up routes for this peer
@@ -851,6 +887,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack::control::peers::PingRequest>,
 	transport: &Arc<T>,
 	peers: &Arc<wallhack::control::peers::Registry>,
+	server_psk: Option<String>,
 ) -> Result<String> {
 	// Spawn incoming data handler with pong channel for latency measurement
 	let (pong_tx, mut pong_rx) = tokio::sync::mpsc::channel::<protobuf::v2::Pong>(1);
@@ -881,6 +918,21 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	let exit_id = if let Some(rx) = hello_rx {
 		match tokio::time::timeout(HELLO_TIMEOUT, rx).await {
 			Ok(Ok(hello)) => {
+				// Validate PSK if configured
+				if let Some(ref expected_psk) = server_psk {
+					let token_bytes = hello.auth_token.as_bytes();
+					let expected_bytes = expected_psk.as_bytes();
+					if token_bytes.len() != expected_bytes.len()
+						|| !bool::from(token_bytes.ct_eq(expected_bytes))
+					{
+						tracing::warn!(
+							"Peer {} failed PSK authentication, dropping",
+							hello.exit_id
+						);
+						anyhow::bail!("PSK authentication failed for peer {}", hello.exit_id);
+					}
+				}
+
 				crate::info!(
 					"Exit node identified: {} (v{})",
 					hello.exit_id,
@@ -999,10 +1051,14 @@ fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
 fn build_server_config(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
+	psk: Option<String>,
+	max_peers: Option<usize>,
 ) -> wallhack::server::config::ServerConfig {
 	ServerConfig {
 		listen: addr,
 		tls: build_tls_config(global),
+		psk,
+		max_peers,
 	}
 }
 
@@ -1063,6 +1119,7 @@ fn build_quic_client_config(
 		addr: endpoint,
 		hostname: global.hostname.clone(),
 		mtls,
+		psk: global.resolve_psk(),
 		..Default::default()
 	}
 }
