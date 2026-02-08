@@ -165,7 +165,9 @@ impl EntryCommand {
 			(None, Some(addr)) => Ok(TransportDir::Connect(AddressSpec::parse(addr))),
 			(None, None) => {
 				let default_port = wallhack::server::config::DEFAULT_LISTEN_PORT;
-				Ok(TransportDir::Listen(AddressSpec::parse(&format!(":{default_port}"))))
+				Ok(TransportDir::Listen(AddressSpec::parse(&format!(
+					":{default_port}"
+				))))
 			}
 		}
 	}
