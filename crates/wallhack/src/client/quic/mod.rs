@@ -8,7 +8,6 @@ use crate::{
 	client::tls_config,
 	transport::{bridge, quic::QuicTransport},
 };
-use prost::Message;
 use protobuf::v2::{
 	EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message,
 };
@@ -130,16 +129,11 @@ impl Client for QuicClient {
 					auth_token: self.psk.clone().unwrap_or_default(),
 				})),
 			};
-			let mut buf = Vec::new();
-			hello
-				.encode(&mut buf)
-				.expect("failed to encode ExitNodeHello");
-
 			let mut send = transport.connection().open_uni().await?;
-			send.write_all(&buf)
+			bridge::write_length_delimited(&mut send, &hello)
 				.await
 				.map_err(|e| std::io::Error::other(e.to_string()))?;
-			let _ = send.finish(); // Ignore close errors
+			let _ = send.finish();
 			tracing::debug!("ExitNodeHello sent successfully");
 		}
 

@@ -9,7 +9,6 @@ use std::{
 	task::{Context, Poll},
 };
 
-use prost::Message;
 use protobuf::v2::{
 	EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message,
 };
@@ -234,16 +233,13 @@ impl WsClient {
 					auth_token: self.config.base.psk.clone().unwrap_or_default(),
 				})),
 			};
-			let mut buf = Vec::new();
-			hello
-				.encode(&mut buf)
-				.expect("failed to encode ExitNodeHello");
-
 			let mut send = transport
 				.open_uni()
 				.await
 				.map_err(|e| Error::Io(std::io::Error::other(e)))?;
-			send.write_all(&buf).await.map_err(Error::Io)?;
+			bridge::write_length_delimited(&mut send, &hello)
+				.await
+				.map_err(|e| Error::Io(std::io::Error::other(e)))?;
 			send.shutdown().await.map_err(Error::Io)?;
 			tracing::debug!("ExitNodeHello sent successfully");
 		}

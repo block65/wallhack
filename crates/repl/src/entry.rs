@@ -1001,9 +1001,7 @@ async fn send_ping<T: wallhack::transport::Transport>(
 	transport: &T,
 	pong_rx: &mut tokio::sync::mpsc::Receiver<protobuf::v2::Pong>,
 ) -> Result<f64> {
-	use prost::Message;
 	use protobuf::v2::{Ping, TunnelMessage, tunnel_message};
-	use tokio::io::AsyncWriteExt;
 
 	#[allow(clippy::cast_possible_truncation)]
 	let ts = std::time::SystemTime::now()
@@ -1023,8 +1021,7 @@ async fn send_ping<T: wallhack::transport::Transport>(
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to open uni stream: {e}"))?;
 
-	let encoded = ping_msg.encode_to_vec();
-	send.write_all(&encoded)
+	wallhack::transport::bridge::write_length_delimited(&mut send, &ping_msg)
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to send ping: {e}"))?;
 	drop(send);
