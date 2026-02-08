@@ -218,6 +218,7 @@ message TunnelMessage {
 message ExitNodeHello {
   string exit_id = 1;      // Stable identifier (user-provided or auto-generated)
   string version = 2;       // Exit node version for compatibility checks
+  string auth_token = 3;    // PSK value for tunnel authentication (sent inside TLS)
 }
 
 // Ping request for latency measurement.
