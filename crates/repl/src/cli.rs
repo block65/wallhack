@@ -48,7 +48,7 @@ pub struct WallhackCli {
 	#[argh(option, short = 't', default = "10")]
 	pub timeout: u64,
 
-	/// pre-shared key for tunnel authentication (or set WALLHACK_PSK env var)
+	/// pre-shared key for tunnel authentication (or set `WALLHACK_PSK` env var)
 	#[argh(option)]
 	pub psk: Option<String>,
 
@@ -135,7 +135,7 @@ pub struct ExitCommand {
 	pub insecure: bool,
 }
 
-/// Relay node: forwards traffic between upstream and downstream peers.
+/// Relay node: forwards traffic between peers.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "relay")]
 pub struct RelayCommand {
@@ -258,10 +258,123 @@ impl RelayCommand {
 	}
 }
 
+/// Known subcommand names.
+const SUBCOMMANDS: &[&str] = &["entry", "exit", "relay"];
+
+/// Global switches that belong before the subcommand.
+const GLOBAL_FLAGS: &[&str] = &["--debug", "-v", "--verbose", "-q", "--quiet", "--version"];
+
+/// Flags that belong to a subcommand, used by `suggest_subcommand` for detection.
+const SUBCOMMAND_FLAGS: &[&str] = &["--listen", "-l", "--connect", "-c"];
+
+/// Reorder global flags that appear after the subcommand to before it.
+fn reorder_global_flags(args: Vec<String>) -> Vec<String> {
+	// Find the subcommand position (skip argv[0])
+	let sub_pos = args[1..]
+		.iter()
+		.position(|a| SUBCOMMANDS.contains(&a.as_str()))
+		.map(|i| i + 1);
+
+	let Some(sub_pos) = sub_pos else {
+		return args;
+	};
+
+	let mut before: Vec<String> = args[..sub_pos].to_vec();
+	let subcommand = args[sub_pos].clone();
+	let mut after: Vec<String> = Vec::new();
+
+	for arg in &args[sub_pos + 1..] {
+		if GLOBAL_FLAGS.contains(&arg.as_str()) {
+			before.push(arg.clone());
+		} else {
+			after.push(arg.clone());
+		}
+	}
+
+	before.push(subcommand);
+	before.extend(after);
+	before
+}
+
+/// Suggest a subcommand when subcommand-level flags are used at the top level.
+fn suggest_subcommand(args: &[&str]) -> Option<String> {
+	use std::fmt::Write;
+
+	let has_subcommand = args.iter().any(|a| SUBCOMMANDS.contains(a));
+	if has_subcommand {
+		return None;
+	}
+
+	let has_sub_flag = args.iter().any(|a| SUBCOMMAND_FLAGS.contains(a));
+	if !has_sub_flag {
+		return None;
+	}
+
+	let has_listen = args.iter().any(|a| *a == "--listen" || *a == "-l");
+
+	let flag_str: String = args
+		.iter()
+		.map(|a| (*a).to_string())
+		.collect::<Vec<_>>()
+		.join(" ");
+
+	let mut lines = String::new();
+	if has_listen {
+		let _ = writeln!(lines, "  wallhack entry {flag_str}");
+		let _ = writeln!(lines, "  wallhack exit {flag_str}");
+	} else {
+		let _ = writeln!(lines, "  wallhack exit {flag_str}");
+		let _ = writeln!(lines, "  wallhack entry {flag_str}");
+	}
+
+	let flag_name = if has_listen { "--listen" } else { "--connect" };
+	Some(format!(
+		"The {flag_name} flag requires a subcommand. Did you mean:\n\n{lines}"
+	))
+}
+
+/// Extract the binary name from argv[0], like argh does internally.
+fn binary_name(argv0: &str) -> &str {
+	std::path::Path::new(argv0)
+		.file_name()
+		.and_then(|s| s.to_str())
+		.unwrap_or(argv0)
+}
+
 /// Parse CLI from command line arguments.
+///
+/// Wraps argh with:
+/// - Global flag reordering (allows `wallhack entry --debug` in addition to `wallhack --debug entry`)
+/// - Better error messages when subcommand-level flags are used without a subcommand
 #[must_use]
-pub fn parse_wallhack() -> WallhackCli {
-	argh::from_env()
+pub fn parse_cli() -> WallhackCli {
+	let args: Vec<String> = std::env::args().collect();
+	let reordered = reorder_global_flags(args);
+	let cmd = binary_name(&reordered[0]);
+	let strs: Vec<&str> = reordered.iter().map(String::as_str).collect();
+
+	match WallhackCli::from_args(&[cmd], &strs[1..]) {
+		Ok(cli) => cli,
+		Err(early_exit) => {
+			if early_exit.status.is_err()
+				&& let Some(hint) = suggest_subcommand(&strs[1..])
+			{
+				eprintln!("{hint}");
+				eprintln!("Run {cmd} --help for more information.");
+				std::process::exit(1);
+			}
+			std::process::exit(if let Ok(()) = early_exit.status {
+				println!("{}", early_exit.output);
+				0
+			} else {
+				eprintln!(
+					"{}\nRun {cmd} --help for more information.",
+					early_exit.output
+				);
+				1
+			})
+		}
+	}
 }
 
 impl WallhackCli {

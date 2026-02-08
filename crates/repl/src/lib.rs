@@ -13,7 +13,7 @@ mod relay;
 #[cfg(feature = "color")]
 mod styles;
 
-pub use cli::{Command, EntryCommand, ExitCommand, RelayCommand, WallhackCli, parse_wallhack};
+pub use cli::{Command, EntryCommand, ExitCommand, RelayCommand, WallhackCli, parse_cli};
 pub use styles::OutputStyles;
 
 // ============================================================================

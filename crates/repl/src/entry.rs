@@ -458,6 +458,7 @@ where
 						if peer_ids.is_empty() {
 							printer.print("No connected peers to ping.");
 						} else {
+							printer.print(format!("Pinging {} peer(s)...", peer_ids.len()));
 							for id in &peer_ids {
 								match peers.ping_peer(id).await {
 									Ok(ms) => printer.print(format!("  {id}: {ms:.1}ms")),
@@ -985,7 +986,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 						let _ = result_tx.send(ms);
 					}
 					Err(e) => {
-						tracing::warn!("Ping failed: {e}");
+						tracing::debug!("Ping failed: {e}");
 						drop(result_tx);
 					}
 				}

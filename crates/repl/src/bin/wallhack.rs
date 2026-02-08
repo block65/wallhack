@@ -9,12 +9,12 @@
 //!   wallhack relay --connect upstream:443 --listen :6565  # Relay
 
 use anyhow::Result;
-use repl::{Command, EntryCommand, parse_wallhack, run_entry, run_exit, run_relay};
+use repl::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-	let cli = parse_wallhack();
+	let cli = parse_cli();
 
 	// Handle --version flag
 	if cli.version {
