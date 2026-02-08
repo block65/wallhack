@@ -370,14 +370,11 @@ where
 				match accept_result {
 					Ok(Some(mut accept_result)) => {
 						// Enforce max peers limit
-						let permit = match Arc::clone(&peer_semaphore).try_acquire_owned() {
-							Ok(permit) => permit,
-							Err(_) => {
-								crate::info!("Max peers reached, rejecting connection from {}", accept_result.client_ident());
-								printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.client_ident()));
-								continue;
-							}
-						};
+						let permit = if let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() { permit } else {
+									  crate::info!("Max peers reached, rejecting connection from {}", accept_result.client_ident());
+									  printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.client_ident()));
+									  continue;
+								  };
 
 						let conn_metrics = accept_result.metrics();
 						let conn_printer = printer.clone();
