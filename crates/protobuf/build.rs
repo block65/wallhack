@@ -11,6 +11,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	config.type_attribute("IpV6Address", "#[derive(Eq, Hash)]");
 	config.type_attribute("IpV4Address", "#[derive(Eq, Hash)]");
 
+	// Use bytes::Bytes for data fields to enable O(1) broadcast channel clones
+	config.bytes([
+		".tunnel.command.v2.TcpSendInstruction.data",
+		".tunnel.command.v2.TcpDataRecvResponse.data",
+		".tunnel.command.v2.UdpSendInstruction.data",
+		".tunnel.command.v2.UdpDataRecvResponse.data",
+		".tunnel.command.v2.IcmpEchoRequest.data",
+		".tunnel.command.v2.IcmpDataRecvResponse.data",
+		".tunnel.command.v2.RawPacket.data",
+	]);
+
 	config.compile_protos(&proto_file_paths, &["."])?;
 
 	for proto_file_path in proto_file_paths {

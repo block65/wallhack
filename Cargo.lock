@@ -1929,6 +1929,7 @@ dependencies = [
 name = "protobuf"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "prost",
  "prost-build",
  "prost-types",

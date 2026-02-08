@@ -65,7 +65,7 @@ impl SyscallExitAdapter {
 	pub async fn tcp_send_impl(
 		&self,
 		set: SocketSet,
-		mut buf: Vec<u8>,
+		buf: &[u8],
 		fin: bool,
 	) -> Result<SendResponse, RuntimeError> {
 		tracing::trace!("Received send data request: {:?}", set,);
@@ -83,7 +83,7 @@ impl SyscallExitAdapter {
 						// Write data if present
 						if !buf.is_empty() {
 							tracing::trace!("Sending data");
-							match session.send(dest, &mut buf).await {
+							match session.send(dest, buf).await {
 								Ok(sessions::common::SessionStatus::DataIo { size, .. }) => {
 									tracing::trace!("Sent {size} bytes to socket");
 									if fin {

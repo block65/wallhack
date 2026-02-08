@@ -38,7 +38,7 @@ impl IcmpSession {
 		tracing::trace!(seq_no = seq_no, "Sending ICMP echo request");
 		let default_caps = ChecksumCapabilities::default();
 
-		let mut echo_request_buf = match self.pair {
+		let echo_request_buf = match self.pair {
 			SocketSet::Ipv4(_) => {
 				let icmp_repr = Icmpv4Repr::EchoRequest {
 					ident: 0x0, // ident is ignored and assigned by the OS instead
@@ -71,7 +71,7 @@ impl IcmpSession {
 		};
 
 		let (_, dst_addr) = self.pair.into();
-		let status = self.send(dst_addr, &mut echo_request_buf).await?;
+		let status = self.send(dst_addr, &echo_request_buf).await?;
 
 		tracing::trace!("Sent ICMP echo request status {:?}. Waiting to rx", status);
 
@@ -84,7 +84,7 @@ impl RxSession for IcmpSession {
 	async fn send(
 		&self,
 		dst_addr: SocketAddr,
-		buf: &mut [u8],
+		buf: &[u8],
 	) -> Result<SessionStatus, RuntimeError> {
 		let dst_addr2: socket2::SockAddr = dst_addr.into();
 

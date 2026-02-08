@@ -1,4 +1,6 @@
-use std::{sync::Arc, vec};
+use std::sync::Arc;
+
+use bytes::Bytes;
 
 use protobuf::v2::{
 	self, EntryNodeInstruction, ExitNodeResponse, IcmpEchoRequest, IcmpSendInstruction,
@@ -229,7 +231,7 @@ async fn run_tcp_recv<A: ExitAdapter>(
 					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
 						response: Some(v2::tcp_response::Response::DataRecv(
 							v2::TcpDataRecvResponse {
-								data: recv_buf[..size].to_vec(),
+								data: Bytes::copy_from_slice(&recv_buf[..size]),
 								fin: false,
 							},
 						)),
@@ -243,7 +245,7 @@ async fn run_tcp_recv<A: ExitAdapter>(
 					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
 						response: Some(v2::tcp_response::Response::DataRecv(
 							v2::TcpDataRecvResponse {
-								data: vec![],
+								data: Bytes::new(),
 								fin: true,
 							},
 						)),
@@ -284,7 +286,7 @@ fn handle_tcp_send<A: ExitAdapter>(
 
 	tasks.spawn(async move {
 		let result: Result<(), Error> = async {
-			let response = adapter.tcp_send(set, instr.data, instr.fin).await?;
+			let response = adapter.tcp_send(set, &instr.data, instr.fin).await?;
 			responses.send(response.into())?;
 			Ok(())
 		}
@@ -327,11 +329,11 @@ fn handle_udp_send<A: ExitAdapter>(
 
 	let adapter = Arc::clone(adapter);
 	let responses = responses.clone();
-	let mut data = instr.data;
+	let data = instr.data;
 
 	tasks.spawn(async move {
 		let result: Result<(), Error> = async {
-			let response = adapter.udp_send(set, &mut data).await?;
+			let response = adapter.udp_send(set, &data).await?;
 
 			let is_new = matches!(
 				response,
@@ -387,7 +389,7 @@ async fn run_udp_recv<A: ExitAdapter>(
 				response: Some(exit_node_response::Response::UdpResponse(v2::UdpResponse {
 					response: Some(v2::udp_response::Response::DataRecv(
 						v2::UdpDataRecvResponse {
-							data: recv_buf[..size].to_vec(),
+							data: Bytes::copy_from_slice(&recv_buf[..size]),
 						},
 					)),
 				})),
@@ -480,7 +482,7 @@ fn handle_icmp_send<A: ExitAdapter>(
 					v2::IcmpResponse {
 						response: Some(icmp_response::Response::DataRecv(
 							v2::IcmpDataRecvResponse {
-								data: recv_buf,
+								data: recv_buf.into(),
 								echo_ident: ident,
 							},
 						)),

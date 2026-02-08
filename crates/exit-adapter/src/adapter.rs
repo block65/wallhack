@@ -301,7 +301,7 @@ pub trait ExitAdapter: Send + Sync + 'static {
 	fn udp_send(
 		&self,
 		set: SocketSet,
-		data: &mut [u8],
+		data: &[u8],
 	) -> impl std::future::Future<Output = Result<SendResponse, RuntimeError>> + Send;
 
 	fn udp_recv_session(&self, set: SocketSet) -> Result<Option<UdpSession>, RuntimeError>;
@@ -316,7 +316,7 @@ pub trait ExitAdapter: Send + Sync + 'static {
 	fn tcp_send(
 		&self,
 		set: SocketSet,
-		data: Vec<u8>,
+		data: &[u8],
 		fin: bool,
 	) -> impl std::future::Future<Output = Result<SendResponse, RuntimeError>> + Send;
 

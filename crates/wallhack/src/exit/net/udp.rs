@@ -12,7 +12,7 @@ impl SyscallExitAdapter {
 	pub async fn udp_send_impl(
 		&self,
 		set: SocketSet,
-		data: &mut [u8],
+		data: &[u8],
 	) -> Result<SendResponse, RuntimeError> {
 		tracing::trace!("Received send data request: {:?}", set);
 

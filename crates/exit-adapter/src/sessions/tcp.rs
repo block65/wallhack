@@ -31,7 +31,7 @@ impl RxSession for TcpSession {
 	async fn send(
 		&self,
 		_dst_addr: SocketAddr,
-		buf: &mut [u8],
+		buf: &[u8],
 	) -> Result<SessionStatus, RuntimeError> {
 		if buf.is_empty() {
 			return Ok(SessionStatus::DataIo { size: 0 });

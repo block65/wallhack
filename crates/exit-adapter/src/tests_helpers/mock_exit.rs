@@ -30,7 +30,7 @@ impl ExitAdapter for NullExitAdapter {
 	async fn tcp_send(
 		&self,
 		set: crate::SocketSet,
-		data: Vec<u8>,
+		data: &[u8],
 		fin: bool,
 	) -> Result<SendResponse, RuntimeError> {
 		Ok(SendResponse::Ok {
@@ -64,7 +64,7 @@ impl ExitAdapter for NullExitAdapter {
 	async fn udp_send(
 		&self,
 		_pair: crate::SocketSet,
-		_data: &mut [u8],
+		_data: &[u8],
 	) -> Result<SendResponse, RuntimeError> {
 		todo!()
 	}
@@ -139,7 +139,7 @@ pub async fn run(
 				};
 				tracing::trace!("Received send data request: {:?}", pair);
 				let fut = async move {
-					match adapter_clone.tcp_send(pair.try_into()?, data, fin).await {
+					match adapter_clone.tcp_send(pair.try_into()?, &data, fin).await {
 						Ok(response) => {
 							tracing::trace!("SendData got response {:?}", response);
 							tx_clone.send(response.into()).unwrap_or_else(|e| {

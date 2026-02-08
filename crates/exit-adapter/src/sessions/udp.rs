@@ -20,7 +20,7 @@ impl UdpSession {
 }
 
 impl RxSession for UdpSession {
-	async fn send(&self, dest: SocketAddr, buf: &mut [u8]) -> Result<SessionStatus, RuntimeError> {
+	async fn send(&self, dest: SocketAddr, buf: &[u8]) -> Result<SessionStatus, RuntimeError> {
 		loop {
 			// Wait for the socket to be writable
 			if let Err(io_err) = self.socket.writable().await {
