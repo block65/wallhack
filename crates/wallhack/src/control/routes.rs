@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use parking_lot::RwLock;
+use arc_swap::ArcSwap;
 
 use crate::Cidr;
 
@@ -21,9 +21,19 @@ pub struct RouteEntry {
 pub type SharedRouteTable = Arc<RouteTable>;
 
 /// Thread-safe route table mapping CIDRs to exit-node peers.
-#[derive(Debug, Default)]
+///
+/// Uses `ArcSwap` for wait-free reads.
+#[derive(Debug)]
 pub struct RouteTable {
-	routes: RwLock<HashMap<Cidr, RouteEntry>>,
+	routes: ArcSwap<HashMap<Cidr, RouteEntry>>,
+}
+
+impl Default for RouteTable {
+	fn default() -> Self {
+		Self {
+			routes: ArcSwap::from_pointee(HashMap::new()),
+		}
+	}
 }
 
 impl RouteTable {
@@ -46,45 +56,61 @@ impl RouteTable {
 			peer_id,
 			added_at: Instant::now(),
 		};
-		self.routes.write().insert(cidr, entry)
+		let mut old_entry = None;
+		self.routes.rcu(|old| {
+			let mut new = (**old).clone();
+			old_entry = new.insert(cidr, entry.clone());
+			new
+		});
+		old_entry
 	}
 
 	/// Remove a route by CIDR. Returns the removed entry if it existed.
 	pub fn remove(&self, cidr: &Cidr) -> Option<RouteEntry> {
-		self.routes.write().remove(cidr)
+		let mut removed = None;
+		self.routes.rcu(|old| {
+			let mut new = (**old).clone();
+			removed = new.remove(cidr);
+			new
+		});
+		removed
 	}
 
 	/// Remove all routes pointing at a specific peer. Returns removed entries.
 	pub fn remove_by_peer(&self, peer_id: &str) -> Vec<RouteEntry> {
-		let mut routes = self.routes.write();
-		let to_remove: Vec<Cidr> = routes
-			.iter()
-			.filter(|(_, entry)| entry.peer_id == peer_id)
-			.map(|(cidr, _)| *cidr)
-			.collect();
-
-		to_remove
-			.into_iter()
-			.filter_map(|cidr| routes.remove(&cidr))
-			.collect()
+		let mut removed = Vec::new();
+		self.routes.rcu(|old| {
+			let mut new = (**old).clone();
+			let to_remove: Vec<Cidr> = new
+				.iter()
+				.filter(|(_, entry)| entry.peer_id == peer_id)
+				.map(|(cidr, _)| *cidr)
+				.collect();
+			removed = to_remove
+				.into_iter()
+				.filter_map(|cidr| new.remove(&cidr))
+				.collect();
+			new
+		});
+		removed
 	}
 
 	/// Look up a route by CIDR.
 	#[must_use]
 	pub fn get(&self, cidr: &Cidr) -> Option<RouteEntry> {
-		self.routes.read().get(cidr).cloned()
+		self.routes.load().get(cidr).cloned()
 	}
 
 	/// List all routes.
 	#[must_use]
 	pub fn list(&self) -> Vec<RouteEntry> {
-		self.routes.read().values().cloned().collect()
+		self.routes.load().values().cloned().collect()
 	}
 
 	/// Number of routes in the table.
 	#[must_use]
 	pub fn count(&self) -> usize {
-		self.routes.read().len()
+		self.routes.load().len()
 	}
 }
 

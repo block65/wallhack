@@ -6,7 +6,7 @@ use std::{
 	time::{Duration, Instant},
 };
 
-use parking_lot::RwLock;
+use arc_swap::ArcSwap;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::NodeRole;
@@ -39,11 +39,22 @@ pub struct PeerInfo {
 pub type SharedRegistry = Arc<Registry>;
 
 /// Registry of connected peers.
-#[derive(Debug, Default)]
+///
+/// Uses `ArcSwap` for wait-free reads.
+#[derive(Debug)]
 pub struct Registry {
-	peers: RwLock<HashMap<String, PeerInfo>>,
+	peers: ArcSwap<HashMap<String, PeerInfo>>,
 	/// Channels to request pings from connection handlers.
-	ping_channels: RwLock<HashMap<String, mpsc::Sender<PingRequest>>>,
+	ping_channels: ArcSwap<HashMap<String, mpsc::Sender<PingRequest>>>,
+}
+
+impl Default for Registry {
+	fn default() -> Self {
+		Self {
+			peers: ArcSwap::from_pointee(HashMap::new()),
+			ping_channels: ArcSwap::from_pointee(HashMap::new()),
+		}
+	}
 }
 
 impl Registry {
@@ -71,20 +82,38 @@ impl Registry {
 			latency_ms: None,
 			latency_measured_at: None,
 		};
-		self.peers.write().insert(id, info);
+		self.peers.rcu(move |old| {
+			let mut new = (**old).clone();
+			new.insert(id.clone(), info.clone());
+			new
+		});
 	}
 
 	/// Update relay capability for a peer.
 	pub fn set_relay_capability(&self, id: &str, has_capability: bool) {
-		if let Some(peer) = self.peers.write().get_mut(id) {
-			peer.has_relay_capability = has_capability;
-		}
+		self.peers.rcu(|old| {
+			let mut new = (**old).clone();
+			if let Some(peer) = new.get_mut(id) {
+				peer.has_relay_capability = has_capability;
+			}
+			new
+		});
 	}
 
 	/// Unregister a peer.
 	pub fn unregister(&self, id: &str) -> Option<PeerInfo> {
-		self.ping_channels.write().remove(id);
-		self.peers.write().remove(id)
+		self.ping_channels.rcu(|old| {
+			let mut new = (**old).clone();
+			new.remove(id);
+			new
+		});
+		let mut removed = None;
+		self.peers.rcu(|old| {
+			let mut new = (**old).clone();
+			removed = new.remove(id);
+			new
+		});
+		removed
 	}
 
 	/// Register a ping channel for a peer's connection handler.
@@ -92,7 +121,11 @@ impl Registry {
 	/// Returns the receiver that the connection handler should listen on.
 	pub fn register_ping_channel(&self, id: &str) -> mpsc::Receiver<PingRequest> {
 		let (tx, rx) = mpsc::channel(1);
-		self.ping_channels.write().insert(id.to_string(), tx);
+		self.ping_channels.rcu(|old| {
+			let mut new = (**old).clone();
+			new.insert(id.to_string(), tx.clone());
+			new
+		});
 		rx
 	}
 
@@ -109,7 +142,7 @@ impl Registry {
 		id: &str,
 	) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
 		let tx = {
-			let channels = self.ping_channels.read();
+			let channels = self.ping_channels.load();
 			channels
 				.get(id)
 				.ok_or_else(|| format!("No ping channel for peer: {id}"))?
@@ -128,47 +161,55 @@ impl Registry {
 
 	/// Update bytes transferred for a peer.
 	pub fn add_bytes(&self, id: &str, bytes: u64) {
-		if let Some(peer) = self.peers.write().get_mut(id) {
-			peer.bytes_transferred = peer.bytes_transferred.saturating_add(bytes);
-		}
+		self.peers.rcu(|old| {
+			let mut new = (**old).clone();
+			if let Some(peer) = new.get_mut(id) {
+				peer.bytes_transferred = peer.bytes_transferred.saturating_add(bytes);
+			}
+			new
+		});
 	}
 
 	/// Update latency measurement for a peer.
 	pub fn update_latency(&self, id: &str, latency_ms: f64) {
-		if let Some(peer) = self.peers.write().get_mut(id) {
-			peer.latency_ms = Some(latency_ms);
-			peer.latency_measured_at = Some(Instant::now());
-		}
+		self.peers.rcu(|old| {
+			let mut new = (**old).clone();
+			if let Some(peer) = new.get_mut(id) {
+				peer.latency_ms = Some(latency_ms);
+				peer.latency_measured_at = Some(Instant::now());
+			}
+			new
+		});
 	}
 
 	/// Get info for a specific peer.
 	#[must_use]
 	pub fn get(&self, id: &str) -> Option<PeerInfo> {
-		self.peers.read().get(id).cloned()
+		self.peers.load().get(id).cloned()
 	}
 
 	/// List all peers.
 	#[must_use]
 	pub fn list(&self) -> Vec<PeerInfo> {
-		self.peers.read().values().cloned().collect()
+		self.peers.load().values().cloned().collect()
 	}
 
 	/// Get number of connected peers.
 	#[must_use]
 	pub fn count(&self) -> usize {
-		self.peers.read().len()
+		self.peers.load().len()
 	}
 
 	/// Get IDs of all peers (for iteration without holding lock)
 	#[must_use]
 	pub fn peer_ids(&self) -> Vec<String> {
-		self.peers.read().keys().cloned().collect()
+		self.peers.load().keys().cloned().collect()
 	}
 
-	/// Check if a peer's latency is stale (older than threshold).cargo fmt
+	/// Check if a peer's latency is stale (older than threshold).
 	#[must_use]
 	pub fn is_latency_stale(&self, id: &str, threshold: Duration) -> bool {
-		self.peers.read().get(id).is_none_or(|p| {
+		self.peers.load().get(id).is_none_or(|p| {
 			p.latency_measured_at
 				.is_none_or(|t| t.elapsed() > threshold)
 		})
