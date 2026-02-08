@@ -6,9 +6,9 @@ Always use `-q` (quiet) with cargo commands to reduce noise:
 
 ```sh
 cargo build -q --features full
-cargo clippy -q --features full
+cargo clippy -q --features full --fix --allow-dirty
 cargo test -q
-cargo fmt --check
+cargo fmt
 ```
 
 Run all four after making changes. Fix any issues before committing.
