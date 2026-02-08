@@ -250,13 +250,18 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 				.expect("timestamp overflow"),
 			);
 			if jit_tcp || jit_udp {
-				// Get ALL pending packets and create listeners for each SYN.
-				// This handles burst arrivals where multiple SYNs arrive before
-				// poll() can process them.
-				let packets = inner.peek_all_ingress();
-				for packet in &packets {
-					let _ = jit_bind_ports(
-						&mut inner, packet, jit_tcp, jit_udp, &tcp_ports, &udp_ports, &notify,
+				// Get ALL pending packets and extract port info before mutating.
+				// peek_all_ingress returns a reference, so we extract what we need
+				// before calling jit_bind_ports which needs &mut inner.
+				let port_info: Vec<_> = inner
+					.peek_all_ingress()
+					.iter()
+					.filter_map(|pkt| parse_l4(pkt))
+					.collect();
+				for (protocol, dst_port, is_syn) in &port_info {
+					let _ = jit_bind_port(
+						&mut inner, *protocol, *dst_port, *is_syn, jit_tcp, jit_udp, &tcp_ports,
+						&udp_ports, &notify,
 					);
 				}
 			}
@@ -291,21 +296,17 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 				tokio::task::yield_now().await;
 			}
 			Some(d) => {
-				// We need to poll even if the stack says it can wait, because
-				// new packets might arrive on the TUN interface which we need
-				// to JIT bind.
-				//
-				// TODO: This is inefficient (busy loop with 1ms sleep).
-				// Proper fix requires AsyncDevice trait so we can await on read.
+				// Poll at the earlier of the smoltcp deadline or 1ms, since new
+				// packets may arrive on the TUN device requiring JIT binding.
 				tokio::select! {
-					() = tokio::time::sleep(d.min(tokio::time::Duration::from_millis(10))) => {}
+					() = tokio::time::sleep(d.min(tokio::time::Duration::from_millis(1))) => {}
 					() = shared.notify.notified() => {}
 				}
 			}
 			None => {
-				// Same here - wake up periodically to check for new packets
+				// No smoltcp deadline — wake on notify or check for new packets
 				tokio::select! {
-					() = tokio::time::sleep(tokio::time::Duration::from_millis(10)) => {}
+					() = tokio::time::sleep(tokio::time::Duration::from_millis(1)) => {}
 					() = shared.notify.notified() => {}
 				}
 			}
@@ -313,20 +314,18 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 	}
 }
 
-fn jit_bind_ports<D: Device + Send + 'static>(
+#[allow(clippy::too_many_arguments)]
+fn jit_bind_port<D: Device + Send + 'static>(
 	inner: &mut InnerStack<D>,
-	packet: &[u8],
+	protocol: IpProtocol,
+	dst_port: u16,
+	is_syn: bool,
 	jit_tcp: bool,
 	jit_udp: bool,
 	tcp_ports: &Arc<Mutex<HashSet<u16>>>,
 	udp_ports: &Arc<Mutex<HashSet<u16>>>,
 	notify: &Arc<Notify>,
 ) -> Result<(), crate::error::Error> {
-	let Some((protocol, dst_port, is_syn)) = parse_l4(packet) else {
-		tracing::trace!(packet_len = packet.len(), "JIT: failed to parse L4");
-		return Ok(());
-	};
-
 	tracing::trace!(
 		?protocol,
 		dst_port,

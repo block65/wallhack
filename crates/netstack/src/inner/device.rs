@@ -66,6 +66,10 @@ impl PeekDevice for VecDevice {
 	fn peek_ingress(&mut self) -> Option<&[u8]> {
 		self.ingress.front().map(std::vec::Vec::as_slice)
 	}
+
+	fn peek_all_ingress(&mut self) -> &VecDeque<Vec<u8>> {
+		&self.ingress
+	}
 }
 
 impl Device for VecDevice {

@@ -139,11 +139,11 @@ impl<D: Device> InnerStack<D> {
 		self.device.peek_ingress()
 	}
 
-	/// Returns all pending ingress packets.
+	/// Returns a reference to all pending ingress packets.
 	///
-	/// This drains all available packets from the device and returns copies.
-	/// Used for JIT listener creation to handle burst arrivals.
-	pub fn peek_all_ingress(&mut self) -> Vec<Vec<u8>>
+	/// This drains all available packets from the device and returns a reference
+	/// to the internal queue. Used for JIT listener creation to handle burst arrivals.
+	pub fn peek_all_ingress(&mut self) -> &std::collections::VecDeque<Vec<u8>>
 	where
 		D: crate::inner::peek_device::PeekDevice,
 	{

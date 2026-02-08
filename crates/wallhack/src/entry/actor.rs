@@ -147,11 +147,11 @@ impl netstack::inner::peek_device::PeekDevice for SmoltcpTunDevice {
 		self.pending.front().map(std::vec::Vec::as_slice)
 	}
 
-	fn peek_all_ingress(&mut self) -> Vec<Vec<u8>> {
+	fn peek_all_ingress(&mut self) -> &VecDeque<Vec<u8>> {
 		// First drain all available packets
 		let _ = self.peek_ingress();
-		// Return copies of all pending packets
-		self.pending.iter().cloned().collect()
+		// Return reference to pending packets
+		&self.pending
 	}
 }
 
