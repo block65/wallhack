@@ -238,8 +238,8 @@ impl Server for WsServer {
 			.clone()
 			.unwrap_or_else(|| Arc::new(Metrics::default()));
 
-		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
-		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
+		let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(2048);
+		let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(2048);
 
 		// Create control channel for injecting outgoing control messages
 		let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
