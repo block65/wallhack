@@ -63,6 +63,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=str(Path(__file__).resolve().parent / "bin" / "iperf3"),
         help="Path to iperf3 binary",
     )
+    parser.addoption(
+        "--memory-limit",
+        default=None,
+        help="Per-process memory limit via cgroup (e.g. '256M', '1G'). "
+             "Requires systemd and root.",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -92,6 +98,11 @@ def iperf3_bin(request: pytest.FixtureRequest) -> str:
     if not Path(path).is_file():
         pytest.skip(f"iperf3 binary not found: {path}")
     return path
+
+
+@pytest.fixture(scope="session")
+def memory_limit(request: pytest.FixtureRequest) -> str | None:
+    return request.config.getoption("--memory-limit")
 
 
 @pytest.fixture(scope="session")
@@ -197,7 +208,7 @@ class TopologyState:
 
 
 @pytest.fixture(scope="session")
-def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
+def topology(netns_topology: None, wallhack_bin: str, memory_limit: str | None) -> TopologyState:
     """Start wallhack entry + exit on top of the netns topology."""
     entry_proc = None
     exit_proc = None
@@ -212,6 +223,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
                 "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
                 "NO_COLOR": "1",
             },
+            memory_limit=memory_limit,
         )
         entry_proc.start(log_file="/tmp/wallhack-entry.log")
         time.sleep(PROCESS_STARTUP_DELAY)
@@ -226,6 +238,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
                 "-i", EXIT_ID,
             ],
             binary=wallhack_bin,
+            memory_limit=memory_limit,
         )
         exit_proc.start(log_file="/tmp/wallhack-exit.log")
 
@@ -254,7 +267,7 @@ def topology(netns_topology: None, wallhack_bin: str) -> TopologyState:
 
 
 @pytest.fixture(scope="session")
-def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState:
+def topology_websocket(netns_topology: None, wallhack_bin: str, memory_limit: str | None) -> TopologyState:
     """Start wallhack entry + exit using WebSocket transport."""
     entry_proc = None
     exit_proc = None
@@ -270,6 +283,7 @@ def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState
                 "RUST_LOG": os.environ.get("RUST_LOG", "wallhack=info,netstack=info"),
                 "NO_COLOR": "1",
             },
+            memory_limit=memory_limit,
         )
         entry_proc.start(log_file="/tmp/wallhack-entry-ws.log")
         time.sleep(PROCESS_STARTUP_DELAY)
@@ -284,6 +298,7 @@ def topology_websocket(netns_topology: None, wallhack_bin: str) -> TopologyState
                 "-i", EXIT_ID_WS,
             ],
             binary=wallhack_bin,
+            memory_limit=memory_limit,
         )
         exit_proc.start(log_file="/tmp/wallhack-exit-ws.log")
 
