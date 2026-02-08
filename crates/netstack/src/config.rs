@@ -30,9 +30,19 @@ pub struct StackConfig {
 	pub mtu: usize,
 
 	/// Size of TCP socket receive buffers in bytes.
+	///
+	/// 256 KiB balances memory per socket against throughput. smoltcp's TCP
+	/// window is limited to the buffer size, so at high link speeds a 64 KiB
+	/// buffer becomes the bottleneck (bandwidth-delay product). 256 KiB
+	/// sustains ~2 Gbps at 1 ms RTT through the local TUN/veth path.
 	pub tcp_rx_buffer_size: usize,
 
 	/// Size of TCP socket transmit buffers in bytes.
+	///
+	/// Same rationale as `tcp_rx_buffer_size`. The TX buffer limits how much
+	/// data `copy_bidirectional` can enqueue before the poll loop transmits
+	/// it through the TUN device. Too small and reverse-direction throughput
+	/// (target-to-client) stalls waiting for ACKs to free buffer space.
 	pub tcp_tx_buffer_size: usize,
 
 	/// Enable "any IP" mode (promiscuous mode for IP).
@@ -49,8 +59,8 @@ impl Default for StackConfig {
 			ip_addrs: Vec::new(),
 			random_seed: 0,
 			mtu: 1500,
-			tcp_rx_buffer_size: 65535,
-			tcp_tx_buffer_size: 65535,
+			tcp_rx_buffer_size: 256 * 1024,
+			tcp_tx_buffer_size: 256 * 1024,
 			any_ip: false,
 		}
 	}
