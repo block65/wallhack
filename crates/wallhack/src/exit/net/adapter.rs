@@ -51,6 +51,7 @@ impl SyscallExitAdapter {
 	}
 
 	/// Start a background task that reaps idle sessions.
+	#[must_use]
 	pub fn start_reaper(
 		&self,
 		interval: std::time::Duration,

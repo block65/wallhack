@@ -239,8 +239,8 @@ async fn connect_quic_upstream(
 		addr,
 		hostname: global.hostname.clone(),
 		mtls: None,
-		psk: psk.map(|s| s.to_string()),
-		accept_fingerprint: accept_fingerprint.map(|s| s.to_string()),
+		psk: psk.map(std::string::ToString::to_string),
+		accept_fingerprint: accept_fingerprint.map(std::string::ToString::to_string),
 		..Default::default()
 	};
 
@@ -282,8 +282,8 @@ async fn connect_ws_upstream(
 			addr,
 			hostname: global.hostname.clone(),
 			mtls: None,
-			psk: psk.map(|s| s.to_string()),
-			accept_fingerprint: accept_fingerprint.map(|s| s.to_string()),
+			psk: psk.map(std::string::ToString::to_string),
+			accept_fingerprint: accept_fingerprint.map(std::string::ToString::to_string),
 			..Default::default()
 		},
 		path: "/ws".to_string(),

@@ -395,8 +395,8 @@ where
 						let transport = accept_result.transport();
 						let adapter = SyscallExitAdapter::new();
 						let _reaper = adapter.start_reaper(
-							std::time::Duration::from_secs(60),
-							std::time::Duration::from_secs(300),
+							std::time::Duration::from_mins(1),
+							std::time::Duration::from_mins(5),
 						);
 						let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 						let stream_fut = run_stream_listener(transport);
@@ -554,8 +554,8 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	// Create syscall adapter for local network access
 	let adapter = SyscallExitAdapter::new();
 	let _reaper = adapter.start_reaper(
-		std::time::Duration::from_secs(60),
-		std::time::Duration::from_secs(300),
+		std::time::Duration::from_mins(1),
+		std::time::Duration::from_mins(5),
 	);
 	let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 

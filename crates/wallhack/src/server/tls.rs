@@ -9,6 +9,7 @@ pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 /// Compute the SHA-256 fingerprint of a DER-encoded certificate.
 ///
 /// Returns a string in the format `sha256:<hex>`.
+#[must_use]
 pub fn cert_fingerprint(cert_der: &[u8]) -> String {
 	let hash = ring::digest::digest(&ring::digest::SHA256, cert_der);
 	let hex: String = hash.as_ref().iter().map(|b| format!("{b:02x}")).collect();
