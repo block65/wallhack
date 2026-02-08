@@ -207,10 +207,9 @@ message TunnelMessage {
     EntryNodeInstruction entry_node_instruction = 1;
     ExitNodeResponse exit_node_response = 2;
     RawPacket raw_packet = 3;
-    ExitNodeHello exit_node_hello = 4;
-    Ping ping = 5;
-    Pong pong = 6;
   }
+  reserved 4, 5, 6;
+  reserved "exit_node_hello", "ping", "pong";
 }
 
 // Sent by exit node immediately after connecting to identify itself.
