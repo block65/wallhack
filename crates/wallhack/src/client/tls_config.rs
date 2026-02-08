@@ -2,7 +2,10 @@ use std::fs;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
-use crate::{server::tls::ALPN_QUIC_HTTP, tls::verifiers::SkipServerVerification};
+use crate::{
+	server::tls::ALPN_QUIC_HTTP,
+	tls::verifiers::{FingerprintVerifier, SkipServerVerification},
+};
 
 use super::config::MtlsConfig;
 
@@ -66,12 +69,23 @@ fn with_client_auth(config: MtlsConfig) -> Result<rustls::ClientConfig, Error> {
 	Ok(config)
 }
 
-pub fn client_config(config: Option<MtlsConfig>) -> Result<rustls::ClientConfig, Error> {
+fn with_fingerprint_verification(fingerprint: String) -> rustls::ClientConfig {
+	rustls::ClientConfig::builder()
+		.dangerous()
+		.with_custom_certificate_verifier(FingerprintVerifier::new(fingerprint))
+		.with_no_client_auth()
+}
+
+pub fn client_config(
+	config: Option<MtlsConfig>,
+	accept_fingerprint: Option<String>,
+) -> Result<rustls::ClientConfig, Error> {
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
-	let mut config = match config {
-		Some(config) => with_client_auth(config)?,
-		None => with_great_danger(),
+	let mut config = match (config, accept_fingerprint) {
+		(Some(config), _) => with_client_auth(config)?,
+		(None, Some(fp)) => with_fingerprint_verification(fp),
+		(None, None) => with_great_danger(),
 	};
 
 	// common config

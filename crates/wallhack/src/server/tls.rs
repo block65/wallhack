@@ -6,6 +6,15 @@ use super::config::TlsConfig;
 
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
+/// Compute the SHA-256 fingerprint of a DER-encoded certificate.
+///
+/// Returns a string in the format `sha256:<hex>`.
+pub fn cert_fingerprint(cert_der: &[u8]) -> String {
+	let hash = ring::digest::digest(&ring::digest::SHA256, cert_der);
+	let hex: String = hash.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+	format!("sha256:{hex}")
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
 	#[error("No private key found in PEM file {0}")]
@@ -29,7 +38,7 @@ pub enum Error {
 
 pub fn configure_crypto(
 	config: Option<TlsConfig>,
-) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), Error> {
+) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>, String), Error> {
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
 	let (certs, key) = if let Some(config) = config {
@@ -64,5 +73,7 @@ pub fn configure_crypto(
 		(vec![cert_der], key_der)
 	};
 
-	Ok((certs, key))
+	let fingerprint = cert_fingerprint(certs[0].as_ref());
+
+	Ok((certs, key, fingerprint))
 }
