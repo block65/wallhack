@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package tunnel.control.v2;
+
+import "proto/command/v2.proto";
+import "proto/control.proto";
+
+// Wrapper for all messages sent over the persistent control bidi stream.
+message ControlMessage {
+  oneof message {
+    tunnel.command.v2.ExitNodeHello hello = 1;
+    tunnel.command.v2.Ping ping = 2;
+    tunnel.command.v2.Pong pong = 3;
+    tunnel.control.v1.ControlRequest control_request = 4;
+    tunnel.control.v1.ControlResponse control_response = 5;
+    Disconnect disconnect = 6;
+  }
+}
+
+// Sent to signal graceful shutdown of the connection.
+message Disconnect {
+  string reason = 1;
+}

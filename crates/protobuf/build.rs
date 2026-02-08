@@ -1,5 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-	let proto_file_paths = ["proto/command/v2.proto", "proto/control.proto"];
+	// Step 1: Compile existing protos (no extern_path needed)
+	let base_protos = ["proto/command/v2.proto", "proto/control.proto"];
 
 	let mut config = prost_build::Config::new();
 
@@ -22,12 +23,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		".tunnel.command.v2.RawPacket.data",
 	]);
 
-	config.compile_protos(&proto_file_paths, &["."])?;
+	config.compile_protos(&base_protos, &["."])?;
 
-	for proto_file_path in proto_file_paths {
+	// Step 2: Compile tunnel_control.proto with extern_path mappings
+	// so cross-package references resolve to our Rust module structure
+	let mut control_config = prost_build::Config::new();
+	control_config.extern_path(".tunnel.command.v2", "crate::v2");
+	control_config.extern_path(".tunnel.control.v1", "crate::control");
+	control_config.compile_protos(&["proto/tunnel_control.proto"], &["."])?;
+
+	for proto_file_path in base_protos {
 		println!("cargo:rerun-if-changed={proto_file_path}");
 	}
-
+	println!("cargo:rerun-if-changed=proto/tunnel_control.proto");
 	println!("cargo:rerun-if-changed=build.rs");
 
 	Ok(())

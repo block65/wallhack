@@ -3,6 +3,7 @@
 mod helpers;
 
 pub mod control;
+pub mod control_v2;
 pub mod socket_set;
 pub mod v2;
 

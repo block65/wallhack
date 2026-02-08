@@ -9,6 +9,7 @@ unsafe_code = "forbid"
 pedantic = "warn"
 
 [workspace.dependencies]
+arc-swap = "1"
 tokio = { version = "1.0" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

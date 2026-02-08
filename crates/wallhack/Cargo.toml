@@ -24,6 +24,7 @@ dashmap = "6"
 prost = { version = "0.13" }
 protobuf = { path = "../protobuf" }
 netstack = { path = "../netstack", features = ["async"] }
+arc-swap = { workspace = true }
 parking_lot = { workspace = true }
 quinn = { version = "0.11", default-features = false, features = [
     "runtime-tokio",
