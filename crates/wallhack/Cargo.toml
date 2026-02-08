@@ -13,7 +13,7 @@ websocket = [
     "dep:tokio-rustls",
     "transport/websocket",
 ]
-api = ["dep:axum", "dep:axum-server", "dep:serde", "dep:serde_json", "dep:tokio-stream", "dep:urlencoding"]
+api = ["dep:axum", "dep:axum-server", "dep:serde", "dep:serde_json", "dep:tokio-stream", "dep:urlencoding", "dep:base64", "dep:subtle"]
 full = ["quic", "websocket", "api"]
 
 [dependencies]
@@ -82,6 +82,8 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 tokio-stream = { version = "0.1", features = ["sync"], optional = true }
 urlencoding = { version = "2", optional = true }
+base64 = { version = "0.22", optional = true }
+subtle = { version = "2", optional = true }
 
 [build-dependencies]
 test-log = { version = "0.2", features = ["trace"] }

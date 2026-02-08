@@ -1,13 +1,13 @@
 //! Authentication for the REST API.
 
-use std::collections::HashMap;
-
 use axum::{
 	body::Body,
 	http::{Request, StatusCode, header},
 	middleware::Next,
 	response::{IntoResponse, Response},
 };
+use base64::{Engine, engine::general_purpose::STANDARD};
+use subtle::ConstantTimeEq;
 
 /// API authentication configuration.
 #[derive(Debug, Clone, Default)]
@@ -40,11 +40,15 @@ impl Auth {
 		self.is_enabled()
 	}
 
-	/// Validate credentials.
+	/// Validate credentials using constant-time comparison.
 	#[must_use]
 	pub fn validate(&self, username: &str, password: &str) -> bool {
 		match (&self.username, &self.password) {
-			(Some(u), Some(p)) => u == username && p == password,
+			(Some(u), Some(p)) => {
+				let u_ok = u.as_bytes().ct_eq(username.as_bytes());
+				let p_ok = p.as_bytes().ct_eq(password.as_bytes());
+				(u_ok & p_ok).into()
+			}
 			_ => true, // No auth configured = allow all
 		}
 	}
@@ -73,7 +77,7 @@ pub async fn middleware(auth: Auth, req: Request<Body>, next: Next) -> Response 
 	}
 
 	let encoded = &auth_header[6..];
-	let Ok(decoded) = base64_decode(encoded) else {
+	let Ok(decoded) = STANDARD.decode(encoded) else {
 		return unauthorized();
 	};
 
@@ -100,37 +104,4 @@ fn unauthorized() -> Response {
 		"Unauthorized",
 	)
 		.into_response()
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
-	let alphabet: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-		.chars()
-		.collect();
-	let lookup: HashMap<char, u8> = alphabet
-		.iter()
-		.enumerate()
-		.map(|(i, &c)| (c, i as u8))
-		.collect();
-
-	let input: Vec<char> = input.chars().filter(|&c| c != '=').collect();
-	let mut output = Vec::new();
-
-	for chunk in input.chunks(4) {
-		let mut n: u32 = 0;
-		for (i, &c) in chunk.iter().enumerate() {
-			let val = *lookup.get(&c).ok_or(())?;
-			n |= u32::from(val) << (18 - 6 * i);
-		}
-
-		output.push((n >> 16) as u8);
-		if chunk.len() > 2 {
-			output.push((n >> 8) as u8);
-		}
-		if chunk.len() > 3 {
-			output.push(n as u8);
-		}
-	}
-
-	Ok(output)
 }
