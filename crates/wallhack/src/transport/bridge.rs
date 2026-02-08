@@ -4,10 +4,9 @@
 //! This module extracts the common stream-handling logic from QUIC server/client implementations
 //! to allow reuse with any [`Transport`] implementation.
 
-use bytes::Bytes;
 use prost::Message;
 use protobuf::{
-	control::ControlRequest,
+	control_v2::{ControlMessage, control_message},
 	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message},
 };
 use tokio::{
@@ -25,259 +24,7 @@ pub const SESSION_INIT_MTU: usize = 1024;
 const TUNNEL_MTU: usize = 2000;
 
 /// Maximum size for control messages (4KB).
-const CONTROL_MTU: usize = 4096;
-
-/// Runs the incoming data handler.
-///
-/// Accepts unidirectional streams from the transport, decodes [`TunnelMessage`]s,
-/// and routes them to the appropriate broadcast channel (instructions or responses).
-///
-/// If `exit_hello_tx` is provided, the first `ExitNodeHello` received will be sent
-/// through it. This allows the caller to wait for identity before proceeding.
-///
-/// # Cancellation Safety
-///
-/// This function is cancellation safe. If cancelled between stream accepts,
-/// no data is lost.
-pub async fn run_incoming_data<T: Transport>(
-	transport: &T,
-	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
-	responses_tx: &broadcast::Sender<ExitNodeResponse>,
-	mut exit_hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
-	pong_tx: Option<&mpsc::Sender<protobuf::v2::Pong>>,
-) -> Result<(), TransportError> {
-	let mut read_buf = Vec::with_capacity(TUNNEL_MTU);
-	loop {
-		let Some(mut recv) = transport.accept_uni().await? else {
-			tracing::debug!("Transport closed, stopping incoming data handler");
-			return Ok(());
-		};
-
-		// Read length-delimited messages from the persistent stream.
-		loop {
-			let msg: TunnelMessage =
-				match read_length_delimited_buf(&mut recv, TUNNEL_MTU, &mut read_buf).await {
-					Ok(m) => m,
-					Err(e) => {
-						// Stream closed or error — accept next stream
-						tracing::trace!("Stream ended or error: {e}");
-						break;
-					}
-				};
-
-			match msg.message {
-				Some(tunnel_message::Message::ExitNodeResponse(resp)) => {
-					tracing::trace!("Received ExitNodeResponse from peer");
-					if responses_tx.send(resp).is_err() {
-						tracing::warn!(
-							"No receivers for ExitNodeResponse - response dropped! (receivers={})",
-							responses_tx.receiver_count()
-						);
-					}
-				}
-				Some(tunnel_message::Message::EntryNodeInstruction(instr)) => {
-					tracing::trace!("Received EntryNodeInstruction from peer");
-					if instructions_tx.send(instr).is_err() {
-						tracing::warn!(
-							"No receivers for EntryNodeInstruction - instruction dropped! (receivers={})",
-							instructions_tx.receiver_count()
-						);
-					}
-				}
-				Some(tunnel_message::Message::RawPacket(pkt)) => {
-					tracing::warn!("Unhandled RawPacket message: {} bytes", pkt.data.len());
-				}
-				Some(tunnel_message::Message::ExitNodeHello(hello)) => {
-					tracing::info!(
-						"Received ExitNodeHello: id={}, version={}",
-						hello.exit_id,
-						hello.version
-					);
-					if let Some(tx) = exit_hello_tx.take() {
-						let _ = tx.send(hello);
-					}
-				}
-				Some(tunnel_message::Message::Ping(ping)) => {
-					tracing::trace!("Received Ping, sending Pong");
-					let pong_msg = TunnelMessage {
-						message: Some(tunnel_message::Message::Pong(protobuf::v2::Pong {
-							timestamp_ms: ping.timestamp_ms,
-						})),
-					};
-
-					match transport.open_uni().await {
-						Ok(mut send) => {
-							if let Err(e) = write_length_delimited(&mut send, &pong_msg).await {
-								tracing::warn!("Failed to write Pong: {e}");
-							}
-							let _ = send.shutdown().await;
-						}
-						Err(e) => {
-							tracing::warn!("Failed to open stream for Pong: {e}");
-						}
-					}
-				}
-				Some(tunnel_message::Message::Pong(pong)) => {
-					tracing::trace!("Received Pong");
-					if let Some(tx) = pong_tx {
-						let _ = tx.send(pong).await;
-					}
-				}
-				None => {
-					tracing::warn!("Received TunnelMessage with no message type");
-				}
-			}
-		}
-	}
-}
-
-/// Runs the outgoing instructions handler (for Host role).
-///
-/// Opens a single persistent unidirectional stream and sends all instructions
-/// using length-delimited framing. This avoids per-message stream open/close
-/// overhead.
-///
-/// # Cancellation Safety
-///
-/// This function is cancellation safe. If cancelled, no partially-sent messages
-/// will be left on the wire.
-pub async fn run_outgoing_instructions<T: Transport>(
-	transport: &T,
-	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
-) -> Result<(), TransportError> {
-	let mut rx = instructions_tx.subscribe();
-	let mut buf = Vec::with_capacity(TUNNEL_MTU);
-	let mut send = transport.open_uni().await?;
-
-	loop {
-		let instruction = match rx.recv().await {
-			Ok(i) => i,
-			Err(broadcast::error::RecvError::Closed) => {
-				tracing::debug!("Instructions channel closed");
-				let _ = send.shutdown().await;
-				return Ok(());
-			}
-			Err(broadcast::error::RecvError::Lagged(n)) => {
-				tracing::warn!("Instructions channel lagged by {n}");
-				continue;
-			}
-		};
-
-		tracing::trace!("Sending EntryNodeInstruction to peer");
-
-		let tunnel_msg = TunnelMessage::from(instruction);
-		if let Err(e) = write_length_delimited_buf(&mut send, &tunnel_msg, &mut buf).await {
-			tracing::error!("Failed to write instruction: {e}");
-			return Err(e);
-		}
-	}
-}
-
-/// Runs the outgoing responses handler
-///
-/// Opens a single persistent unidirectional stream and sends all responses
-/// using length-delimited framing. This avoids per-message stream open/close
-/// overhead.
-///
-/// # Cancellation Safety
-///
-/// This function is cancellation safe. If cancelled, no partially-sent messages
-/// will be left on the wire.
-pub async fn run_outgoing_responses<T: Transport>(
-	transport: &T,
-	responses_tx: &broadcast::Sender<ExitNodeResponse>,
-) -> Result<(), TransportError> {
-	let mut rx = responses_tx.subscribe();
-	let mut buf = Vec::with_capacity(TUNNEL_MTU);
-	let mut send = transport.open_uni().await?;
-
-	loop {
-		let response = match rx.recv().await {
-			Ok(r) => r,
-			Err(broadcast::error::RecvError::Closed) => {
-				tracing::debug!("Responses channel closed");
-				let _ = send.shutdown().await;
-				return Ok(());
-			}
-			Err(broadcast::error::RecvError::Lagged(n)) => {
-				tracing::warn!("Responses channel lagged by {n}");
-				continue;
-			}
-		};
-
-		tracing::trace!("Sending ExitNodeResponse to peer");
-
-		let tunnel_msg = TunnelMessage::from(response);
-		if let Err(e) = write_length_delimited_buf(&mut send, &tunnel_msg, &mut buf).await {
-			tracing::error!("Failed to write response to transport: {e}");
-			return Err(e);
-		}
-	}
-}
-
-/// Runs the control request handler.
-///
-/// Accepts bidirectional streams for control requests, processes them with the
-/// provided handler, and sends back responses.
-///
-/// # Cancellation Safety
-///
-/// This function is cancellation safe. If cancelled between stream accepts,
-/// no data is lost.
-pub async fn run_control_handler<T: Transport>(
-	transport: &T,
-	handler: &Handler,
-) -> Result<(), TransportError> {
-	loop {
-		let Some(mut bi_stream) = transport.accept_bi().await? else {
-			tracing::debug!("Transport closed, stopping control handler");
-			return Ok(());
-		};
-
-		// Read control request
-		let mut buf = Vec::with_capacity(CONTROL_MTU);
-		match (&mut bi_stream)
-			.take(CONTROL_MTU as u64)
-			.read_to_end(&mut buf)
-			.await
-		{
-			Ok(0) => {
-				tracing::trace!("Control stream closed by peer");
-				continue;
-			}
-			Ok(_) => {}
-			Err(e) => {
-				tracing::warn!("Error reading control request: {e}");
-				continue;
-			}
-		}
-
-		// Decode and handle request
-		let request = match ControlRequest::decode(Bytes::from(buf)) {
-			Ok(req) => req,
-			Err(e) => {
-				tracing::warn!("Failed to decode control request: {e}");
-				continue;
-			}
-		};
-
-		tracing::trace!("Received control request: {:?}", request);
-		let response = handler.handle(request);
-
-		// Encode response
-		let response_bytes = response.encode_to_vec();
-
-		// Send response
-		if let Err(e) = bi_stream.write_all(&response_bytes).await {
-			tracing::warn!("Failed to send control response: {e}");
-			continue;
-		}
-
-		if let Err(e) = bi_stream.finish().await {
-			tracing::trace!("Failed to finish control stream: {e}");
-		}
-	}
-}
+pub const CONTROL_MTU: usize = 4096;
 
 /// Read a length-delimited protobuf from the stream.
 ///
@@ -352,6 +99,300 @@ pub async fn write_length_delimited_buf<M: Message, S: tokio::io::AsyncWrite + U
 		.await
 		.map_err(|e| TransportError::stream(e.to_string()))?;
 	Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Two-channel architecture: persistent control bidi stream + data uni streams
+// ---------------------------------------------------------------------------
+
+/// Reason sent when the control loop shuts down.
+#[derive(Debug)]
+pub enum ControlLoopExit {
+	/// Remote peer sent a Disconnect message.
+	Disconnect(String),
+	/// Stream was closed (EOF / transport error).
+	StreamClosed,
+}
+
+/// Runs the persistent control bidi-stream loop.
+///
+/// Multiplexes:
+/// - **Reading** `ControlMessage`s from the bidi stream and dispatching them.
+/// - **Writing** outgoing `ControlMessage`s injected via `outgoing_rx`.
+/// - **Ping timer** that periodically writes `Ping` messages.
+///
+/// The `handler` is `Some` on the server side (to process incoming
+/// `ControlRequest`s) and `None` on the client side.
+pub async fn run_control_loop<S: BiStream>(
+	stream: &mut S,
+	outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
+	handler: Option<&Handler>,
+	hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
+	pong_tx: Option<&mpsc::Sender<protobuf::v2::Pong>>,
+	control_response_tx: Option<&mpsc::Sender<protobuf::control::ControlResponse>>,
+	ping_interval: std::time::Duration,
+) -> ControlLoopExit {
+	let mut read_buf = Vec::with_capacity(CONTROL_MTU);
+	let mut write_buf = Vec::with_capacity(CONTROL_MTU);
+	let mut hello_tx = hello_tx;
+	let mut ping_timer = tokio::time::interval(ping_interval);
+	// Don't fire immediately — the first tick should be after the interval.
+	ping_timer.reset();
+
+	loop {
+		tokio::select! {
+			// Read incoming control messages
+			result = read_length_delimited_buf::<ControlMessage, _>(
+				stream, CONTROL_MTU, &mut read_buf,
+			) => {
+				let msg = match result {
+					Ok(m) => m,
+					Err(e) => {
+						tracing::trace!("Control stream ended: {e}");
+						return ControlLoopExit::StreamClosed;
+					}
+				};
+
+				match msg.message {
+					Some(control_message::Message::Hello(hello)) => {
+						tracing::info!(
+							"Control: received Hello id={} version={}",
+							hello.exit_id, hello.version,
+						);
+						if let Some(tx) = hello_tx.take() {
+							let _ = tx.send(hello);
+						}
+					}
+					Some(control_message::Message::Ping(ping_msg)) => {
+						tracing::trace!("Control: received Ping, auto-replying Pong");
+						let reply = ControlMessage {
+							message: Some(control_message::Message::Pong(
+								protobuf::v2::Pong { timestamp_ms: ping_msg.timestamp_ms },
+							)),
+						};
+						if let Err(e) = write_length_delimited_buf(stream, &reply, &mut write_buf).await {
+							tracing::warn!("Failed to write Pong: {e}");
+							return ControlLoopExit::StreamClosed;
+						}
+					}
+					Some(control_message::Message::Pong(pong)) => {
+						tracing::trace!("Control: received Pong");
+						if let Some(tx) = pong_tx {
+							let _ = tx.send(pong).await;
+						}
+					}
+					Some(control_message::Message::ControlRequest(req)) => {
+						if let Some(h) = handler {
+							tracing::trace!("Control: handling ControlRequest");
+							let resp = h.handle(req);
+							let msg = ControlMessage {
+								message: Some(control_message::Message::ControlResponse(resp)),
+							};
+							if let Err(e) = write_length_delimited_buf(stream, &msg, &mut write_buf).await {
+								tracing::warn!("Failed to write ControlResponse: {e}");
+								return ControlLoopExit::StreamClosed;
+							}
+						}
+					}
+					Some(control_message::Message::ControlResponse(resp)) => {
+						tracing::trace!("Control: received ControlResponse");
+						if let Some(tx) = control_response_tx {
+							let _ = tx.send(resp).await;
+						}
+					}
+					Some(control_message::Message::Disconnect(dc)) => {
+						tracing::info!("Control: received Disconnect: {}", dc.reason);
+						return ControlLoopExit::Disconnect(dc.reason);
+					}
+					None => {
+						tracing::warn!("Control: received empty ControlMessage");
+					}
+				}
+			}
+
+			// Write outgoing control messages injected by the caller
+			msg = outgoing_rx.recv() => {
+				let Some(msg) = msg else {
+					tracing::debug!("Control outgoing channel closed");
+					return ControlLoopExit::StreamClosed;
+				};
+				if let Err(e) = write_length_delimited_buf(stream, &msg, &mut write_buf).await {
+					tracing::warn!("Failed to write outgoing control message: {e}");
+					return ControlLoopExit::StreamClosed;
+				}
+			}
+
+			// Periodic ping
+			_ = ping_timer.tick() => {
+				#[allow(clippy::cast_possible_truncation)]
+				let ts = std::time::SystemTime::now()
+					.duration_since(std::time::UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_millis() as u64;
+				let ping = ControlMessage {
+					message: Some(control_message::Message::Ping(
+						protobuf::v2::Ping { timestamp_ms: ts },
+					)),
+				};
+				if let Err(e) = write_length_delimited_buf(stream, &ping, &mut write_buf).await {
+					tracing::warn!("Failed to write Ping: {e}");
+					return ControlLoopExit::StreamClosed;
+				}
+			}
+		}
+	}
+}
+
+/// Opens a bidi stream on the transport and runs the control loop (client side).
+pub async fn run_control_stream_initiator<T: Transport>(
+	transport: &T,
+	outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
+	handler: Option<&Handler>,
+	pong_tx: Option<&mpsc::Sender<protobuf::v2::Pong>>,
+	control_response_tx: Option<&mpsc::Sender<protobuf::control::ControlResponse>>,
+	ping_interval: std::time::Duration,
+) -> Result<ControlLoopExit, TransportError> {
+	let mut stream = transport.open_bi().await?;
+	Ok(run_control_loop(
+		&mut stream,
+		outgoing_rx,
+		handler,
+		None, // client doesn't expect Hello
+		pong_tx,
+		control_response_tx,
+		ping_interval,
+	)
+	.await)
+}
+
+/// Accepts the first bidi stream on the transport and runs the control loop (server side).
+///
+/// The first `ControlMessage` on the accepted stream MUST be a `Hello`.
+/// The `hello_tx` oneshot is provided so the caller can receive the hello
+/// before deciding whether to spawn data tasks.
+pub async fn run_control_stream_acceptor<T: Transport>(
+	transport: &T,
+	outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
+	handler: Option<&Handler>,
+	hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
+	pong_tx: Option<&mpsc::Sender<protobuf::v2::Pong>>,
+	ping_interval: std::time::Duration,
+) -> Result<ControlLoopExit, TransportError> {
+	let Some(mut stream) = transport.accept_bi().await? else {
+		return Ok(ControlLoopExit::StreamClosed);
+	};
+	Ok(run_control_loop(
+		&mut stream,
+		outgoing_rx,
+		handler,
+		hello_tx,
+		pong_tx,
+		None, // server doesn't issue ControlRequests
+		ping_interval,
+	)
+	.await)
+}
+
+/// Reads `TunnelMessage`s from a receive stream, dispatching only data
+/// messages (instructions and responses) to broadcast channels.
+///
+/// Unlike `run_incoming_data`, this function does NOT handle Hello, Ping,
+/// or Pong — those are handled on the control stream.
+pub async fn run_data_in<S: tokio::io::AsyncRead + Unpin>(
+	recv: &mut S,
+	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
+	responses_tx: &broadcast::Sender<ExitNodeResponse>,
+) -> Result<(), TransportError> {
+	let mut read_buf = Vec::with_capacity(TUNNEL_MTU);
+	loop {
+		let msg: TunnelMessage =
+			match read_length_delimited_buf(recv, TUNNEL_MTU, &mut read_buf).await {
+				Ok(m) => m,
+				Err(e) => {
+					tracing::trace!("Data-in stream ended: {e}");
+					return Err(e);
+				}
+			};
+
+		match msg.message {
+			Some(tunnel_message::Message::EntryNodeInstruction(instr)) => {
+				if instructions_tx.send(instr).is_err() {
+					tracing::warn!("No receivers for EntryNodeInstruction");
+				}
+			}
+			Some(tunnel_message::Message::ExitNodeResponse(resp)) => {
+				if responses_tx.send(resp).is_err() {
+					tracing::warn!("No receivers for ExitNodeResponse");
+				}
+			}
+			Some(tunnel_message::Message::RawPacket(pkt)) => {
+				tracing::warn!("Unhandled RawPacket: {} bytes", pkt.data.len());
+			}
+			other => {
+				tracing::warn!("Unexpected message on data stream: {other:?}");
+			}
+		}
+	}
+}
+
+/// Subscribes to instructions broadcast and writes them as `TunnelMessage`s
+/// on a send stream (entry/relay -> exit direction).
+pub async fn run_data_out_instructions<S: tokio::io::AsyncWrite + Unpin>(
+	send: &mut S,
+	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
+) -> Result<(), TransportError> {
+	let mut rx = instructions_tx.subscribe();
+	let mut buf = Vec::with_capacity(TUNNEL_MTU);
+
+	loop {
+		let instruction = match rx.recv().await {
+			Ok(i) => i,
+			Err(broadcast::error::RecvError::Closed) => {
+				tracing::debug!("Instructions channel closed");
+				return Ok(());
+			}
+			Err(broadcast::error::RecvError::Lagged(n)) => {
+				tracing::warn!("Instructions channel lagged by {n}");
+				continue;
+			}
+		};
+
+		let tunnel_msg = TunnelMessage::from(instruction);
+		if let Err(e) = write_length_delimited_buf(send, &tunnel_msg, &mut buf).await {
+			tracing::error!("Failed to write instruction: {e}");
+			return Err(e);
+		}
+	}
+}
+
+/// Subscribes to responses broadcast and writes them as `TunnelMessage`s
+/// on a send stream (exit -> entry direction).
+pub async fn run_data_out_responses<S: tokio::io::AsyncWrite + Unpin>(
+	send: &mut S,
+	responses_tx: &broadcast::Sender<ExitNodeResponse>,
+) -> Result<(), TransportError> {
+	let mut rx = responses_tx.subscribe();
+	let mut buf = Vec::with_capacity(TUNNEL_MTU);
+
+	loop {
+		let response = match rx.recv().await {
+			Ok(r) => r,
+			Err(broadcast::error::RecvError::Closed) => {
+				tracing::debug!("Responses channel closed");
+				return Ok(());
+			}
+			Err(broadcast::error::RecvError::Lagged(n)) => {
+				tracing::warn!("Responses channel lagged by {n}");
+				continue;
+			}
+		};
+
+		let tunnel_msg = TunnelMessage::from(response);
+		if let Err(e) = write_length_delimited_buf(send, &tunnel_msg, &mut buf).await {
+			tracing::error!("Failed to write response: {e}");
+			return Err(e);
+		}
+	}
 }
 
 #[cfg(test)]
@@ -460,55 +501,10 @@ mod tests {
 		}
 	}
 
-	/// Test that `run_incoming_data` correctly receives an `ExitNodeHello` sent
-	/// with length-delimited framing on a per-message stream, matching the
-	/// pattern used by QUIC and WS clients.
+	/// Test that `run_data_in` correctly dispatches data messages on a
+	/// uni stream using length-delimited framing.
 	#[tokio::test]
-	async fn test_hello_received_via_incoming_data() {
-		let (sender, receiver) = MockTransport::pair();
-
-		let (instructions_tx, _) = broadcast::channel::<EntryNodeInstruction>(16);
-		let (responses_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
-		let (hello_tx, hello_rx) = oneshot::channel::<ExitNodeHello>();
-
-		let recv_handle = tokio::spawn(async move {
-			run_incoming_data(
-				&receiver,
-				&instructions_tx,
-				&responses_tx,
-				Some(hello_tx),
-				None,
-			)
-			.await
-		});
-
-		// Send hello using length-delimited framing on a short-lived stream.
-		let hello = TunnelMessage {
-			message: Some(tunnel_message::Message::ExitNodeHello(ExitNodeHello {
-				exit_id: "test-exit".to_string(),
-				version: "1.0.0".to_string(),
-				auth_token: String::new(),
-			})),
-		};
-		let mut send = sender.open_uni().await.unwrap();
-		write_length_delimited(&mut send, &hello).await.unwrap();
-		send.shutdown().await.unwrap();
-
-		let hello_msg = tokio::time::timeout(std::time::Duration::from_secs(2), hello_rx)
-			.await
-			.expect("timed out waiting for hello")
-			.expect("hello channel closed");
-		assert_eq!(hello_msg.exit_id, "test-exit");
-		assert_eq!(hello_msg.version, "1.0.0");
-
-		drop(sender);
-		let _ = tokio::time::timeout(std::time::Duration::from_secs(1), recv_handle).await;
-	}
-
-	/// Test that multiple data messages flow correctly through a persistent
-	/// stream with length-delimited framing.
-	#[tokio::test]
-	async fn test_data_messages_via_persistent_stream() {
+	async fn test_data_in_dispatches_responses() {
 		let (sender, receiver) = MockTransport::pair();
 
 		let (instructions_tx, _) = broadcast::channel::<EntryNodeInstruction>(16);
@@ -516,7 +512,10 @@ mod tests {
 		let mut responses_rx = responses_tx.subscribe();
 
 		let recv_handle = tokio::spawn(async move {
-			run_incoming_data(&receiver, &instructions_tx, &responses_tx, None, None).await
+			match receiver.accept_uni().await {
+				Ok(Some(mut recv)) => run_data_in(&mut recv, &instructions_tx, &responses_tx).await,
+				_ => panic!("expected uni stream"),
+			}
 		});
 
 		// Send multiple responses on one persistent stream.
@@ -540,9 +539,9 @@ mod tests {
 		let _ = tokio::time::timeout(std::time::Duration::from_secs(1), recv_handle).await;
 	}
 
-	/// End-to-end: `run_outgoing_responses` → transport → `run_incoming_data`.
+	/// End-to-end: `run_data_out_responses` → transport → `run_data_in`.
 	#[tokio::test]
-	async fn test_outgoing_to_incoming_roundtrip() {
+	async fn test_data_out_to_data_in_roundtrip() {
 		let (exit_transport, entry_transport) = MockTransport::pair();
 
 		let (responses_src_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
@@ -552,18 +551,21 @@ mod tests {
 
 		let outgoing = tokio::spawn({
 			let responses_src_tx = responses_src_tx.clone();
-			async move { run_outgoing_responses(&exit_transport, &responses_src_tx).await }
+			async move {
+				match exit_transport.open_uni().await {
+					Ok(mut send) => run_data_out_responses(&mut send, &responses_src_tx).await,
+					Err(e) => Err(e),
+				}
+			}
 		});
 
 		let incoming = tokio::spawn(async move {
-			run_incoming_data(
-				&entry_transport,
-				&instructions_dst_tx,
-				&responses_dst_tx,
-				None,
-				None,
-			)
-			.await
+			match entry_transport.accept_uni().await {
+				Ok(Some(mut recv)) => {
+					run_data_in(&mut recv, &instructions_dst_tx, &responses_dst_tx).await
+				}
+				_ => panic!("expected uni stream"),
+			}
 		});
 
 		// Let spawned tasks start and subscribe to channels.
