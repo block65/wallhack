@@ -52,3 +52,8 @@ Rust nightly (`rust-toolchain.toml`). Edition 2024.
 
 Cargo workspace with members in `crates/*`. The main crate is `wallhack` with
 feature flags: `quic`, `websocket`, `api`, `full` (all three).
+
+## Debugging
+
+Use the `tracing` crate and `RUST_LOG` environment to help you see whats going
+on during tests and benchmarks, make decisions based on proof, not theory.

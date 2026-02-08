@@ -2,6 +2,10 @@
 
 ## Performance
 See [docs/ANALYSIS.md](docs/ANALYSIS.md) for full analysis.
+- [ ] Reverse throughput asymmetry: forward ~3500 Mbps vs reverse ~968 Mbps on
+  symmetric `copy_bidirectional` bi-stream path. Investigate Quinn flow control
+  defaults, poll loop wakeup latency under egress load, and mutex contention
+  between smoltcp writes and the poll loop.
 - [ ] Buffer pooling for UDP packets and TUN reads
 - [ ] Replace `Vec<u8>` with `bytes::Bytes` in hot paths
 - [ ] Reduce global lock contention in netstack
@@ -62,6 +66,12 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 - [ ] Implement actual route management (requires routing table abstraction)
 
 ## Transports
+- [ ] Unified transport pipes: after smoltcp, TCP and UDP should use the same
+  protobuf format and same pipes. Two parallel UDP paths exist (bi-stream and
+  orchestrator/broadcast) causing bugs. Unify so the only difference is at the
+  wire/TUN/smoltcp layer.
+- [ ] Default zero-config TLS for WebSocket transport, matching QUIC's
+  self-signed cert behaviour
 - [ ] DNS tunneling
 - [ ] ICMP tunneling
 - [ ] HTTP/2 multiplexing
