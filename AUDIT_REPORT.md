@@ -8,9 +8,9 @@
 
 ## Executive Summary
 
-Wallhack is a well-architected Layer 3 tunneling tool with solid fundamentals: proper workspace structure, consistent crypto stack (rustls/ring), clean trait abstractions, and a disciplined approach to `unsafe` (forbidden workspace-wide). Both QUIC and WebSocket transports are fully implemented and benchmarked — QUIC hits 584 Mbps single-stream (2.6 Gbps multi-stream), WebSocket hits 359 Mbps single-stream (4 Gbps multi-stream). Reverse connections (exit connects to entry) work correctly.
+Wallhack is a well-architected Layer 3 tunneling tool with solid fundamentals: proper workspace structure, consistent crypto stack (rustls/ring), clean trait abstractions, and a disciplined approach to `unsafe` (forbidden workspace-wide). Both QUIC and WebSocket transports are fully implemented and benchmarked — QUIC hits 1,400 Mbps single-stream (2.9 Gbps multi-stream), WebSocket hits 1,126 Mbps single-stream (4.5 Gbps multi-stream). Reverse connections (exit connects to entry) work correctly.
 
-The primary gaps are in security hardening (TLS verification disabled by default, no tunnel authentication) and operational polish (session limits, config persistence, remote network discovery). The data path has optimization headroom that would improve throughput further.
+The primary gaps are in security hardening (TLS verification disabled by default, no tunnel authentication) and operational polish (session limits, config persistence, remote network discovery).
 
 This report corrects several inaccuracies from the v1 audit, notably: WebSocket transport is complete (not stubbed), reverse connections work (the `todo!()` calls are for a different feature — exit-side port binding), and SOCKS/port-forwarding are intentionally out of scope for this tool.
 
@@ -42,7 +42,7 @@ The v1 report implied WebSocket might be incomplete. It is not. The WebSocket tr
 - Yamux-based stream multiplexing with uni + bi streams
 - TLS/mTLS support
 - Unit tests for concurrent streams, bidirectional communication, and connection closure
-- **Benchmarked**: 359 Mbps single stream, 4 Gbps with 4 parallel streams
+- **Benchmarked**: 1,126 Mbps single stream, 4.5 Gbps with 4 parallel streams
 
 ### 1.2 Reverse Connections Work (v1 conflated two different features)
 The v1 report listed "Reverse Port Forwarding" as unimplemented. This conflated two things:
@@ -66,20 +66,20 @@ The `bench/` directory contains a full pytest + iperf3 + network namespace test 
 
 ### 1.5 Benchmark Results (actual measured performance)
 
-From `bench/results/benchmark_20260131_212743.txt`:
+From `bench/results/benchmark_latest.txt` (post Stage 4 optimizations):
 
 | Transport | Streams | Throughput |
 |-----------|---------|------------|
-| QUIC | 1 | 584 Mbps |
-| QUIC | 2 | 2,352 Mbps |
-| QUIC | 3 | 2,636 Mbps |
-| QUIC | 4 | 2,544 Mbps |
-| QUIC | 5 | 2,495 Mbps |
-| WebSocket | 1 | 359 Mbps |
-| WebSocket | 1 (fixture) | 368 Mbps |
-| WebSocket | 2 | 2,911 Mbps |
-| WebSocket | 3 | 4,013 Mbps |
-| WebSocket | 4 | 3,997 Mbps |
+| QUIC | 1 | 1,400 Mbps |
+| QUIC | 2 | 2,946 Mbps |
+| QUIC | 3 | 2,921 Mbps |
+| QUIC | 4 | 2,863 Mbps |
+| QUIC | 5 | 2,739 Mbps |
+| WebSocket | 1 | 1,126 Mbps |
+| WebSocket | 1 (fixture) | 1,135 Mbps |
+| WebSocket | 2 | 3,696 Mbps |
+| WebSocket | 3 | 4,496 Mbps |
+| WebSocket | 4 | 4,320 Mbps |
 
 All 20 cargo tests pass. All 15 netstack tests pass. WebSocket multi-stream actually outperforms QUIC multi-stream.
 
@@ -390,18 +390,15 @@ Both instructions and responses use `tokio::sync::broadcast` channels. For a 1:1
 **Fix:** Use `mpsc` for 1:1 connections. Consider `Arc<Message>` to avoid deep cloning in broadcast scenarios.
 **Effort:** 2-3 days
 
-### 6.3 New Uni Stream Per Message
-**Severity: MEDIUM | File: `bridge.rs:179, 230`**
+### 6.3 ~~New Uni Stream Per Message~~ (FIXED)
+**Severity: MEDIUM | File: `bridge.rs`**
 
-Every tunnel message opens a new unidirectional QUIC stream. For bulk data, this creates thousands of streams per second. A dedicated long-lived data stream with length-delimited framing would reduce overhead.
+~~Every tunnel message opens a new unidirectional QUIC stream.~~ **Fixed:** Data messages now use persistent streams with length-delimited framing. Single-stream throughput improved from 584→1,400 Mbps (QUIC) and 359→1,126 Mbps (WebSocket).
 
-**Impact:** Stream creation overhead reduces throughput by an estimated 10-30%.
-**Effort:** 3-5 days (protocol change)
+### 6.4 ~~Netstack 10ms Busy Poll~~ (FIXED)
+**Severity: MEDIUM | File: `netstack/src/async_stack/mod.rs`**
 
-### 6.4 Netstack 10ms Busy Poll
-**Severity: MEDIUM | File: `netstack/src/async_stack/mod.rs:298-311`**
-
-The poll loop wakes every 10ms regardless of traffic. Wastes CPU on idle tunnels, adds latency variance.
+~~The poll loop wakes every 10ms regardless of traffic.~~ **Fixed:** Reduced to 1ms with `Notify`-based waking for immediate response to new data.
 
 **Fix:** Implement `AsyncDevice` trait so the poll loop can `await` on TUN read readiness.
 **Effort:** 2-3 days
