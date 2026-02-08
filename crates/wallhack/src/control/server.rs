@@ -75,7 +75,7 @@ impl ControlServer {
 		config: HandlerConfig,
 		metrics: SharedMetrics,
 	) -> Result<Self, Error> {
-		let (cert_der, priv_key) = configure_crypto(None)?;
+		let (cert_der, priv_key, _fingerprint) = configure_crypto(None)?;
 
 		let mut server_crypto = rustls::ServerConfig::builder()
 			.with_no_client_auth()

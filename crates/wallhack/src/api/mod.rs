@@ -132,7 +132,7 @@ pub async fn serve(
 	}
 
 	// Use the same TLS setup as the main server
-	let (certs, key) =
+	let (certs, key, _fingerprint) =
 		crate::server::tls::configure_crypto(tls_config).map_err(std::io::Error::other)?;
 
 	let rustls_config = RustlsConfig::from_der(

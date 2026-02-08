@@ -33,7 +33,7 @@ pub enum Error {
 }
 
 pub fn create(config: config::ServerConfig) -> Result<quinn::Endpoint, Error> {
-	let (cert_der, priv_key) = configure_crypto(config.tls)?;
+	let (cert_der, priv_key, _fingerprint) = configure_crypto(config.tls)?;
 
 	// let mut server_config =
 	// 	quinn::ServerConfig::with_single_cert(cert_der.clone(), priv_key.clone_key())?;

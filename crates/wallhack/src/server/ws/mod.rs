@@ -57,19 +57,21 @@ impl WsTlsConfig {
 	/// # Errors
 	///
 	/// Returns an error if the TLS configuration cannot be created.
-	pub fn new(config: Option<super::config::TlsConfig>) -> Result<Option<Self>, Error> {
+	pub fn new(config: Option<super::config::TlsConfig>) -> Result<(Option<Self>, String), Error> {
 		let Some(tls_config) = config else {
-			return Ok(None);
+			// Even without TLS config, we generate a self-signed cert for fingerprint
+			let (_cert_der, _priv_key, fingerprint) = super::tls::configure_crypto(None)?;
+			return Ok((None, fingerprint));
 		};
 
-		let (cert_der, priv_key) = super::tls::configure_crypto(Some(tls_config))?;
+		let (cert_der, priv_key, fingerprint) = super::tls::configure_crypto(Some(tls_config))?;
 
 		let server_config = rustls::ServerConfig::builder()
 			.with_no_client_auth()
 			.with_single_cert(cert_der, priv_key)?;
 
 		let acceptor = TlsAcceptor::from(Arc::new(server_config));
-		Ok(Some(Self { acceptor }))
+		Ok((Some(Self { acceptor }), fingerprint))
 	}
 }
 
@@ -124,6 +126,8 @@ pub struct WsServer {
 	listener: TcpListener,
 	tls: Option<WsTlsConfig>,
 	options: ServerOptions,
+	fingerprint: String,
+	psk: Option<String>,
 }
 
 impl Server for WsServer {
@@ -135,7 +139,7 @@ impl Server for WsServer {
 		std_listener.set_nonblocking(true)?;
 		let listener = TcpListener::from_std(std_listener)?;
 
-		let tls = WsTlsConfig::new(config.tls)?;
+		let (tls, fingerprint) = WsTlsConfig::new(config.tls)?;
 
 		tracing::info!("WebSocket server listening on {:?}", listener.local_addr());
 
@@ -143,6 +147,8 @@ impl Server for WsServer {
 			listener,
 			tls,
 			options,
+			fingerprint,
+			psk: config.psk,
 		})
 	}
 
@@ -225,6 +231,14 @@ impl Server for WsServer {
 	fn stop(&self) -> Result<(), Self::Error> {
 		tracing::info!("WebSocket server stop initiated.");
 		Ok(())
+	}
+
+	fn fingerprint(&self) -> &str {
+		&self.fingerprint
+	}
+
+	fn psk(&self) -> Option<&str> {
+		self.psk.as_deref()
 	}
 }
 

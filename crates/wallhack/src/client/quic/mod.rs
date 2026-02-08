@@ -56,6 +56,7 @@ pub struct QuicClient {
 	hostname: String,
 	endpoint: quinn::Endpoint,
 	exit_id: Option<String>,
+	psk: Option<String>,
 }
 
 impl Client for QuicClient {
@@ -63,7 +64,7 @@ impl Client for QuicClient {
 	type Transport = QuicTransport;
 
 	fn try_new(args: ClientConfig) -> Result<Self, Error> {
-		let tls_config = tls_config::client_config(args.mtls)?;
+		let tls_config = tls_config::client_config(args.mtls, args.accept_fingerprint)?;
 
 		let mut transport_config = quinn::TransportConfig::default();
 		transport_config.max_idle_timeout(Some(IdleTimeout::from(VarInt::MAX)));
@@ -91,6 +92,7 @@ impl Client for QuicClient {
 			hostname,
 			endpoint,
 			exit_id: args.exit_id,
+			psk: args.psk,
 		})
 	}
 
@@ -125,6 +127,7 @@ impl Client for QuicClient {
 				message: Some(tunnel_message::Message::ExitNodeHello(ExitNodeHello {
 					exit_id: exit_id.clone(),
 					version: env!("CARGO_PKG_VERSION").to_string(),
+					auth_token: self.psk.clone().unwrap_or_default(),
 				})),
 			};
 			let mut buf = Vec::new();

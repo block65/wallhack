@@ -40,6 +40,8 @@ pub enum Error {
 pub struct QuicServer {
 	endpoint: quinn::Endpoint,
 	options: ServerOptions,
+	fingerprint: String,
+	psk: Option<String>,
 }
 
 impl Server for QuicServer {
@@ -47,7 +49,7 @@ impl Server for QuicServer {
 	type Transport = QuicTransport;
 
 	fn try_new(config: ServerConfig, options: ServerOptions) -> Result<Self, Error> {
-		let (cert_der, priv_key) = configure_crypto(config.tls)?;
+		let (cert_der, priv_key, fingerprint) = configure_crypto(config.tls)?;
 
 		let mut server_crypto = rustls::ServerConfig::builder()
 			.with_no_client_auth()
@@ -72,7 +74,12 @@ impl Server for QuicServer {
 
 		tracing::info!("local_addr {:?}", endpoint.local_addr());
 
-		Ok(Self { endpoint, options })
+		Ok(Self {
+			endpoint,
+			options,
+			fingerprint,
+			psk: config.psk,
+		})
 	}
 
 	async fn accept(
@@ -144,5 +151,13 @@ impl Server for QuicServer {
 		self.endpoint.close(0_u32.into(), b"server stopping");
 		tracing::info!("QUIC server endpoint close initiated.");
 		Ok(())
+	}
+
+	fn fingerprint(&self) -> &str {
+		&self.fingerprint
+	}
+
+	fn psk(&self) -> Option<&str> {
+		self.psk.as_deref()
 	}
 }
