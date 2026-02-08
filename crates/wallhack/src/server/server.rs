@@ -72,10 +72,14 @@ impl<T: Transport> AcceptResult<T> {
 		}
 	}
 
-	/// Consumes the result and returns the data channels.
+	/// Consumes the result and returns the data channels and the control sender.
+	///
+	/// The caller **must** hold onto the returned `mpsc::Sender` for as long
+	/// as the connection should stay alive — dropping it closes the control
+	/// stream.
 	#[must_use]
-	pub fn channels(self) -> Channels {
-		self.channels
+	pub fn channels(self) -> (Channels, mpsc::Sender<ControlMessage>) {
+		(self.channels, self.control_tx)
 	}
 
 	/// Returns a reference to the peer identifier.

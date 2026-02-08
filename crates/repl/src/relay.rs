@@ -183,15 +183,16 @@ fn bridge_downstream<T: wallhack::transport::Transport>(
 ) {
 	crate::info!("Downstream connected: {}", accept_result.client_ident());
 
-	let (downstream_instr, downstream_resp) = accept_result.channels();
+	let ((downstream_instr, downstream_resp), control_tx) = accept_result.channels();
 
 	// Bridge this downstream connection to upstream
 	let upstream_instr_clone = upstream_instr.clone();
 	let mut upstream_resp_rx = upstream_resp.subscribe();
 	let mut downstream_instr_rx = downstream_instr.subscribe();
 
-	// Forward downstream instructions to upstream
+	// Forward downstream instructions to upstream (also holds control_tx to keep control stream alive)
 	tokio::spawn(async move {
+		let _keep_alive = control_tx;
 		loop {
 			match downstream_instr_rx.recv().await {
 				Ok(instr) => {

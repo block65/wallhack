@@ -389,8 +389,9 @@ where
 						);
 						let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 						let stream_fut = run_stream_listener(transport);
-						let (instr, resp) = accept_result.channels();
+						let ((instr, resp), control_tx) = accept_result.channels();
 						tokio::spawn(async move {
+							let _keep_alive = control_tx;
 							tokio::select! {
 								result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
 									if let Err(e) = result {
@@ -549,7 +550,7 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 
 	let transport = connect_result.transport();
-	let ((instr, resp), mut tasks) = connect_result.into_parts();
+	let ((instr, resp), mut tasks, _control_tx) = connect_result.into_parts();
 	let stream_fut = run_stream_listener(transport);
 	let disconnect_fut = tasks.wait_for_disconnect();
 
@@ -1221,15 +1222,16 @@ fn bridge_peer<T: wallhack::transport::Transport>(
 ) {
 	crate::info!("Bridging peer connection: {}", accept_result.client_ident());
 
-	let (peer_instr, peer_resp) = accept_result.channels();
+	let ((peer_instr, peer_resp), control_tx) = accept_result.channels();
 
 	// Bridge this peer to relay broadcast channels
 	let relay_instr_clone = relay_instr.clone();
 	let mut relay_resp_rx = relay_resp.subscribe();
 	let mut peer_instr_rx = peer_instr.subscribe();
 
-	// Forward peer instructions to relay
+	// Forward peer instructions to relay (also holds control_tx to keep control stream alive)
 	tokio::spawn(async move {
+		let _keep_alive = control_tx;
 		loop {
 			match peer_instr_rx.recv().await {
 				Ok(instr) => {

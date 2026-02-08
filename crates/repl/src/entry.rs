@@ -910,11 +910,8 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 		None
 	};
 
-	// Get control_tx for sending pings via control stream (before consuming accept_result)
-	let control_tx = accept_result.control_tx().clone();
-
 	// Spawn data tasks AFTER PSK validation (structural guarantee: no data before auth)
-	let (instructions_tx, responses_tx) = accept_result.channels();
+	let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
 
 	// Data task: incoming data (accept uni stream, read data messages)
 	let transport_data = Arc::clone(transport);

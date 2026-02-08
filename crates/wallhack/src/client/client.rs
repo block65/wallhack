@@ -75,8 +75,8 @@ impl<T: transport::Transport + ?Sized> ConnectResult<T> {
 	}
 
 	#[must_use]
-	pub fn into_parts(self) -> (Channels, ConnectionTasks) {
-		(self.channels, self.tasks)
+	pub fn into_parts(self) -> (Channels, ConnectionTasks, mpsc::Sender<ControlMessage>) {
+		(self.channels, self.tasks, self.control_tx)
 	}
 
 	#[must_use]
