@@ -376,6 +376,9 @@ where
 		None
 	};
 
+	// Connection counter for tracking
+	let next_conn_id = AtomicU64::new(1);
+
 	// Main loop: handle both server accepts and REPL commands
 	loop {
 		tokio::select! {
@@ -390,6 +393,7 @@ where
 							continue;
 						};
 
+						let conn_id = next_conn_id.fetch_add(1, Ordering::Relaxed);
 						let conn_metrics = accept_result.metrics();
 						let conn_printer = printer.clone();
 						let conn_sessions = sessions.clone();
@@ -400,8 +404,8 @@ where
 							.exit_hello()
 							.map_or_else(|| peer_addr.clone(), |h| h.exit_id.clone());
 
-						crate::info!("Accepted connection from {peer_addr}");
-						printer.print(format!("Connection from {peer_addr}"));
+						crate::info!("Connection #{conn_id} from {peer_addr}");
+						printer.print(format!("Connection #{conn_id} from {peer_addr}"));
 
 						// Register peer in the registry
 						conn_peers.register(peer_id.clone(), peer_addr, NodeRole::Exit);
@@ -433,11 +437,11 @@ where
 							}
 							match result {
 								Ok(tun_name) => {
-									conn_printer.print(format!("Connection closed (tun: {tun_name})"));
+									conn_printer.print(format!("Connection #{conn_id} closed (tun: {tun_name})"));
 								}
 								Err(e) => {
-									tracing::debug!("Connection error: {}", e);
-									conn_printer.print(format!("Connection error: {e}"));
+									tracing::debug!("Connection #{} error: {}", conn_id, e);
+									conn_printer.print(format!("Connection #{conn_id} error: {e}"));
 								}
 							}
 						});
