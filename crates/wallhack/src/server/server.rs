@@ -100,6 +100,12 @@ impl<T: Transport> AcceptResult<T> {
 		std::sync::Arc::clone(&self.transport)
 	}
 
+	/// Returns a reference to the `ExitNodeHello` data, if available.
+	#[must_use]
+	pub fn exit_hello(&self) -> Option<&ExitNodeHello> {
+		self.exit_hello.as_ref()
+	}
+
 	/// Takes the `ExitNodeHello` data, if available.
 	pub fn take_exit_hello(&mut self) -> Option<ExitNodeHello> {
 		self.exit_hello.take()

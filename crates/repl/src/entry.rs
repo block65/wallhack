@@ -384,11 +384,13 @@ where
 						let conn_sessions = sessions.clone();
 						let conn_peers = Arc::clone(&peers);
 						let conn_routes = Arc::clone(&routes);
-						let peer_id = accept_result.client_ident().to_string();
-						let peer_addr = peer_id.clone();
+						let peer_addr = accept_result.client_ident().to_string();
+						let peer_id = accept_result
+							.exit_hello()
+							.map_or_else(|| peer_addr.clone(), |h| h.exit_id.clone());
 
-						crate::info!("Accepted connection from {}", accept_result.client_ident());
-						printer.print(format!("Connection from {}", accept_result.client_ident()));
+						crate::info!("Accepted connection from {peer_addr}");
+						printer.print(format!("Connection from {peer_addr}"));
 
 						// Register peer in the registry
 						conn_peers.register(peer_id.clone(), peer_addr, NodeRole::Exit);
@@ -459,7 +461,7 @@ where
 							printer.print(format!("Pinging {} peer(s)...", peer_ids.len()));
 							for id in &peer_ids {
 								match peers.ping_peer(id).await {
-									Ok(ms) => printer.print(format!("  {id}: {ms:.1}ms")),
+									Ok(ms) => printer.print(format!("  {id}: {ms:.3}ms")),
 									Err(e) => printer.print(format!("  {id}: ping failed ({e})")),
 								}
 							}
@@ -709,7 +711,7 @@ fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 		for peer in &list {
 			let latency = peer
 				.latency_ms
-				.map_or_else(|| "N/A".to_string(), |ms| format!("{ms:.1}ms"));
+				.map_or_else(|| "N/A".to_string(), |ms| format!("{ms:.3}ms"));
 			let uptime = peer.connected_at.elapsed();
 			printer.print(format!(
 				"  {} ({}) - {} - latency: {}, uptime: {:.0?}",

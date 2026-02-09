@@ -23,7 +23,7 @@ pub mod transport;
 // re-exports
 use client::config::ClientConfig;
 use server::config::ServerConfig;
-pub use types::{Cidr, CidrParseError, NodeRole};
+pub use types::{Cidr, CidrParseError, NodeRole, normalize_socket_addr};
 
 #[cfg(test)]
 pub mod pcap_parser;

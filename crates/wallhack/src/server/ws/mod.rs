@@ -159,7 +159,8 @@ impl Server for WsServer {
 	) -> Result<Option<AcceptResult<Self::Transport>>, Error> {
 		tracing::debug!("waiting for next WebSocket connection...");
 
-		let (tcp_stream, peer_addr) = self.listener.accept().await?;
+		let (tcp_stream, raw_addr) = self.listener.accept().await?;
+		let peer_addr = crate::normalize_socket_addr(raw_addr);
 		tracing::debug!("TCP connection from {peer_addr}");
 
 		// Wrap in TLS and perform WebSocket upgrade

@@ -1,4 +1,8 @@
-use std::{fmt, net::IpAddr, str::FromStr};
+use std::{
+	fmt,
+	net::{IpAddr, SocketAddr},
+	str::FromStr,
+};
 
 use protobuf::control::NodeRole as ProtoNodeRole;
 
@@ -112,6 +116,21 @@ impl fmt::Display for Cidr {
 	}
 }
 
+/// Normalize an IPv4-mapped IPv6 socket address to plain IPv4.
+///
+/// Dual-stack sockets present IPv4 peers as `[::ffff:x.x.x.x]:port`.
+/// This converts them to `x.x.x.x:port` for cleaner display and consistent
+/// matching. Pure IPv6 addresses are returned unchanged.
+#[must_use]
+pub fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
+	if let SocketAddr::V6(v6) = addr
+		&& let Some(ipv4) = v6.ip().to_ipv4_mapped()
+	{
+		return SocketAddr::new(IpAddr::V4(ipv4), v6.port());
+	}
+	addr
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -167,6 +186,34 @@ mod tests {
 				max: 128
 			})
 		));
+	}
+
+	#[test]
+	fn normalize_ipv4_mapped_ipv6() {
+		use std::net::{Ipv6Addr, SocketAddrV6};
+
+		// IPv4-mapped IPv6 -> plain IPv4
+		let mapped = SocketAddr::V6(SocketAddrV6::new(
+			"::ffff:127.0.0.1".parse::<Ipv6Addr>().unwrap(),
+			6565,
+			0,
+			0,
+		));
+		let normalized = normalize_socket_addr(mapped);
+		assert_eq!(normalized.to_string(), "127.0.0.1:6565");
+
+		// Pure IPv6 unchanged
+		let v6 = SocketAddr::V6(SocketAddrV6::new(
+			"::1".parse::<Ipv6Addr>().unwrap(),
+			6565,
+			0,
+			0,
+		));
+		assert_eq!(normalize_socket_addr(v6), v6);
+
+		// Plain IPv4 unchanged
+		let v4: SocketAddr = "10.0.0.1:1234".parse().unwrap();
+		assert_eq!(normalize_socket_addr(v4), v4);
 	}
 
 	#[test]

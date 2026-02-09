@@ -99,7 +99,7 @@ impl Server for QuicServer {
 		};
 
 		let connection = incoming.await?;
-		let remote_addr = connection.remote_address().to_string();
+		let remote_addr = crate::normalize_socket_addr(connection.remote_address()).to_string();
 
 		// Wrap connection in transport abstraction
 		let transport = Arc::new(QuicTransport::new(connection));
