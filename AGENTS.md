@@ -1,17 +1,20 @@
 # Agent Guidelines
 
-## Build & Verification
+## Workflow
 
-Always use `-q` (quiet) with cargo commands to reduce noise:
+For each change set: **code → verify → commit**.
 
-```sh
-cargo build -q --features full
-cargo clippy -q --features full --fix --allow-dirty
-cargo test -q
-cargo fmt
-```
+1. Make code changes
+2. Verify (fix any issues before step 3):
+   ```sh
+   cargo build -q --features full
+   cargo clippy -q --features full --fix --allow-dirty
+   cargo test -q
+   cargo fmt
+   ```
+3. Stage related files and commit
 
-Run all four after making changes. Fix any issues before committing.
+Always use `-q` (quiet) with cargo commands to reduce noise.
 
 ## Commits
 
@@ -43,6 +46,9 @@ build: optimize release profile for size and determinism
 refactor: use default port in examples and remove directional terminology
 chore: suppress clippy warnings in appropriate places
 ```
+
+Dont `Co-Author` commits just because you wrote the commit message. It's
+telemetry, not responsibility.
 
 ## Toolchain
 
