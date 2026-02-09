@@ -37,7 +37,6 @@ shlex = "1"
 thiserror = "2"
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 wallhack = { path = "../wallhack" }
 subtle = "2"
 console-subscriber = { workspace = true, optional = true }

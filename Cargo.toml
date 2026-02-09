@@ -12,7 +12,6 @@ pedantic = "warn"
 arc-swap = "1"
 tokio = { version = "1.0" }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 console-subscriber = "0.4"
 parking_lot = "0.12"

@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 use repl::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
-use tracing_subscriber::EnvFilter;
+use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,19 +54,21 @@ async fn main() -> Result<()> {
 }
 
 fn setup_tracing(cli: &repl::WallhackCli) {
-	let default_level = if cli.debug {
-		"debug"
-	} else if cli.verbose {
-		"info"
-	} else if cli.quiet {
-		"error"
+	let (level, filter_str) = if cli.trace || cli.trace_filter.is_some() {
+		(
+			LevelFilter::TRACE,
+			cli.trace_filter.as_deref().unwrap_or(""),
+		)
+	} else if cli.debug || cli.debug_filter.is_some() {
+		(
+			LevelFilter::DEBUG,
+			cli.debug_filter.as_deref().unwrap_or(""),
+		)
 	} else {
-		"warn"
+		// No internal tracing by default — user-facing output uses repl::info!/error!
+		(LevelFilter::OFF, "")
 	};
 
-	let filter = EnvFilter::builder()
-		.with_default_directive(default_level.parse().expect("valid directive"))
-		.from_env_lossy();
-
-	tracing_subscriber::fmt().with_env_filter(filter).init();
+	let subscriber = repl::subscriber::SimpleSubscriber::new(level, filter_str);
+	tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 }

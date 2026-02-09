@@ -56,9 +56,21 @@ pub struct WallhackCli {
 	#[argh(switch, short = 'v')]
 	pub verbose: bool,
 
-	/// extra verbose (debug level)
+	/// extra verbose (debug level tracing)
 	#[argh(switch)]
 	pub debug: bool,
+
+	/// comma-separated module substring filters for debug tracing
+	#[argh(option)]
+	pub debug_filter: Option<String>,
+
+	/// trace level tracing (most verbose)
+	#[argh(switch)]
+	pub trace: bool,
+
+	/// comma-separated module substring filters for trace tracing
+	#[argh(option)]
+	pub trace_filter: Option<String>,
 
 	/// quiet mode (errors only)
 	#[argh(switch, short = 'q')]
@@ -262,7 +274,15 @@ impl RelayCommand {
 const SUBCOMMANDS: &[&str] = &["entry", "exit", "relay"];
 
 /// Global switches that belong before the subcommand.
-const GLOBAL_FLAGS: &[&str] = &["--debug", "-v", "--verbose", "-q", "--quiet", "--version"];
+const GLOBAL_FLAGS: &[&str] = &[
+	"--debug",
+	"--trace",
+	"-v",
+	"--verbose",
+	"-q",
+	"--quiet",
+	"--version",
+];
 
 /// Flags that belong to a subcommand, used by `suggest_subcommand` for detection.
 const SUBCOMMAND_FLAGS: &[&str] = &["--listen", "-l", "--connect", "-c"];
