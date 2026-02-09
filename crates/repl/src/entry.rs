@@ -176,15 +176,22 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 							server_options,
 						)?;
 						crate::info!("Listening on {addr} (QUIC/UDP)");
-						println!("Certificate fingerprint: {}", server.fingerprint());
+						crate::info!("Certificate fingerprint: {}", server.fingerprint());
 						if server.psk().is_none() {
-							eprintln!(
-								"WARNING: No authentication configured. Any client can connect."
+							crate::warn!(
+								"No authentication configured. Use --psk <SECRET> to require authentication."
 							);
-							eprintln!("Use --psk <SECRET> to require authentication.");
 						}
-						run_entry_server(server, metrics, peers, routes, sessions, cmd.max_peers)
-							.await
+						run_entry_server(
+							server,
+							metrics,
+							peers,
+							routes,
+							sessions,
+							cmd.max_peers,
+							cmd.fast,
+						)
+						.await
 					}
 					#[cfg(not(feature = "quic"))]
 					{
@@ -199,15 +206,22 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 						let server =
 							wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
 						crate::info!("Listening on {addr} (WebSocket/TCP)");
-						println!("Certificate fingerprint: {}", server.fingerprint());
+						crate::info!("Certificate fingerprint: {}", server.fingerprint());
 						if server.psk().is_none() {
-							eprintln!(
-								"WARNING: No authentication configured. Any client can connect."
+							crate::warn!(
+								"No authentication configured. Use --psk <SECRET> to require authentication."
 							);
-							eprintln!("Use --psk <SECRET> to require authentication.");
 						}
-						run_entry_server(server, metrics, peers, routes, sessions, cmd.max_peers)
-							.await
+						run_entry_server(
+							server,
+							metrics,
+							peers,
+							routes,
+							sessions,
+							cmd.max_peers,
+							cmd.fast,
+						)
+						.await
 					}
 					#[cfg(not(feature = "websocket"))]
 					{
@@ -274,7 +288,7 @@ async fn run_entry_connect(
 					match client.connect(NodeRole::Entry).await {
 						Ok(connect_result) => {
 							retry_delay = INITIAL_RETRY_DELAY;
-							handle_entry_connect_result(connect_result, &metrics).await?;
+							handle_entry_connect_result(connect_result, &metrics, cmd.fast).await?;
 						}
 						Err(e) => {
 							if crate::repl_common::is_nonretryable_error(&e) {
@@ -315,7 +329,7 @@ async fn run_entry_connect(
 					match client.connect(NodeRole::Entry).await {
 						Ok(connect_result) => {
 							retry_delay = INITIAL_RETRY_DELAY;
-							handle_entry_connect_result(connect_result, &metrics).await?;
+							handle_entry_connect_result(connect_result, &metrics, cmd.fast).await?;
 						}
 						Err(e) => {
 							if crate::repl_common::is_nonretryable_error(&e) {
@@ -340,18 +354,24 @@ async fn run_entry_connect(
 async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static>(
 	connect_result: wallhack::client::client::ConnectResult<T>,
 	metrics: &Arc<Metrics>,
+	fast_mode: bool,
 ) -> Result<()> {
 	crate::info!("Connected to {}", connect_result.client_ident());
 
 	let name = SessionManager::create_anonymous();
 	let actor = create_tun_with_retry(name.clone()).await?;
-	let manager = ConnectionManager::new(actor, connect_result.transport(), Arc::clone(metrics));
+	let (manager, _syn_proxy_state) = ConnectionManager::new(
+		actor,
+		connect_result.transport(),
+		Arc::clone(metrics),
+		fast_mode,
+	);
 	manager.run().await?;
 
 	Ok(())
 }
 
-/// Generic entry server loop that works with any Server implementation.
+/// Generic entry server loop that works with any `Server` implementation.
 #[allow(clippy::too_many_lines)]
 async fn run_entry_server<S: Server>(
 	mut server: S,
@@ -360,6 +380,7 @@ async fn run_entry_server<S: Server>(
 	routes: SharedRouteTable,
 	sessions: SessionManager,
 	max_peers: Option<usize>,
+	fast_mode: bool,
 ) -> Result<()>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
@@ -437,7 +458,7 @@ where
 						tokio::spawn(async move {
 							// Hold the permit for the lifetime of this connection
 							let _permit = permit;
-							let result = handle_connection(conn_metrics, accept_result, conn_sessions.clone(), &mut ping_rx, &transport, &conn_peers, conn_psk).await;
+							let result = handle_connection(conn_metrics, accept_result, conn_sessions.clone(), &mut ping_rx, &transport, &conn_peers, conn_psk, fast_mode).await;
 							// Unregister peer when connection closes
 							conn_peers.unregister(&peer_id);
 							// Clean up routes for this peer
@@ -927,6 +948,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	transport: &Arc<T>,
 	peers: &Arc<wallhack::control::peers::Registry>,
 	server_psk: Option<String>,
+	fast_mode: bool,
 ) -> Result<String> {
 	// Get ExitNodeHello directly from accept result (already read during accept)
 	let exit_id = if let Some(hello) = accept_result.take_exit_hello() {
@@ -1005,7 +1027,8 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	};
 
 	let actor = create_tun_with_retry(name.clone()).await?;
-	let manager = ConnectionManager::new(actor, Arc::clone(transport), metrics);
+	let (manager, _syn_proxy_state) =
+		ConnectionManager::new(actor, Arc::clone(transport), metrics, fast_mode);
 
 	// Run the connection manager alongside ping handling
 	let mut manager_handle = tokio::spawn(async move { manager.run().await });

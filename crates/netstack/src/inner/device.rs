@@ -74,6 +74,10 @@ impl PeekDevice for VecDevice {
 	fn retain_pending<F: FnMut(&[u8]) -> bool>(&mut self, mut f: F) {
 		self.ingress.retain(|pkt| f(pkt));
 	}
+
+	fn inject_pending(&mut self, packet: Vec<u8>) {
+		self.ingress.push_back(packet);
+	}
 }
 
 impl Device for VecDevice {

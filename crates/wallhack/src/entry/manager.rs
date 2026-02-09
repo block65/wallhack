@@ -8,9 +8,9 @@ use std::{
 	time::Duration,
 };
 
-use netstack::async_stack::{Netstack, udp_socket::UdpSocketAny};
+use netstack::async_stack::{HeldSyn, Netstack, SynProxyState, udp_socket::UdpSocketAny};
 use smoltcp::phy::Device;
-use tokio::{io::unix::AsyncFd, time::Instant};
+use tokio::{io::unix::AsyncFd, sync::Notify, time::Instant};
 use transport::{BiStream, Transport};
 
 use crate::control::metrics::SharedMetrics;
@@ -19,6 +19,7 @@ use super::{
 	actor::TunActor,
 	icmp::{IcmpUnreachableReason, build_icmp_dest_unreachable},
 	session::run_tcp_session,
+	syn_proxy::{parse_syn_target, probe_tcp_target},
 	udp_session::{UdpForwardResult, send_udp_packet},
 };
 
@@ -56,12 +57,28 @@ pub struct ConnectionManager<D: Device + Send + 'static, T: Transport + 'static>
 	recent_connections: Vec<Instant>,
 	/// Only warn once about high connection rate
 	rate_warned: AtomicBool,
+	/// SYN proxy: receive held SYN packets from the poll loop.
+	syn_rx: tokio::sync::mpsc::UnboundedReceiver<HeldSyn>,
+	/// SYN proxy: send re-injected packets back to the poll loop.
+	inject_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+	/// SYN proxy: wake the poll loop when a probe completes.
+	wake_notify: Arc<Notify>,
+	/// SYN proxy: shared state for fast mode toggle and port cache.
+	syn_proxy_state: Arc<SynProxyState>,
 }
 
 impl<T: Transport + 'static> ConnectionManager<super::actor::SmoltcpTunDevice, T> {
-	pub fn new(actor: TunActor, transport: Arc<T>, metrics: SharedMetrics) -> Self {
-		let (stack, tun_writer) = actor.into_stack();
-		Self {
+	pub fn new(
+		actor: TunActor,
+		transport: Arc<T>,
+		metrics: SharedMetrics,
+		fast_mode: bool,
+	) -> (Self, Arc<SynProxyState>) {
+		let (mut stack, tun_writer) = actor.into_stack();
+		let state = Arc::new(SynProxyState::new(fast_mode));
+		let (syn_rx, inject_tx, wake_notify) = stack.set_syn_proxy(Arc::clone(&state));
+
+		let manager = Self {
 			stack,
 			transport,
 			metrics,
@@ -69,7 +86,12 @@ impl<T: Transport + 'static> ConnectionManager<super::actor::SmoltcpTunDevice, T
 			udp_sessions: HashMap::new(),
 			recent_connections: Vec::new(),
 			rate_warned: AtomicBool::new(false),
-		}
+			syn_rx,
+			inject_tx,
+			wake_notify,
+			syn_proxy_state: Arc::clone(&state),
+		};
+		(manager, state)
 	}
 }
 
@@ -223,6 +245,34 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 					if let Err(e) = result {
 						tracing::warn!("udp stream handling failed: {e}");
 					}
+				}
+				Some(held) = self.syn_rx.recv() => {
+					let transport = Arc::clone(&self.transport);
+					let state = Arc::clone(&self.syn_proxy_state);
+					let inject_tx = self.inject_tx.clone();
+					let wake = Arc::clone(&self.wake_notify);
+					let port = held.dst_port;
+					tokio::spawn(async move {
+						let Some(target_addr) = parse_syn_target(&held.packet) else {
+							tracing::debug!(port, "SYN probe: failed to parse target");
+							state.mark_closed(port);
+							wake.notify_one();
+							return;
+						};
+						let open = probe_tcp_target(&transport, &target_addr).await;
+						if open {
+							tracing::debug!(port, "SYN probe: open");
+							state.mark_open(port);
+							// Re-inject the original SYN so the poll loop can JIT-bind + process it.
+							let _ = inject_tx.send(held.packet);
+						} else {
+							tracing::debug!(port, "SYN probe: closed");
+							state.mark_closed(port);
+							// Re-inject so smoltcp sees the SYN with no listener → RST.
+							let _ = inject_tx.send(held.packet);
+						}
+						wake.notify_one();
+					});
 				}
 				() = tokio::time::sleep(Duration::from_secs(5)) => {
 					let now = Instant::now();

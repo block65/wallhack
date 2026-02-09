@@ -120,6 +120,10 @@ pub struct EntryCommand {
 	/// maximum number of concurrent peer connections
 	#[argh(option)]
 	pub max_peers: Option<usize>,
+
+	/// skip SYN proxy verification (optimistic JIT, faster but less accurate port scanning)
+	#[argh(switch)]
+	pub fast: bool,
 }
 
 /// Exit node: makes syscalls to the local network on behalf of the tunnel.

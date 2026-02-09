@@ -522,4 +522,84 @@ mod tests {
 		assert_eq!(reply_tcp.dst_port(), 12345);
 		assert_eq!(reply_tcp.ack_number(), TcpSeqNumber(1001));
 	}
+
+	/// Verify the critical SYN proxy assumption: SYN to a port with NO listener
+	/// must produce a RST (not silence). This is the foundation of the SYN
+	/// proxy architecture — if smoltcp silently drops, we'd need manual RST
+	/// construction instead.
+	#[test]
+	fn syn_without_listener_produces_rst() {
+		use smoltcp::wire::{
+			IpProtocol, Ipv4Packet, Ipv4Repr, TcpControl, TcpPacket, TcpRepr, TcpSeqNumber,
+		};
+
+		let device = VecDevice::new(1500);
+		let mut stack = InnerStack::new(device, test_config());
+		// Deliberately: NO tcp_listen() call — port 9999 has no listener.
+
+		let tcp_repr = TcpRepr {
+			src_port: 12345,
+			dst_port: 9999,
+			control: TcpControl::Syn,
+			seq_number: TcpSeqNumber(1000),
+			ack_number: None,
+			window_len: 65535,
+			window_scale: Some(7),
+			max_seg_size: Some(1460),
+			sack_permitted: false,
+			sack_ranges: [None; 3],
+			payload: &[],
+			timestamp: None,
+		};
+
+		let ip_repr = Ipv4Repr {
+			src_addr: Ipv4Address::new(10, 0, 0, 2),
+			dst_addr: Ipv4Address::new(10, 0, 0, 1),
+			next_header: IpProtocol::Tcp,
+			payload_len: tcp_repr.header_len(),
+			hop_limit: 64,
+		};
+
+		let mut packet_buf = vec![0u8; ip_repr.buffer_len() + tcp_repr.header_len()];
+		let mut ipv4_pkt = Ipv4Packet::new_unchecked(&mut packet_buf);
+		ip_repr.emit(
+			&mut ipv4_pkt,
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
+
+		let ip_hdr_len = ipv4_pkt.header_len() as usize;
+		let mut tcp_pkt = TcpPacket::new_unchecked(&mut packet_buf[ip_hdr_len..]);
+		tcp_repr.emit(
+			&mut tcp_pkt,
+			&Ipv4Address::new(10, 0, 0, 2).into(),
+			&Ipv4Address::new(10, 0, 0, 1).into(),
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
+
+		let mut ipv4_pkt = Ipv4Packet::new_unchecked(&mut packet_buf);
+		ip_repr.emit(
+			&mut ipv4_pkt,
+			&smoltcp::phy::ChecksumCapabilities::default(),
+		);
+
+		let now = Instant::from_millis(0);
+		stack.device_mut().inject(packet_buf);
+		stack.poll(now);
+
+		let egress = stack.device_mut().drain_egress();
+		assert!(
+			!egress.is_empty(),
+			"expected RST packet but got silence — SYN proxy architecture won't work"
+		);
+
+		let reply = &egress[0];
+		let reply_ip = Ipv4Packet::new_checked(reply).expect("valid IPv4");
+		assert_eq!(reply_ip.next_header(), IpProtocol::Tcp);
+
+		let reply_tcp = TcpPacket::new_checked(reply_ip.payload()).expect("valid TCP");
+		assert!(reply_tcp.rst(), "expected RST flag set");
+		assert!(!reply_tcp.syn(), "RST should not have SYN flag");
+		assert_eq!(reply_tcp.src_port(), 9999);
+		assert_eq!(reply_tcp.dst_port(), 12345);
+	}
 }

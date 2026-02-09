@@ -177,6 +177,10 @@ impl netstack::inner::peek_device::PeekDevice for SmoltcpTunDevice {
 	fn retain_pending<F: FnMut(&[u8]) -> bool>(&mut self, mut f: F) {
 		self.pending.retain(|pkt| f(pkt));
 	}
+
+	fn inject_pending(&mut self, packet: Vec<u8>) {
+		self.pending.push_back(packet);
+	}
 }
 
 impl smoltcp::phy::Device for SmoltcpTunDevice {

@@ -23,4 +23,10 @@ pub trait PeekDevice: Device {
 	/// smoltcp poll loop processes them. Used to suppress RSTs for TCP
 	/// segments that arrive with no matching socket.
 	fn retain_pending<F: FnMut(&[u8]) -> bool>(&mut self, f: F);
+
+	/// Inject a raw packet into the pending ingress queue.
+	///
+	/// Used by the SYN proxy to re-inject held SYN packets after the
+	/// exit node confirms (or denies) reachability.
+	fn inject_pending(&mut self, packet: Vec<u8>);
 }

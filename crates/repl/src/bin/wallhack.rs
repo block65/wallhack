@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
 				api_user: None,
 				api_pass: None,
 				max_peers: None,
+				fast: false,
 			};
 			run_entry(&cli, &cmd).await
 		}

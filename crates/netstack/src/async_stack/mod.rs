@@ -3,7 +3,15 @@ pub mod tcp_listener_any;
 pub mod tcp_stream;
 pub mod udp_socket;
 
-use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
+use std::{
+	collections::{HashMap, HashSet},
+	future::Future,
+	pin::Pin,
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
+};
 
 use parking_lot::Mutex;
 
@@ -19,6 +27,92 @@ use crate::inner::{InnerStack, peek_device::PeekDevice};
 /// Factory for readiness futures. Called each poll iteration to get a future
 /// that resolves when the underlying device has data available.
 pub type ReadinessFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+// ============================================================================
+// SYN proxy types
+// ============================================================================
+
+/// Per-port probe result cached by the SYN proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheEntry {
+	/// Probe in progress — SYN is held, waiting for exit confirmation.
+	Probing,
+	/// Exit confirmed port is reachable.
+	Open,
+	/// Exit confirmed port is unreachable.
+	Closed,
+}
+
+/// A SYN packet held while the exit node is probed for reachability.
+pub struct HeldSyn {
+	/// The raw IP packet (SYN).
+	pub packet: Vec<u8>,
+	/// Destination port extracted from the SYN.
+	pub dst_port: u16,
+}
+
+/// Shared state for the SYN proxy, accessible from poll loop and manager.
+pub struct SynProxyState {
+	/// When true, skip probing and JIT-bind immediately (optimistic/fast mode).
+	fast_mode: AtomicBool,
+	/// Per-port cache of probe results.
+	cache: Mutex<HashMap<u16, CacheEntry>>,
+}
+
+impl SynProxyState {
+	/// Create a new SYN proxy state.
+	#[must_use]
+	pub fn new(fast_mode: bool) -> Self {
+		Self {
+			fast_mode: AtomicBool::new(fast_mode),
+			cache: Mutex::new(HashMap::new()),
+		}
+	}
+
+	/// Whether fast (optimistic JIT) mode is enabled.
+	#[must_use]
+	pub fn is_fast_mode(&self) -> bool {
+		self.fast_mode.load(Ordering::Relaxed)
+	}
+
+	/// Toggle fast mode on or off, clearing the cache on change.
+	pub fn set_fast_mode(&self, enabled: bool) {
+		self.fast_mode.store(enabled, Ordering::Relaxed);
+		self.clear_cache();
+	}
+
+	/// Look up the cached status for a port.
+	#[must_use]
+	pub fn get(&self, port: u16) -> Option<CacheEntry> {
+		self.cache.lock().get(&port).copied()
+	}
+
+	/// Mark a port as currently being probed.
+	pub fn mark_probing(&self, port: u16) {
+		self.cache.lock().insert(port, CacheEntry::Probing);
+	}
+
+	/// Mark a port as open (exit confirmed reachable).
+	pub fn mark_open(&self, port: u16) {
+		self.cache.lock().insert(port, CacheEntry::Open);
+	}
+
+	/// Mark a port as closed (exit confirmed unreachable).
+	pub fn mark_closed(&self, port: u16) {
+		self.cache.lock().insert(port, CacheEntry::Closed);
+	}
+
+	/// Check if a port is cached as closed.
+	#[must_use]
+	pub fn is_closed(&self, port: u16) -> bool {
+		self.cache.lock().get(&port) == Some(&CacheEntry::Closed)
+	}
+
+	/// Clear the entire cache.
+	pub fn clear_cache(&self) {
+		self.cache.lock().clear();
+	}
+}
 
 /// Shared state between the poll loop and async socket handles.
 ///
@@ -60,6 +154,14 @@ pub struct Netstack<D: Device + Send + 'static> {
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
 	jit_notify: Arc<Notify>,
 	readable_fn: Option<ReadinessFn>,
+	/// SYN proxy state (None = no proxy, fast mode by default).
+	syn_proxy: Option<Arc<SynProxyState>>,
+	/// Channel for sending held SYNs to the connection manager.
+	syn_tx: Option<tokio::sync::mpsc::UnboundedSender<HeldSyn>>,
+	/// Channel for receiving re-injected packets from the manager.
+	inject_rx: Option<Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>>,
+	/// Notify for waking poll loop when a probe completes.
+	wake_notify: Option<Arc<Notify>>,
 }
 
 impl<D: Device + Send + 'static> Netstack<D> {
@@ -89,6 +191,10 @@ impl<D: Device + Send + 'static> Netstack<D> {
 			udp_ports: Arc::new(Mutex::new(HashSet::new())),
 			jit_notify: Arc::new(Notify::new()),
 			readable_fn: None,
+			syn_proxy: None,
+			syn_tx: None,
+			inject_rx: None,
+			wake_notify: None,
 		}
 	}
 
@@ -123,27 +229,57 @@ impl<D: Device + Send + 'static> Netstack<D> {
 		self.restart_poll_loop();
 	}
 
+	/// Configure SYN proxy channels and state.
+	///
+	/// Returns the receiver for held SYNs and sender for re-injected packets,
+	/// plus a wake notify for the poll loop.
+	///
+	/// The caller (`ConnectionManager`) uses `syn_rx` to receive held SYNs,
+	/// probes the exit, then sends verified packets via `inject_tx` and
+	/// wakes the poll loop via `wake_notify`.
+	pub fn set_syn_proxy(
+		&mut self,
+		state: Arc<SynProxyState>,
+	) -> (
+		tokio::sync::mpsc::UnboundedReceiver<HeldSyn>,
+		tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+		Arc<Notify>,
+	)
+	where
+		D: PeekDevice,
+	{
+		let (syn_tx, syn_rx) = tokio::sync::mpsc::unbounded_channel();
+		let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
+		let wake_notify = Arc::new(Notify::new());
+
+		self.syn_proxy = Some(state);
+		self.syn_tx = Some(syn_tx);
+		self.inject_rx = Some(Arc::new(tokio::sync::Mutex::new(inject_rx)));
+		self.wake_notify = Some(Arc::clone(&wake_notify));
+		self.restart_poll_loop();
+
+		(syn_rx, inject_tx, wake_notify)
+	}
+
 	fn restart_poll_loop(&mut self)
 	where
 		D: PeekDevice,
 	{
 		self.poll_handle.abort();
 		let shared = Arc::clone(&self.shared);
-		let jit_tcp = self.jit_tcp;
-		let jit_udp = self.jit_udp;
-		let tcp_ports = Arc::clone(&self.tcp_ports);
-		let udp_ports = Arc::clone(&self.udp_ports);
 		let notify = Arc::clone(&self.jit_notify);
-		let readable_fn = self.readable_fn.clone();
-		self.poll_handle = tokio::spawn(poll_loop_jit(
-			shared,
-			jit_tcp,
-			jit_udp,
-			tcp_ports,
-			udp_ports,
-			notify,
-			readable_fn,
-		));
+		let config = JitPollConfig {
+			jit_tcp: self.jit_tcp,
+			jit_udp: self.jit_udp,
+			tcp_ports: Arc::clone(&self.tcp_ports),
+			udp_ports: Arc::clone(&self.udp_ports),
+			readable_fn: self.readable_fn.clone(),
+			syn_proxy: self.syn_proxy.clone(),
+			syn_tx: self.syn_tx.clone(),
+			inject_rx: self.inject_rx.clone(),
+			wake_notify: self.wake_notify.clone(),
+		};
+		self.poll_handle = tokio::spawn(poll_loop_jit(shared, notify, config));
 		self.wake();
 	}
 
@@ -254,14 +390,23 @@ async fn poll_loop_basic<D: Device + Send + 'static>(shared: Arc<Shared<D>>) {
 	}
 }
 
-async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
-	shared: Arc<Shared<D>>,
+/// Configuration for the JIT poll loop, bundled to avoid too many arguments.
+struct JitPollConfig {
 	jit_tcp: bool,
 	jit_udp: bool,
 	tcp_ports: Arc<Mutex<HashSet<u16>>>,
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
-	notify: Arc<Notify>,
 	readable_fn: Option<ReadinessFn>,
+	syn_proxy: Option<Arc<SynProxyState>>,
+	syn_tx: Option<tokio::sync::mpsc::UnboundedSender<HeldSyn>>,
+	inject_rx: Option<Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>>,
+	wake_notify: Option<Arc<Notify>>,
+}
+
+async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
+	shared: Arc<Shared<D>>,
+	notify: Arc<Notify>,
+	config: JitPollConfig,
 ) {
 	let mut prune_counter: u32 = 0;
 	loop {
@@ -276,48 +421,24 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 				)
 				.expect("timestamp overflow"),
 			);
-			if jit_tcp || jit_udp {
-				// Get ALL pending packets and extract port info before mutating.
-				// peek_all_ingress returns a reference, so we extract what we need
-				// before calling jit_bind_ports which needs &mut inner.
-				let port_info: Vec<_> = inner
-					.peek_all_ingress()
-					.iter()
-					.filter_map(|pkt| parse_l4(pkt))
-					.collect();
-				for (protocol, dst_port, is_syn) in &port_info {
-					let _ = jit_bind_port(
-						&mut inner, *protocol, *dst_port, *is_syn, jit_tcp, jit_udp, &tcp_ports,
-						&udp_ports, &notify,
-					);
-				}
 
-				// Drop TCP segments that don't match any socket. Without this,
-				// smoltcp replies with RST to stray ACKs (e.g. from nmap host
-				// discovery), revealing the tunnel endpoint as "host up".
-				if jit_tcp {
-					drop_unmatched_tcp(&mut inner);
+			// Phase 1: Inject re-verified SYN packets from the manager.
+			if let Some(ref rx) = config.inject_rx
+				&& let Ok(mut rx) = rx.try_lock()
+			{
+				while let Ok(packet) = rx.try_recv() {
+					inner.device_mut().inject_pending(packet);
 				}
 			}
+
+			if config.jit_tcp || config.jit_udp {
+				jit_poll_ingress(&mut inner, &config, &notify);
+			}
+
+			// Phase 4: Poll — smoltcp processes remaining packets.
 			inner.poll(now);
-			// Periodically prune closed sockets and log state
-			prune_counter = prune_counter.wrapping_add(1);
-			if prune_counter.is_multiple_of(100) {
-				let socket_count = inner.socket_count();
-				let pruned = inner.prune_closed_tcp_sockets();
-				if pruned > 0 || socket_count > 5 {
-					let states = inner.tcp_state_summary();
-					tracing::debug!(
-						socket_count,
-						pruned,
-						remaining = inner.socket_count(),
-						states,
-						"Socket state"
-					);
-				}
-			}
-			// Notify listeners after poll - sockets may have transitioned to established
-			notify.notify_waiters();
+
+			prune_and_notify(&mut inner, &notify, &mut prune_counter);
 			inner.poll_at(now).map(|poll_at| {
 				let diff = poll_at - now;
 				tokio::time::Duration::from_millis(diff.total_millis())
@@ -326,33 +447,192 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 
 		match delay {
 			Some(d) if d.is_zero() => {
-				// Need to poll again immediately, but yield to let other tasks run
 				tokio::task::yield_now().await;
 			}
 			Some(d) => {
-				// Wait for the earlier of: smoltcp deadline, device readiness, or notify
 				tokio::select! {
 					() = async {
-						match &readable_fn {
+						match &config.readable_fn {
 							Some(f) => f().await,
 							None => tokio::time::sleep(d.min(tokio::time::Duration::from_millis(1))).await,
 						}
 					} => {}
 					() = shared.notify.notified() => {}
+					() = async {
+						match &config.wake_notify {
+							Some(n) => n.notified().await,
+							None => std::future::pending().await,
+						}
+					} => {}
 				}
 			}
 			None => {
-				// No smoltcp deadline — wait for device readiness or notify
 				tokio::select! {
 					() = async {
-						match &readable_fn {
+						match &config.readable_fn {
 							Some(f) => f().await,
 							None => tokio::time::sleep(tokio::time::Duration::from_millis(1)).await,
 						}
 					} => {}
 					() = shared.notify.notified() => {}
+					() = async {
+						match &config.wake_notify {
+							Some(n) => n.notified().await,
+							None => std::future::pending().await,
+						}
+					} => {}
 				}
 			}
+		}
+	}
+}
+
+/// Phase 2+3: JIT ingress processing with optional SYN proxy.
+fn jit_poll_ingress<D: Device + Send + 'static + PeekDevice>(
+	inner: &mut InnerStack<D>,
+	config: &JitPollConfig,
+	notify: &Arc<Notify>,
+) {
+	let syn_proxy_active = config.syn_proxy.as_ref().is_some_and(|s| !s.is_fast_mode());
+
+	if syn_proxy_active {
+		handle_syn_proxy_ingress(inner, config, notify);
+	} else {
+		let port_info: Vec<_> = inner
+			.peek_all_ingress()
+			.iter()
+			.filter_map(|pkt| parse_l4(pkt))
+			.collect();
+		for (protocol, dst_port, is_syn) in &port_info {
+			let _ = jit_bind_port(
+				inner,
+				*protocol,
+				*dst_port,
+				*is_syn,
+				config.jit_tcp,
+				config.jit_udp,
+				&config.tcp_ports,
+				&config.udp_ports,
+				notify,
+			);
+		}
+	}
+
+	// Phase 3: Filter — drop unmatched TCP, but exempt closed-cached ports.
+	if config.jit_tcp {
+		drop_unmatched_tcp_with_proxy(inner, config.syn_proxy.as_ref());
+	}
+}
+
+/// Periodically prune closed sockets and notify listeners.
+fn prune_and_notify<D: Device + Send + 'static>(
+	inner: &mut InnerStack<D>,
+	notify: &Arc<Notify>,
+	prune_counter: &mut u32,
+) {
+	*prune_counter = prune_counter.wrapping_add(1);
+	if prune_counter.is_multiple_of(100) {
+		let socket_count = inner.socket_count();
+		let pruned = inner.prune_closed_tcp_sockets();
+		if pruned > 0 || socket_count > 5 {
+			let states = inner.tcp_state_summary();
+			tracing::debug!(
+				socket_count,
+				pruned,
+				remaining = inner.socket_count(),
+				states,
+				"Socket state"
+			);
+		}
+	}
+	notify.notify_waiters();
+}
+
+/// Handle SYN proxy ingress: classify each pending packet, hold unknown SYNs,
+/// JIT-bind open ports, let closed ports through (no JIT bind → smoltcp RST).
+fn handle_syn_proxy_ingress<D: Device + Send + 'static + PeekDevice>(
+	inner: &mut InnerStack<D>,
+	config: &JitPollConfig,
+	notify: &Arc<Notify>,
+) {
+	let Some(state) = config.syn_proxy.as_ref() else {
+		return;
+	};
+
+	// Collect packet info + clone SYN packets that need to be held.
+	let mut held_syns: Vec<HeldSyn> = Vec::new();
+	let mut probing_ports: HashSet<u16> = HashSet::new();
+
+	// First pass: classify packets and collect data for JIT binding.
+	let packet_actions: Vec<_> = inner
+		.peek_all_ingress()
+		.iter()
+		.filter_map(|pkt| {
+			let (protocol, dst_port, is_syn) = parse_l4(pkt)?;
+			Some((protocol, dst_port, is_syn, pkt.clone()))
+		})
+		.collect();
+
+	for (protocol, dst_port, is_syn, pkt) in &packet_actions {
+		if *protocol == IpProtocol::Tcp && *is_syn && config.jit_tcp {
+			match state.get(*dst_port) {
+				Some(CacheEntry::Open) => {
+					let _ = jit_bind_port(
+						inner,
+						*protocol,
+						*dst_port,
+						*is_syn,
+						config.jit_tcp,
+						config.jit_udp,
+						&config.tcp_ports,
+						&config.udp_ports,
+						notify,
+					);
+				}
+				Some(CacheEntry::Closed) => {
+					// Keep in pending (no JIT bind), smoltcp will RST.
+				}
+				Some(CacheEntry::Probing) => {
+					probing_ports.insert(*dst_port);
+				}
+				None => {
+					state.mark_probing(*dst_port);
+					probing_ports.insert(*dst_port);
+					held_syns.push(HeldSyn {
+						packet: pkt.clone(),
+						dst_port: *dst_port,
+					});
+				}
+			}
+		} else {
+			let _ = jit_bind_port(
+				inner,
+				*protocol,
+				*dst_port,
+				*is_syn,
+				config.jit_tcp,
+				config.jit_udp,
+				&config.tcp_ports,
+				&config.udp_ports,
+				notify,
+			);
+		}
+	}
+
+	// Drop held/probing SYN packets from the pending queue.
+	if !probing_ports.is_empty() {
+		inner.device_mut().retain_pending(|pkt| {
+			let Some((protocol, dst_port, is_syn)) = parse_l4(pkt) else {
+				return true;
+			};
+			!(protocol == IpProtocol::Tcp && is_syn && probing_ports.contains(&dst_port))
+		});
+	}
+
+	// Send held SYNs to the manager for probing.
+	if let Some(tx) = config.syn_tx.as_ref() {
+		for held in held_syns {
+			let _ = tx.send(held);
 		}
 	}
 }
@@ -446,13 +726,21 @@ fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
 	Some((next_header, dst_port, is_syn))
 }
 
-/// Drop pending TCP packets that have no matching socket.
+/// Drop pending TCP packets that have no matching socket, with SYN proxy
+/// exemptions.
 ///
 /// smoltcp replies with RST to any TCP segment that doesn't match a socket.
 /// In a tunnel context this leaks the entry node's presence to scanners
 /// (e.g. nmap marks the host "up" on receiving a RST to a probe ACK).
 /// By silently dropping unmatched segments we behave like a filtered host.
-fn drop_unmatched_tcp<D: Device + Send + 'static + PeekDevice>(inner: &mut InnerStack<D>) {
+///
+/// **SYN proxy exemption**: SYN packets to ports cached as `Closed` are kept
+/// so that smoltcp (with no listener on that port) generates a native RST.
+/// This is how nmap sees "closed" instead of "filtered".
+fn drop_unmatched_tcp_with_proxy<D: Device + Send + 'static + PeekDevice>(
+	inner: &mut InnerStack<D>,
+	syn_proxy: Option<&Arc<SynProxyState>>,
+) {
 	use smoltcp::socket::Socket;
 
 	// Collect ports that have an active TCP socket to avoid borrow conflicts.
@@ -474,12 +762,18 @@ fn drop_unmatched_tcp<D: Device + Send + 'static + PeekDevice>(inner: &mut Inner
 		.collect();
 
 	inner.device_mut().retain_pending(|pkt| {
-		let Some((protocol, dst_port, _is_syn)) = parse_l4(pkt) else {
+		let Some((protocol, dst_port, is_syn)) = parse_l4(pkt) else {
 			return true;
 		};
 		if protocol != IpProtocol::Tcp {
 			return true;
 		}
-		active_ports.contains(&dst_port)
+		// Keep if a socket exists for this port.
+		if active_ports.contains(&dst_port) {
+			return true;
+		}
+		// SYN proxy exemption: let SYN packets to closed ports through
+		// so smoltcp generates a native RST (no listener → RST).
+		is_syn && syn_proxy.is_some_and(|state| state.is_closed(dst_port))
 	});
 }
