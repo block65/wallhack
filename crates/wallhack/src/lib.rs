@@ -11,7 +11,7 @@ mod tls;
 pub mod types;
 
 // public
-#[cfg(feature = "api")]
+#[cfg(feature = "http-api")]
 pub mod api;
 pub mod client;
 pub mod control;

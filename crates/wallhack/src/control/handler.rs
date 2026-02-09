@@ -239,7 +239,7 @@ impl Handler {
 	}
 }
 
-#[cfg(feature = "api")]
+#[cfg(feature = "http-api")]
 impl crate::api::node_api::NodeApi for Handler {
 	fn peers(&self) -> Vec<crate::api::node_api::PeerInfo> {
 		self.peers

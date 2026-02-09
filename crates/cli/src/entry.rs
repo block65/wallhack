@@ -153,7 +153,7 @@ async fn run_entry_listen(
 	let server_config = build_server_config(global, addr, psk, cmd.max_peers);
 
 	// Start REST API if enabled
-	#[cfg(feature = "api")]
+	#[cfg(feature = "http-api")]
 	if let Some(api_addr) = cmd.api_addr() {
 		start_api(
 			global,
@@ -257,7 +257,7 @@ async fn run_entry_connect(
 	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
 
 	// Start REST API if enabled
-	#[cfg(feature = "api")]
+	#[cfg(feature = "http-api")]
 	if let Some(api_addr) = cmd.api_addr() {
 		let tls = build_tls_config(global);
 		let routes = RouteTable::shared();
@@ -1130,7 +1130,7 @@ fn build_tls_config(global: &WallhackCli) -> Option<wallhack::server::config::Tl
 	}
 }
 
-#[cfg(feature = "api")]
+#[cfg(feature = "http-api")]
 fn start_api(
 	_global: &WallhackCli,
 	api_addr: std::net::SocketAddr,
