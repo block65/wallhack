@@ -84,7 +84,15 @@ pub fn client_config(
 
 	let mut config = match (config, accept_fingerprint) {
 		(Some(config), _) => with_client_auth(config)?,
-		(None, Some(fp)) => with_fingerprint_verification(fp),
+		(None, Some(fp)) => {
+			// Default to sha256 if no hash algorithm prefix is provided
+			let fp = if fp.contains(':') {
+				fp
+			} else {
+				format!("sha256:{fp}")
+			};
+			with_fingerprint_verification(fp)
+		}
 		(None, None) => with_great_danger(),
 	};
 
