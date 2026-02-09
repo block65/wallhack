@@ -33,7 +33,7 @@ impl Default for OutputStyles {
 				literal: AnsiColor::White.on_default(),
 				_placeholder: AnsiColor::White.on_default(),
 				valid: AnsiColor::White.on_default(),
-				_invalid: AnsiColor::White.on_default(),
+				invalid: AnsiColor::White.on_default(),
 			}
 		}
 	}

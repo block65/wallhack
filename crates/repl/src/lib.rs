@@ -11,7 +11,6 @@ mod entry;
 mod exit;
 mod relay;
 
-#[cfg(feature = "color")]
 mod styles;
 
 pub use cli::{Command, EntryCommand, ExitCommand, RelayCommand, WallhackCli, parse_cli};

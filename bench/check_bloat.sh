@@ -8,7 +8,6 @@ set -euo pipefail
 # Usage:
 #   ./bench/check_bloat.sh              # build all variants
 #   ./bench/check_bloat.sh --quick      # native glibc only (faster)
-#   ./bench/check_bloat.sh --ci         # CI variant only (glibc + musl, websocket features)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -22,57 +21,44 @@ cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
 # Updated: 2026-02-09, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
-# Set ~25% above current measured sizes. Adjust as features are added.
+# Set ~10% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
-    # glibc x86_64
-    ["glibc-slim"]=5500000         # current: ~4.2M
-    ["glibc-default"]=6000000      # current: ~4.5M
-    ["glibc-ci"]=7000000           # current: ~5.3M
-    ["glibc-full"]=9500000         # current: ~7.5M
-    # musl x86_64
-    ["musl-ci"]=7000000            # current: ~5.2M
-    ["musl-full"]=9500000          # current: ~7.4M
+    # glibc x86_64 (~10% headroom)
+    ["glibc-slim"]=5200000         # current: ~4.7M
+    ["glibc-default"]=5500000      # current: ~4.9M
+    # musl x86_64 (~10% headroom)
+    ["musl-slim"]=5200000          # current: ~4.6M
+    ["musl-default"]=5500000       # current: ~4.9M
 )
 
 # --- Build definitions ---
 # format: "label|target|cargo_features"
 BUILDS_ALL=(
-    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features color,quic"
+    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features full"
     "glibc-default|x86_64-unknown-linux-gnu|"
-    "glibc-ci|x86_64-unknown-linux-gnu|--features websocket"
-    "glibc-full|x86_64-unknown-linux-gnu|--features full,api,dns-resolver"
-    "musl-ci|x86_64-unknown-linux-musl|--features websocket"
-    "musl-full|x86_64-unknown-linux-musl|--features full,api,dns-resolver"
+    "musl-slim|x86_64-unknown-linux-musl|--no-default-features --features full"
+    "musl-default|x86_64-unknown-linux-musl|"
 )
 
 BUILDS_QUICK=(
+    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features full"
     "glibc-default|x86_64-unknown-linux-gnu|"
-    "glibc-ci|x86_64-unknown-linux-gnu|--features websocket"
-    "glibc-full|x86_64-unknown-linux-gnu|--features full,api,dns-resolver"
-)
-
-BUILDS_CI=(
-    "glibc-ci|x86_64-unknown-linux-gnu|--features websocket"
-    "musl-ci|x86_64-unknown-linux-musl|--features websocket"
 )
 
 # Parse args
 MODE="all"
 case "${1:-}" in
     --quick) MODE="quick" ;;
-    --ci)    MODE="ci" ;;
     --help|-h)
-        echo "Usage: $0 [--quick|--ci]"
+        echo "Usage: $0 [--quick]"
         echo "  (none)   Build all variants (glibc + musl, slim to full)"
-        echo "  --quick  Native glibc only (3 builds)"
-        echo "  --ci     CI variants only (glibc + musl with websocket)"
+        echo "  --quick  Native glibc only (2 builds)"
         exit 0
         ;;
 esac
 
 case "$MODE" in
     quick) BUILDS=("${BUILDS_QUICK[@]}") ;;
-    ci)    BUILDS=("${BUILDS_CI[@]}") ;;
     *)     BUILDS=("${BUILDS_ALL[@]}") ;;
 esac
 

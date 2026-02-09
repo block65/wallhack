@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["color", "readline", "quic"]
-color = ["dep:anstyle"]
-readline = ["dep:rustyline"]               # Full REPL with history/completion
+default = ["full", "color", "readline"]
+color = []
+readline = ["dep:rustyline"]                         # Full REPL with history/completion
 tokio-console = ["dep:console-subscriber"]
 dns-resolver = ["dep:hickory-resolver"]
 
@@ -19,7 +19,7 @@ full = ["quic", "websocket"]
 api = ["wallhack/api"]
 
 [dependencies]
-anstyle = { version = "1", optional = true }
+anstyle = "1"
 anyhow = "1"
 argh = "0.1"
 derive_more = { version = "2", features = ["display"] }
@@ -49,7 +49,6 @@ tabwriter = "1.4.1"
 
 [build-dependencies]
 built = { version = "0.7", features = ["git2", "chrono"] }
-
 
 [lints]
 workspace = true
