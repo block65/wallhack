@@ -564,8 +564,8 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 		tokio::select! {
 			result = &mut drive_fut => {
 				let msg = match result {
-					Ok(()) => { crate::info!("Connection closed cleanly"); "Connection closed, reconnecting...".into() }
-					Err(e) => { crate::error!("Orchestrator error: {}", e); format!("Connection error: {e}, reconnecting...") }
+					Ok(()) => { tracing::debug!("Connection closed cleanly"); "Connection closed, reconnecting...".into() }
+					Err(e) => { tracing::debug!("Orchestrator error: {}", e); format!("Connection error: {e}, reconnecting...") }
 				};
 				if let Some(p) = printer { p.print(msg); } else { println!("{msg}"); }
 				return Ok(None);
@@ -807,7 +807,7 @@ async fn run_quic_exit(
 						// None = connection dropped, loop will retry
 					}
 					Err(e) => {
-						crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
+						tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
 						if let Some(p) = printer {
 							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
 						} else {
@@ -888,7 +888,7 @@ async fn run_ws_exit(
 						// None = connection dropped, loop will retry
 					}
 					Err(e) => {
-						crate::info!("Connection failed: {}, retrying in {:?}", e, retry_delay);
+						tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
 						if let Some(p) = printer {
 							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
 						} else {

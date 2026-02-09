@@ -256,7 +256,7 @@ async fn run_entry_connect(
 							handle_entry_connect_result(connect_result, &metrics).await?;
 						}
 						Err(e) => {
-							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}");
+							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
 							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
 							tokio::time::sleep(retry_delay).await;
 							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -293,7 +293,7 @@ async fn run_entry_connect(
 							handle_entry_connect_result(connect_result, &metrics).await?;
 						}
 						Err(e) => {
-							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}");
+							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
 							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
 							tokio::time::sleep(retry_delay).await;
 							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -425,7 +425,7 @@ where
 									conn_printer.print(format!("Connection closed (tun: {tun_name})"));
 								}
 								Err(e) => {
-									crate::error!("Connection error: {}", e);
+									tracing::debug!("Connection error: {}", e);
 									conn_printer.print(format!("Connection error: {e}"));
 								}
 							}
@@ -747,7 +747,7 @@ fn print_sessions(sessions: &SessionManager, peers: &Arc<Registry>, printer: &Pr
 		printer.print(format!("Active sessions ({}):", list.len()));
 		for (exit_id, tun_name) in &list {
 			let addr = peers
-				.get(&exit_id)
+				.get(exit_id)
 				.map_or_else(|| "disconnected".to_string(), |p| p.addr.clone());
 			printer.print(format!("  {exit_id} ({addr}) -> {tun_name}"));
 		}
