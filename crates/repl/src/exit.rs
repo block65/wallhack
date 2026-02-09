@@ -21,7 +21,7 @@ use wallhack::{
 	server::server::Server,
 	transport::{
 		BiStream, Transport,
-		bridge::{SESSION_INIT_MTU, read_length_delimited},
+		bridge::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited},
 	},
 };
 
@@ -678,10 +678,32 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 	};
 	match init.protocol {
 		val if val == protobuf::v2::SessionProtocol::Tcp as i32 => {
-			// Note: source address is informational only, we don't bind to it
-			// because it may not exist in our namespace
-			let mut socket = tokio::net::TcpStream::connect(target).await?;
-			let _ = tokio::io::copy_bidirectional(&mut *stream, &mut socket).await?;
+			match tokio::net::TcpStream::connect(target).await {
+				Ok(mut socket) => {
+					let status = protobuf::v2::SessionStatus {
+						status: protobuf::v2::ResponseStatus::Success.into(),
+						reason: String::new(),
+					};
+					write_length_delimited(&mut *stream, &status)
+						.await
+						.map_err(|e| anyhow::anyhow!(e))?;
+					let _ = tokio::io::copy_bidirectional(&mut *stream, &mut socket).await?;
+				}
+				Err(e) => {
+					let status_code = match e.kind() {
+						std::io::ErrorKind::ConnectionRefused => {
+							protobuf::v2::ResponseStatus::ConnectionRefused
+						}
+						_ => protobuf::v2::ResponseStatus::HostUnreachable,
+					};
+					let status = protobuf::v2::SessionStatus {
+						status: status_code.into(),
+						reason: e.to_string(),
+					};
+					let _ = write_length_delimited(&mut *stream, &status).await;
+					return Err(anyhow::anyhow!("connect to {target} failed: {e}"));
+				}
+			}
 		}
 		val if val == protobuf::v2::SessionProtocol::Udp as i32 => {
 			// Note: source address is informational only, we don't bind to it

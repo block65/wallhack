@@ -79,6 +79,11 @@ message SessionInit {
   SessionProtocol protocol = 3;
 }
 
+message SessionStatus {
+  ResponseStatus status = 1;
+  string reason = 2;
+}
+
 message EntryNodeInstruction {
 
   oneof instruction {
