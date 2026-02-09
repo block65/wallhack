@@ -1,6 +1,9 @@
 //! Shared REPL infrastructure for all node types.
 
-use std::{io::IsTerminal, time::Instant};
+use std::{
+	io::{IsTerminal, Write},
+	time::Instant,
+};
 
 use tokio::sync::mpsc;
 
@@ -78,6 +81,64 @@ pub fn format_duration(d: std::time::Duration) -> String {
 		format!("{secs}s")
 	} else {
 		format!("{}ms", d.as_millis())
+	}
+}
+
+/// A row in the peers table, used by both entry and exit nodes.
+pub struct PeerRow {
+	pub id: String,
+	pub role: String,
+	pub addr: String,
+	pub latency: String,
+	pub uptime: String,
+	pub device: Option<String>,
+}
+
+/// Print a column-aligned peers table using elastic tabstops.
+///
+/// The DEVICE column is only shown if any row has a device value.
+pub fn print_peer_table(printer: &Printer, rows: &[PeerRow]) {
+	if rows.is_empty() {
+		printer.print("No connected peers.");
+		return;
+	}
+
+	printer.print(format!("Connected peers ({}):", rows.len()));
+
+	let show_device = rows.iter().any(|r| r.device.is_some());
+
+	let mut tw = tabwriter::TabWriter::new(vec![]).padding(2);
+
+	if show_device {
+		let _ = writeln!(tw, "  PEER\tROLE\tADDRESS\tLATENCY\tUPTIME\tDEVICE");
+		for r in rows {
+			let _ = writeln!(
+				tw,
+				"  {}\t{}\t{}\t{}\t{}\t{}",
+				r.id,
+				r.role,
+				r.addr,
+				r.latency,
+				r.uptime,
+				r.device.as_deref().unwrap_or("-"),
+			);
+		}
+	} else {
+		let _ = writeln!(tw, "  PEER\tROLE\tADDRESS\tLATENCY\tUPTIME");
+		for r in rows {
+			let _ = writeln!(
+				tw,
+				"  {}\t{}\t{}\t{}\t{}",
+				r.id, r.role, r.addr, r.latency, r.uptime,
+			);
+		}
+	}
+
+	let _ = tw.flush();
+	let buf = tw.into_inner().unwrap_or_default();
+	let output = String::from_utf8_lossy(&buf);
+	for line in output.trim_end().lines() {
+		printer.print(line.trim_end());
 	}
 }
 

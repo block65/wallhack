@@ -7,7 +7,7 @@
 
 use std::{
 	collections::HashMap,
-	io::IsTerminal,
+	io::{IsTerminal, Write},
 	sync::{
 		Arc,
 		atomic::{AtomicU64, Ordering},
@@ -78,15 +78,6 @@ impl SessionManager {
 	fn get_tun_for_peer(&self, peer_id: &str) -> Option<String> {
 		self.sessions.lock().get(peer_id).cloned()
 	}
-
-	/// Returns a list of (`exit_id`, `tun_name`) pairs for all active sessions.
-	fn list(&self) -> Vec<(String, String)> {
-		self.sessions
-			.lock()
-			.iter()
-			.map(|(id, name)| (id.clone(), name.clone()))
-			.collect()
-	}
 }
 
 /// Create a TUN device, retrying on EBUSY to handle the race where the
@@ -109,7 +100,7 @@ async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
 
-use crate::repl_common::{Printer, format_duration, print_ping};
+use crate::repl_common::{PeerRow, Printer, format_duration, print_peer_table, print_ping};
 
 /// Run as an entry node with interactive REPL.
 ///
@@ -123,117 +114,115 @@ use crate::repl_common::{Printer, format_duration, print_ping};
 pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
-
-	// Session manager keeps TUNs alive across reconnections
 	let sessions = SessionManager::default();
-
-	// Shared metrics across all connections and control
 	let metrics = Arc::new(Metrics::default());
-
-	// Peer registry for tracking connected peers
 	let peers = Arc::new(Registry::new());
-
-	// Route table for CIDR -> peer mapping
 	let routes = RouteTable::shared();
-
-	let psk = global.resolve_psk();
 
 	match transport {
 		TransportDir::Both { .. } => {
 			anyhow::bail!("Entry nodes do not support both --connect and --listen simultaneously")
 		}
 		TransportDir::Listen(spec) => {
-			let addr = parse_listen_addr(&spec.addr)?;
-
-			let server_options = ServerOptions {
-				handler_config: HandlerConfig::new(NodeRole::Entry),
-				metrics: Some(Arc::clone(&metrics)),
-				peers: Some(Arc::clone(&peers)),
-				routes: Some(Arc::clone(&routes)),
-			};
-
-			let server_config = build_server_config(global, addr, psk.clone(), cmd.max_peers);
-
-			// Start REST API if enabled
-			#[cfg(feature = "api")]
-			if let Some(api_addr) = cmd.api_addr() {
-				start_api(
-					global,
-					api_addr,
-					&metrics,
-					&peers,
-					&routes,
-					server_config.tls.clone(),
-				);
-			}
-
-			match spec.protocol {
-				Protocol::Udp => {
-					#[cfg(feature = "quic")]
-					{
-						let server = wallhack::server::quic::QuicServer::try_new(
-							server_config,
-							server_options,
-						)?;
-						crate::info!("Listening on {addr} (QUIC/UDP)");
-						crate::info!("Certificate fingerprint: {}", server.fingerprint());
-						if server.psk().is_none() {
-							crate::warn!(
-								"No authentication configured. Use --psk <SECRET> to require authentication."
-							);
-						}
-						run_entry_server(
-							server,
-							metrics,
-							peers,
-							routes,
-							sessions,
-							cmd.max_peers,
-							cmd.fast,
-						)
-						.await
-					}
-					#[cfg(not(feature = "quic"))]
-					{
-						anyhow::bail!(
-							"QUIC transport not available (compile with --features quic)"
-						);
-					}
-				}
-				Protocol::Tcp => {
-					#[cfg(feature = "websocket")]
-					{
-						let server =
-							wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
-						crate::info!("Listening on {addr} (WebSocket/TCP)");
-						crate::info!("Certificate fingerprint: {}", server.fingerprint());
-						if server.psk().is_none() {
-							crate::warn!(
-								"No authentication configured. Use --psk <SECRET> to require authentication."
-							);
-						}
-						run_entry_server(
-							server,
-							metrics,
-							peers,
-							routes,
-							sessions,
-							cmd.max_peers,
-							cmd.fast,
-						)
-						.await
-					}
-					#[cfg(not(feature = "websocket"))]
-					{
-						anyhow::bail!(
-							"WebSocket transport not available (compile with --features websocket)"
-						);
-					}
-				}
-			}
+			run_entry_listen(global, cmd, &spec, metrics, peers, routes, sessions).await
 		}
 		TransportDir::Connect(spec) => {
 			run_entry_connect(global, cmd, &spec, metrics, peers, sessions).await
+		}
+	}
+}
+
+/// Run entry node in listen mode — set up server and accept connections.
+async fn run_entry_listen(
+	global: &WallhackCli,
+	cmd: &EntryCommand,
+	spec: &crate::cli::AddressSpec,
+	metrics: Arc<Metrics>,
+	peers: Arc<Registry>,
+	routes: SharedRouteTable,
+	sessions: SessionManager,
+) -> Result<()> {
+	let addr = parse_listen_addr(&spec.addr)?;
+	let psk = global.resolve_psk();
+	let server_options = ServerOptions {
+		handler_config: HandlerConfig::new(NodeRole::Entry),
+		metrics: Some(Arc::clone(&metrics)),
+		peers: Some(Arc::clone(&peers)),
+		routes: Some(Arc::clone(&routes)),
+	};
+	let server_config = build_server_config(global, addr, psk, cmd.max_peers);
+
+	// Start REST API if enabled
+	#[cfg(feature = "api")]
+	if let Some(api_addr) = cmd.api_addr() {
+		start_api(
+			global,
+			api_addr,
+			&metrics,
+			&peers,
+			&routes,
+			server_config.tls.clone(),
+		);
+	}
+
+	match spec.protocol {
+		Protocol::Udp => {
+			#[cfg(feature = "quic")]
+			{
+				let server =
+					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+				crate::info!("Listening on {addr} (QUIC/UDP)");
+				crate::info!("Certificate fingerprint: {}", server.fingerprint());
+				if server.psk().is_none() {
+					crate::warn!(
+						"No authentication configured. Use --psk <SECRET> to require authentication."
+					);
+				}
+				run_entry_server(
+					server,
+					metrics,
+					peers,
+					routes,
+					sessions,
+					cmd.max_peers,
+					cmd.fast,
+				)
+				.await
+			}
+			#[cfg(not(feature = "quic"))]
+			{
+				anyhow::bail!("QUIC transport not available (compile with --features quic)");
+			}
+		}
+		Protocol::Tcp => {
+			#[cfg(feature = "websocket")]
+			{
+				let server =
+					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+				crate::info!("Listening on {addr} (WebSocket/TCP)");
+				crate::info!("Certificate fingerprint: {}", server.fingerprint());
+				if server.psk().is_none() {
+					crate::warn!(
+						"No authentication configured. Use --psk <SECRET> to require authentication."
+					);
+				}
+				run_entry_server(
+					server,
+					metrics,
+					peers,
+					routes,
+					sessions,
+					cmd.max_peers,
+					cmd.fast,
+				)
+				.await
+			}
+			#[cfg(not(feature = "websocket"))]
+			{
+				anyhow::bail!(
+					"WebSocket transport not available (compile with --features websocket)"
+				);
+			}
 		}
 	}
 }
@@ -523,10 +512,7 @@ where
 						print_stats(&metrics, &printer);
 					}
 					Some(ReplCommand::Peers) => {
-						print_peers(&peers, &printer);
-					}
-					Some(ReplCommand::Sessions) => {
-						print_sessions(&sessions, &peers, &printer);
+						print_peers(&peers, &sessions, &printer);
 					}
 					Some(ReplCommand::RouteAdd(cidr, peer_id)) => {
 						handle_route_add(&cidr, &peer_id, &routes, &sessions, &printer);
@@ -560,7 +546,6 @@ enum ReplCommand {
 	Ping,
 	Stats,
 	Peers,
-	Sessions,
 	RouteAdd(String, String),
 	RouteRemove(String),
 	RouteList,
@@ -689,29 +674,14 @@ fn parse_repl_command(line: &str) -> ReplCommand {
 		"quit" | "exit" | "q" => ReplCommand::Quit,
 		"ping" | "p" => ReplCommand::Ping,
 		"stats" | "s" => ReplCommand::Stats,
-		"peers" => ReplCommand::Peers,
-		"sessions" | "tuns" | "t" => ReplCommand::Sessions,
-		"route" => match arg.as_deref() {
-			Some("add") => {
-				let cidr = parts.next();
-				let peer_id = parts.next();
-				match (cidr, peer_id) {
-					(Some(c), Some(p)) => ReplCommand::RouteAdd(c.to_string(), p.to_string()),
-					(Some(_), None) => {
-						ReplCommand::Unknown("route add <cidr> <peer_id>".to_string())
-					}
-					_ => ReplCommand::Unknown("route add <cidr> <peer_id>".to_string()),
-				}
+		"peers" | "sessions" | "tuns" | "t" => ReplCommand::Peers,
+		"route" => parse_route_subcommand(arg.as_deref(), &mut parts),
+		"ip" => match arg.as_deref() {
+			Some("route") => {
+				let sub = parts.next().map(String::from);
+				parse_route_subcommand(sub.as_deref(), &mut parts)
 			}
-			Some("del" | "rm" | "remove") => {
-				if let Some(cidr) = parts.next() {
-					ReplCommand::RouteRemove(cidr.to_string())
-				} else {
-					ReplCommand::Unknown("route del <cidr>".to_string())
-				}
-			}
-			Some("list" | "ls") => ReplCommand::RouteList,
-			_ => ReplCommand::Unknown("route <add|del|list> ...".to_string()),
+			_ => ReplCommand::Unknown("ip route <add|del|list> ...".to_string()),
 		},
 		"routes" => ReplCommand::RouteList,
 		"disconnect" | "kick" | "kill" => {
@@ -723,6 +693,37 @@ fn parse_repl_command(line: &str) -> ReplCommand {
 		}
 		"help" | "?" => ReplCommand::Help,
 		_ => ReplCommand::Unknown(line.to_string()),
+	}
+}
+
+/// Parse route subcommands (shared between `route ...` and `ip route ...`).
+fn parse_route_subcommand(
+	sub: Option<&str>,
+	parts: &mut std::str::SplitWhitespace<'_>,
+) -> ReplCommand {
+	match sub {
+		Some("add") => {
+			let cidr = parts.next();
+			// Skip optional "via" keyword
+			let next = parts.next();
+			let peer_id = match next {
+				Some("via") => parts.next(),
+				other => other,
+			};
+			match (cidr, peer_id) {
+				(Some(c), Some(p)) => ReplCommand::RouteAdd(c.to_string(), p.to_string()),
+				_ => ReplCommand::Unknown("route add <cidr> [via] <peer_id>".to_string()),
+			}
+		}
+		Some("del" | "rm" | "remove") => {
+			if let Some(cidr) = parts.next() {
+				ReplCommand::RouteRemove(cidr.to_string())
+			} else {
+				ReplCommand::Unknown("route del <cidr>".to_string())
+			}
+		}
+		Some("list" | "ls") | None => ReplCommand::RouteList,
+		_ => ReplCommand::Unknown("route <add|del|list> ...".to_string()),
 	}
 }
 
@@ -754,38 +755,25 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
-fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
+fn print_peers(peers: &Arc<Registry>, sessions: &SessionManager, printer: &Printer) {
 	let list = peers.list();
-	if list.is_empty() {
-		printer.print("No connected peers.");
-	} else {
-		printer.print(format!("Connected peers ({}):", list.len()));
-		for peer in &list {
+	let rows: Vec<PeerRow> = list
+		.iter()
+		.map(|peer| {
 			let latency = peer
 				.latency_ms
 				.map_or_else(|| "N/A".to_string(), |ms| format!("{ms:.3}ms"));
-			let uptime = format_duration(peer.connected_at.elapsed());
-			printer.print(format!(
-				"  {} ({}) - {} - latency: {}, uptime: {}",
-				peer.id, peer.role, peer.addr, latency, uptime
-			));
-		}
-	}
-}
-
-fn print_sessions(sessions: &SessionManager, peers: &Arc<Registry>, printer: &Printer) {
-	let list = sessions.list();
-	if list.is_empty() {
-		printer.print("No active sessions.");
-	} else {
-		printer.print(format!("Active sessions ({}):", list.len()));
-		for (exit_id, tun_name) in &list {
-			let addr = peers
-				.get(exit_id)
-				.map_or_else(|| "disconnected".to_string(), |p| p.addr.clone());
-			printer.print(format!("  {exit_id} ({addr}) -> {tun_name}"));
-		}
-	}
+			PeerRow {
+				id: peer.id.clone(),
+				role: peer.role.to_string(),
+				addr: peer.addr.clone(),
+				latency,
+				uptime: format_duration(peer.connected_at.elapsed()),
+				device: sessions.get_tun_for_peer(&peer.id),
+			}
+		})
+		.collect();
+	print_peer_table(printer, &rows);
 }
 
 fn handle_route_add(
@@ -817,7 +805,7 @@ fn handle_route_add(
 	}
 
 	routes.add(parsed, peer_id.to_string());
-	printer.print(format!("Route added: {cidr} -> {peer_id} (dev {tun_name})"));
+	printer.print(format!("Route added: {cidr} via {peer_id} dev {tun_name}"));
 }
 
 fn handle_route_remove(
@@ -855,18 +843,31 @@ fn handle_route_list(routes: &SharedRouteTable, sessions: &SessionManager, print
 	let list = routes.list();
 	if list.is_empty() {
 		printer.print("No routes configured.");
-	} else {
-		printer.print(format!("Routes ({}):", list.len()));
-		for entry in &list {
-			let tun = sessions
-				.get_tun_for_peer(&entry.peer_id)
-				.unwrap_or_else(|| "?".to_string());
-			let age = entry.added_at.elapsed();
-			printer.print(format!(
-				"  {} -> {} (dev {}, age {:.0?})",
-				entry.cidr, entry.peer_id, tun, age
-			));
-		}
+		return;
+	}
+
+	printer.print(format!("Routes ({}):", list.len()));
+
+	let mut tw = tabwriter::TabWriter::new(vec![]).padding(2);
+	let _ = writeln!(tw, "  DESTINATION\tVIA\tDEVICE\tAGE");
+	for entry in &list {
+		let tun = sessions
+			.get_tun_for_peer(&entry.peer_id)
+			.unwrap_or_else(|| "?".to_string());
+		let _ = writeln!(
+			tw,
+			"  {}\t{}\t{}\t{}",
+			entry.cidr,
+			entry.peer_id,
+			tun,
+			format_duration(entry.added_at.elapsed()),
+		);
+	}
+	let _ = tw.flush();
+	let buf = tw.into_inner().unwrap_or_default();
+	let output = String::from_utf8_lossy(&buf);
+	for line in output.trim_end().lines() {
+		printer.print(line.trim_end());
 	}
 }
 
@@ -880,16 +881,15 @@ fn handle_disconnect(peer_id: &str, peers: &Arc<Registry>, printer: &Printer) {
 
 fn print_help(printer: &Printer) {
 	printer.print("Available commands:");
-	printer.print("  ping, p                       - Show version and uptime");
-	printer.print("  stats, s                      - Show traffic statistics");
-	printer.print("  peers                         - List connected peers");
-	printer.print("  sessions, t                   - List active exit node sessions");
-	printer.print("  route add <cidr> <peer_id>    - Add a route (e.g., 10.0.0.0/8 exit-1)");
-	printer.print("  route del <cidr>              - Remove a route");
-	printer.print("  route list, routes            - List all routes");
-	printer.print("  disconnect <peer_id>          - Disconnect a peer");
-	printer.print("  help, ?                       - Show this help message");
-	printer.print("  quit, q                       - Exit wallhack");
+	printer.print("  ping, p                              - Show version and uptime");
+	printer.print("  stats, s                             - Show traffic statistics");
+	printer.print("  peers                                - List connected peers and sessions");
+	printer.print("  route add <cidr> via <peer_id>       - Add a route");
+	printer.print("  route del <cidr>                     - Remove a route");
+	printer.print("  route list, routes, ip route         - List all routes");
+	printer.print("  disconnect <peer_id>                 - Disconnect a peer");
+	printer.print("  help, ?                              - Show this help message");
+	printer.print("  quit, q                              - Exit wallhack");
 }
 
 /// Apply an OS-level route via `ip route add`.

@@ -45,6 +45,7 @@ rand = { version = "0.9", default-features = false, features = [
   "std_rng",
 ] }
 parking_lot = "0.12.5"
+tabwriter = "1.4.1"
 
 [build-dependencies]
 built = { version = "0.7", features = ["git2", "chrono"] }

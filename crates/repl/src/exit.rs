@@ -51,7 +51,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// For slower protocols, streams queue on entry node (backpressure).
 const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
-use crate::repl_common::{Printer, format_duration, print_ping};
+use crate::repl_common::{PeerRow, Printer, format_duration, print_peer_table, print_ping};
 
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
@@ -451,7 +451,7 @@ where
 					}
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							p.print("No connected peers.");
+							print_peer_table(p, &[]);
 						}
 					}
 					Some(ExitReplCommand::Help) => {
@@ -517,7 +517,7 @@ async fn run_idle_mode(
 			}
 			Some(ExitReplCommand::Peers) => {
 				if let Some(p) = printer {
-					p.print("No connected peers.");
+					print_peer_table(p, &[]);
 				}
 			}
 			Some(ExitReplCommand::Help) => {
@@ -611,9 +611,8 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 					Some(ExitReplCommand::Disconnect) => return Ok(Some(ExitAction::StopConnect)),
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							let uptime = format_duration(connected_at.elapsed());
-							p.print("Connected peers (1):");
-							p.print(format!("  {peer_addr} - uptime: {uptime}"));
+							let row = exit_peer_row("entry", peer_addr, &format_duration(connected_at.elapsed()));
+							print_peer_table(p, &[row]);
 						}
 					}
 					Some(ExitReplCommand::Ping) => {
@@ -789,8 +788,8 @@ fn handle_connecting_repl_cmd(
 		Some(ExitReplCommand::Disconnect) => Some(ExitAction::StopConnect),
 		Some(ExitReplCommand::Peers) => {
 			if let Some(p) = printer {
-				p.print("Connected peers (1):");
-				p.print(format!("  {peer_addr} (connecting...)"));
+				let row = exit_peer_row("entry", peer_addr, "connecting...");
+				print_peer_table(p, &[row]);
 			}
 			None
 		}
@@ -1142,10 +1141,8 @@ async fn run_quic_relay_capability(
 					}
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							let uptime = format_duration(connected_at.elapsed());
-							p.print("Connected peers (1):");
-							p.print(format!("  {peer_addr_str} - uptime: {uptime}"));
-							p.print(format!("  Listening on :{listen_port} for peers"));
+							let row = exit_peer_row("entry", &peer_addr_str, &format_duration(connected_at.elapsed()));
+							print_peer_table(p, &[row]);
 						}
 					}
 					Some(ExitReplCommand::Ping) => {
@@ -1294,10 +1291,8 @@ async fn run_ws_relay_capability(
 					}
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							let uptime = format_duration(connected_at.elapsed());
-							p.print("Connected peers (1):");
-							p.print(format!("  {peer_addr_str} - uptime: {uptime}"));
-							p.print(format!("  Listening on :{listen_port} for peers"));
+							let row = exit_peer_row("entry", &peer_addr_str, &format_duration(connected_at.elapsed()));
+							print_peer_table(p, &[row]);
 						}
 					}
 					Some(ExitReplCommand::Ping) => {
@@ -1445,6 +1440,18 @@ fn parse_exit_repl_command(line: &str) -> ExitReplCommand {
 		"disconnect" => ExitReplCommand::Disconnect,
 		"help" | "?" => ExitReplCommand::Help,
 		_ => ExitReplCommand::Unknown(line.to_string()),
+	}
+}
+
+/// Build a peer row for a connected exit node peer.
+fn exit_peer_row(role: &str, addr: &str, uptime: &str) -> PeerRow {
+	PeerRow {
+		id: "-".to_string(),
+		role: role.to_string(),
+		addr: addr.to_string(),
+		latency: "N/A".to_string(),
+		uptime: uptime.to_string(),
+		device: None,
 	}
 }
 

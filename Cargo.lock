@@ -2144,6 +2144,7 @@ dependencies = [
  "rustyline",
  "shlex",
  "subtle",
+ "tabwriter",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2493,6 +2494,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "tabwriter"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fce91f2f0ec87dff7e6bcbbeb267439aa1188703003c6055193c821487400432"
+dependencies = [
+ "unicode-width",
 ]
 
 [[package]]
