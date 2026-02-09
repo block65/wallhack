@@ -33,6 +33,7 @@ impl TunActor {
 		let tun_name = name.unwrap_or_else(random_iface_name);
 		let mut config = Configuration::default();
 		config.tun_name(tun_name.clone());
+		config.up();
 
 		let device = Device::new(&config)?;
 		device.set_nonblock()?;
