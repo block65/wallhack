@@ -98,63 +98,63 @@ pub struct StatusMessage {
 
 #[macro_export]
 macro_rules! info {
-    ($($arg:tt)*) => ({
-        let message_content = format!($($arg)*);
-        // Access the global config, lock it, and call the print method
-        match $crate::output::OUTPUT_CONFIG.read() {
-            Ok(config_guard) => {
-                config_guard.print(
-                    &$crate::output::StatusMessage {
-                        level: $crate::output::Level::Info,
-                        message: message_content,
-                    }
-                );
-            }
-            Err(e) => {
-              eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: INFO: {}", e, message_content);
-            }
-        }
-    })
+	($($arg:tt)*) => ({
+		let message_content = format!($($arg)*);
+		// Access the global config, lock it, and call the print method
+		match $crate::output::OUTPUT_CONFIG.read() {
+			Ok(config_guard) => {
+				config_guard.print(
+					&$crate::output::StatusMessage {
+						level: $crate::output::Level::Info,
+						message: message_content,
+					}
+				);
+			}
+			Err(e) => {
+				eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: INFO: {}", e, message_content);
+			}
+		}
+	})
 }
 
 #[macro_export]
 macro_rules! verbose {
-		($($arg:tt)*) => ({
-				let message_content = format!($($arg)*);
-				// Access the global config, lock it, and call the print method
-				match $crate::output::OUTPUT_CONFIG.read() {
-						Ok(config_guard) => {
-								config_guard.print(
-										&$crate::output::StatusMessage {
-												level: $crate::output::Level::Verbose,
-												message: message_content,
-										}
-								);
-						}
-						Err(e) => {
-							eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: VERBOSE: {}", e, message_content);
-						}
-				}
-		})
+	($($arg:tt)*) => ({
+		let message_content = format!($($arg)*);
+		// Access the global config, lock it, and call the print method
+		match $crate::output::OUTPUT_CONFIG.read() {
+			Ok(config_guard) => {
+				config_guard.print(
+					&$crate::output::StatusMessage {
+						level: $crate::output::Level::Verbose,
+						message: message_content,
+					}
+				);
+			}
+			Err(e) => {
+				eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: VERBOSE: {}", e, message_content);
+			}
+		}
+	})
 }
 
 #[macro_export]
 macro_rules! error {
-		($($arg:tt)*) => ({
-				let message_content = format!($($arg)*);
-				// Access the global config, lock it, and call the print method
-				match $crate::output::OUTPUT_CONFIG.read() {
-						Ok(config_guard) => {
-								config_guard.print(
-										&$crate::output::StatusMessage {
-												level: $crate::output::Level::Error,
-												message: message_content,
-										}
-								);
-						}
-						Err(e) => {
-							eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: ERROR: {}", e, message_content);
-						}
-				}
-		})
+	($($arg:tt)*) => ({
+		let message_content = format!($($arg)*);
+		// Access the global config, lock it, and call the print method
+		match $crate::output::OUTPUT_CONFIG.read() {
+			Ok(config_guard) => {
+				config_guard.print(
+					&$crate::output::StatusMessage {
+						level: $crate::output::Level::Error,
+						message: message_content,
+					}
+				);
+			}
+			Err(e) => {
+				eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: ERROR: {}", e, message_content);
+			}
+		}
+	})
 }
