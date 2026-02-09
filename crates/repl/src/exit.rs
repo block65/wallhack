@@ -800,11 +800,21 @@ async fn run_quic_exit(
 			} => {
 				match result {
 					Ok(connect_result) => {
-						retry_delay = INITIAL_RETRY_DELAY;
 						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr).await? {
 							return Ok(action);
 						}
-						// None = connection dropped, loop will retry
+						// Connection dropped - backoff before reconnecting to
+						// prevent a reconnect storm (e.g. entry TUN EBUSY race).
+						// NOTE: Keep this in sync with the WebSocket equivalent
+						// in run_ws_exit below.
+						let msg = format!("Connection dropped, reconnecting in {retry_delay:?}...");
+						if let Some(p) = printer {
+							p.print(msg);
+						} else {
+							println!("{msg}");
+						}
+						tokio::time::sleep(retry_delay).await;
+						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 					}
 					Err(e) => {
 						if crate::repl_common::is_nonretryable_error(&e) {
@@ -890,11 +900,21 @@ async fn run_ws_exit(
 			} => {
 				match result {
 					Ok(connect_result) => {
-						retry_delay = INITIAL_RETRY_DELAY;
 						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr).await? {
 							return Ok(action);
 						}
-						// None = connection dropped, loop will retry
+						// Connection dropped - backoff before reconnecting to
+						// prevent a reconnect storm (e.g. entry TUN EBUSY race).
+						// NOTE: Keep this in sync with the QUIC equivalent
+						// in run_quic_exit above.
+						let msg = format!("Connection dropped, reconnecting in {retry_delay:?}...");
+						if let Some(p) = printer {
+							p.print(msg);
+						} else {
+							println!("{msg}");
+						}
+						tokio::time::sleep(retry_delay).await;
+						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 					}
 					Err(e) => {
 						if crate::repl_common::is_nonretryable_error(&e) {

@@ -89,6 +89,23 @@ impl SessionManager {
 	}
 }
 
+/// Create a TUN device, retrying on EBUSY to handle the race where the
+/// previous connection's `TunActor` hasn't been fully dropped yet.
+async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
+	let mut attempts = 0;
+	loop {
+		match TunActor::new(Some(name.clone())) {
+			Ok(actor) => return Ok(actor),
+			Err(e) if attempts < 3 => {
+				attempts += 1;
+				tracing::debug!("TUN creation attempt {attempts} failed: {e}, retrying...");
+				tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+			}
+			Err(e) => return Err(e.into()),
+		}
+	}
+}
+
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
 
@@ -326,7 +343,7 @@ async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static
 	crate::info!("Connected to {}", connect_result.client_ident());
 
 	let name = SessionManager::create_anonymous();
-	let actor = TunActor::new(Some(name.clone()))?;
+	let actor = create_tun_with_retry(name.clone()).await?;
 	let manager = ConnectionManager::new(actor, connect_result.transport(), Arc::clone(metrics));
 	manager.run().await?;
 
@@ -999,7 +1016,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 		SessionManager::create_anonymous()
 	};
 
-	let actor = TunActor::new(Some(name.clone()))?;
+	let actor = create_tun_with_retry(name.clone()).await?;
 	let manager = ConnectionManager::new(actor, Arc::clone(transport), metrics);
 
 	// Run the connection manager alongside ping handling
