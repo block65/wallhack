@@ -1,22 +1,26 @@
 # Wallhack TODO
 
 ## Performance
+
 See [docs/ANALYSIS.md](docs/ANALYSIS.md) for full analysis.
+
 - [ ] Reverse throughput asymmetry: forward ~3500 Mbps vs reverse ~968 Mbps on
-  symmetric `copy_bidirectional` bi-stream path. Investigate Quinn flow control
-  defaults, poll loop wakeup latency under egress load, and mutex contention
-  between smoltcp writes and the poll loop.
+      symmetric `copy_bidirectional` bi-stream path. Investigate Quinn flow control
+      defaults, poll loop wakeup latency under egress load, and mutex contention
+      between smoltcp writes and the poll loop.
 - [ ] Buffer pooling for UDP packets and TUN reads
 - [ ] Replace `Vec<u8>` with `bytes::Bytes` in hot paths
 - [ ] Reduce global lock contention in netstack
 - [x] Rate limiting / `Semaphore` for max connections
 
 ## Build Optimizations
+
 - [ ] `minimal` feature flag - drop env-filter regex for dropper builds (~321KB savings)
 - [x] Feature-gate rustyline/REPL (~106KB savings)
 - [ ] Feature-gate rcgen cert generation (~62KB savings)
 
 ## Dropper
+
 - [ ] Self-extracting payload format
 - [ ] In-memory execution (no disk write)
 - [ ] Polymorphic stub generation
@@ -24,19 +28,23 @@ See [docs/ANALYSIS.md](docs/ANALYSIS.md) for full analysis.
 - [ ] Hard mode cyber range (dropper deployment demo)
 
 ## Security
+
 - [ ] mTLS authentication between nodes
 - [ ] Certificate pinning
 - [ ] Node authentication/authorization
 - [ ] Encrypted config storage
 
 ## Phase 4 Refactor
+
 See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
+
 - [ ] Traffic profiles (`--mode scan` vs `--mode session`)
 - [ ] Status handshake (SessionStatus protobuf message)
 - [ ] Optimistic TCP mode for scanning
 - [x] Connection rate heuristic ("RTFM" warning)
 
 ## REST API
+
 - [x] HTTP control plane for headless operation
 - [x] Stats/metrics endpoints
 - [x] Health checks
@@ -56,6 +64,7 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 - [ ] Consider: API key auth as alternative to basic auth
 
 ## REPL Commands
+
 - [x] `ping` - show version and uptime
 - [x] `stats` - bandwidth/latency metrics
 - [x] `peers` - show connected nodes (uses peer registry)
@@ -66,12 +75,13 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 - [x] Implement actual route management (requires routing table abstraction)
 
 ## Transports
+
 - [ ] Unified transport pipes: after smoltcp, TCP and UDP should use the same
-  protobuf format and same pipes. Two parallel UDP paths exist (bi-stream and
-  orchestrator/broadcast) causing bugs. Unify so the only difference is at the
-  wire/TUN/smoltcp layer.
+      protobuf format and same pipes. Two parallel UDP paths exist (bi-stream and
+      orchestrator/broadcast) causing bugs. Unify so the only difference is at the
+      wire/TUN/smoltcp layer.
 - [x] Default zero-config TLS for WebSocket transport, matching QUIC's
-  self-signed cert behaviour
+      self-signed cert behaviour
 - [ ] DNS tunneling
 - [ ] ICMP tunneling
 - [ ] HTTP/2 multiplexing
