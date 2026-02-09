@@ -443,7 +443,7 @@ where
 							let removed_routes = conn_routes.remove_by_peer(&peer_id);
 							for entry in &removed_routes {
 								if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_id) {
-									remove_os_route(&entry.cidr.to_string(), &tun);
+									let _ = remove_os_route(&entry.cidr.to_string(), &tun);
 								}
 							}
 							if !removed_routes.is_empty() {
@@ -807,9 +807,9 @@ fn handle_route_add(
 	};
 
 	// Apply OS route first so we can rollback on failure
-	if !apply_os_route(cidr, &tun_name) {
+	if let Err(reason) = apply_os_route(cidr, &tun_name) {
 		printer.print(format!(
-			"Failed to apply OS route for {cidr} via {tun_name}"
+			"Failed to add route {cidr} via peer {peer_id}: {reason}"
 		));
 		return;
 	}
@@ -834,8 +834,12 @@ fn handle_route_remove(
 
 	match routes.remove(&parsed) {
 		Some(entry) => {
-			if let Some(tun) = sessions.get_tun_for_peer(&entry.peer_id) {
-				remove_os_route(cidr, &tun);
+			if let Some(tun) = sessions.get_tun_for_peer(&entry.peer_id)
+				&& let Err(reason) = remove_os_route(cidr, &tun)
+			{
+				printer.print(format!(
+					"Warning: route table updated but OS route removal failed: {reason}"
+				));
 			}
 			printer.print(format!("Route removed: {cidr} (was -> {})", entry.peer_id));
 		}
@@ -887,7 +891,7 @@ fn print_help(printer: &Printer) {
 }
 
 /// Apply an OS-level route via `ip route add`.
-fn apply_os_route(cidr: &str, dev: &str) -> bool {
+fn apply_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 	match std::process::Command::new("ip")
 		.args(["route", "add", cidr, "dev", dev])
 		.output()
@@ -895,22 +899,22 @@ fn apply_os_route(cidr: &str, dev: &str) -> bool {
 		Ok(output) => {
 			if output.status.success() {
 				tracing::info!("OS route added: {cidr} dev {dev}");
-				true
+				Ok(())
 			} else {
-				let stderr = String::from_utf8_lossy(&output.stderr);
+				let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 				tracing::warn!("Failed to add OS route: {stderr}");
-				false
+				Err(stderr)
 			}
 		}
 		Err(e) => {
 			tracing::warn!("Failed to run ip route add: {e}");
-			false
+			Err(e.to_string())
 		}
 	}
 }
 
 /// Remove an OS-level route via `ip route del`.
-fn remove_os_route(cidr: &str, dev: &str) {
+fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 	match std::process::Command::new("ip")
 		.args(["route", "del", cidr, "dev", dev])
 		.output()
@@ -918,13 +922,16 @@ fn remove_os_route(cidr: &str, dev: &str) {
 		Ok(output) => {
 			if output.status.success() {
 				tracing::info!("OS route removed: {cidr} dev {dev}");
+				Ok(())
 			} else {
-				let stderr = String::from_utf8_lossy(&output.stderr);
+				let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 				tracing::debug!("Failed to remove OS route: {stderr}");
+				Err(stderr)
 			}
 		}
 		Err(e) => {
 			tracing::debug!("Failed to run ip route del: {e}");
+			Err(e.to_string())
 		}
 	}
 }
