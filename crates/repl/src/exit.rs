@@ -51,7 +51,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// For slower protocols, streams queue on entry node (backpressure).
 const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
-use crate::repl_common::{Printer, format_duration};
+use crate::repl_common::{Printer, format_duration, print_ping};
 
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
@@ -59,6 +59,7 @@ use rustyline::ExternalPrinter;
 /// REPL commands for exit nodes.
 enum ExitReplCommand {
 	Quit,
+	Ping,
 	Stats,
 	Status,
 	Peers,
@@ -118,6 +119,7 @@ fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer
 ///
 /// Returns error if orchestrator fails (connection errors are retried).
 pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
+	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let exit_id = cmd.exit_id();
 	let metrics = Arc::new(Metrics::default());
@@ -432,6 +434,11 @@ where
 							p.print("Not connected to any peer.");
 						}
 					}
+					Some(ExitReplCommand::Ping) => {
+						if let Some(p) = printer {
+							print_ping(p);
+						}
+					}
 					Some(ExitReplCommand::Stats) => {
 						if let Some(p) = printer {
 							print_exit_stats(metrics, p);
@@ -496,6 +503,11 @@ async fn run_idle_mode(
 			Some(ExitReplCommand::Status) => {
 				if let Some(p) = printer {
 					p.print("Node Status: Idle (not connected, not listening)");
+				}
+			}
+			Some(ExitReplCommand::Ping) => {
+				if let Some(p) = printer {
+					print_ping(p);
 				}
 			}
 			Some(ExitReplCommand::Stats) => {
@@ -602,6 +614,11 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 							let uptime = format_duration(connected_at.elapsed());
 							p.print("Connected peers (1):");
 							p.print(format!("  {peer_addr} - uptime: {uptime}"));
+						}
+					}
+					Some(ExitReplCommand::Ping) => {
+						if let Some(p) = printer {
+							print_ping(p);
 						}
 					}
 					Some(ExitReplCommand::Stats) => {
@@ -737,6 +754,12 @@ fn handle_connecting_repl_cmd(
 			if let Some(p) = printer {
 				p.print("Connected peers (1):");
 				p.print(format!("  {peer_addr} (connecting...)"));
+			}
+			None
+		}
+		Some(ExitReplCommand::Ping) => {
+			if let Some(p) = printer {
+				print_ping(p);
 			}
 			None
 		}
@@ -1088,6 +1111,11 @@ async fn run_quic_relay_capability(
 							p.print(format!("  Listening on :{listen_port} for peers"));
 						}
 					}
+					Some(ExitReplCommand::Ping) => {
+						if let Some(p) = printer {
+							print_ping(p);
+						}
+					}
 					Some(ExitReplCommand::Stats) => {
 						if let Some(p) = printer {
 							print_exit_stats(metrics, p);
@@ -1235,6 +1263,11 @@ async fn run_ws_relay_capability(
 							p.print(format!("  Listening on :{listen_port} for peers"));
 						}
 					}
+					Some(ExitReplCommand::Ping) => {
+						if let Some(p) = printer {
+							print_ping(p);
+						}
+					}
 					Some(ExitReplCommand::Stats) => {
 						if let Some(p) = printer {
 							print_exit_stats(metrics, p);
@@ -1357,6 +1390,7 @@ fn parse_exit_repl_command(line: &str) -> ExitReplCommand {
 
 	match cmd.as_str() {
 		"quit" | "exit" | "q" => ExitReplCommand::Quit,
+		"ping" => ExitReplCommand::Ping,
 		"stats" | "s" => ExitReplCommand::Stats,
 		"status" => ExitReplCommand::Status,
 		"peers" | "p" => ExitReplCommand::Peers,
@@ -1434,6 +1468,7 @@ fn print_listen_status(printer: &Printer, listen_addr: std::net::SocketAddr) {
 
 /// Print the help lines common to all exit node modes.
 fn print_common_help(printer: &Printer) {
+	printer.print("  ping          - Show version and uptime");
 	printer.print("  peers, p      - Show peer info");
 	printer.print("  stats, s      - Show traffic statistics");
 	printer.print("  status        - Show node status");

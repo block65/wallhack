@@ -1,8 +1,29 @@
 //! Shared REPL infrastructure for all node types.
 
 use std::io::IsTerminal;
+use std::time::Instant;
 
 use tokio::sync::mpsc;
+
+/// Node start time for uptime reporting (shared across node types).
+static NODE_STARTED_AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Record the node start time. Call once at startup.
+pub fn mark_started() {
+	NODE_STARTED_AT.get_or_init(Instant::now);
+}
+
+/// Print version and uptime.
+pub fn print_ping(printer: &Printer) {
+	let uptime = NODE_STARTED_AT.get().map_or_else(
+		|| "unknown".to_string(),
+		|t| format_duration(t.elapsed()),
+	);
+	printer.print(format!(
+		"wallhack {} - uptime: {uptime}",
+		crate::version::built_info::PKG_VERSION
+	));
+}
 
 /// Wrapper for printing to terminal without disrupting readline.
 #[derive(Clone)]

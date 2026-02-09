@@ -109,7 +109,7 @@ async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
 
-use crate::repl_common::{Printer, format_duration};
+use crate::repl_common::{Printer, format_duration, print_ping};
 
 /// Run as an entry node with interactive REPL.
 ///
@@ -121,6 +121,7 @@ use crate::repl_common::{Printer, format_duration};
 ///
 /// Returns error if server or client setup fails.
 pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
+	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 
 	// Session manager keeps TUNs alive across reconnections
@@ -486,11 +487,9 @@ where
 						break;
 					}
 					Some(ReplCommand::Ping) => {
+						print_ping(&printer);
 						let peer_ids = peers.peer_ids();
-						if peer_ids.is_empty() {
-							printer.print("No connected peers to ping.");
-						} else {
-							printer.print(format!("Pinging {} peer(s)...", peer_ids.len()));
+						if !peer_ids.is_empty() {
 							for id in &peer_ids {
 								match peers.ping_peer(id).await {
 									Ok(ms) => printer.print(format!("  {id}: {ms:.3}ms")),
