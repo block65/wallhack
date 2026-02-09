@@ -63,6 +63,11 @@ impl Output {
 						message.level,
 						style = self.styles.get_error(),
 					),
+					Level::Warn => format!(
+						"{style}{:6}{style:#}",
+						message.level,
+						style = self.styles.get_warning(),
+					),
 				};
 				eprintln!("{} {}", level_text, message.message);
 			}
@@ -82,6 +87,9 @@ pub enum Level {
 
 	#[display("[~]")]
 	Verbose,
+
+	#[display("[!]")]
+	Warn,
 
 	#[display("-")]
 	Error,
@@ -154,6 +162,27 @@ macro_rules! error {
 			}
 			Err(e) => {
 				eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: ERROR: {}", e, message_content);
+			}
+		}
+	})
+}
+
+#[macro_export]
+macro_rules! warn {
+	($($arg:tt)*) => ({
+		let message_content = format!($($arg)*);
+		// Access the global config, lock it, and call the print method
+		match $crate::output::OUTPUT_CONFIG.read() {
+			Ok(config_guard) => {
+				config_guard.print(
+					&$crate::output::StatusMessage {
+						level: $crate::output::Level::Warn,
+						message: message_content,
+					}
+				);
+			}
+			Err(e) => {
+				eprintln!("FATAL ERROR: Output config lock poisoned: {}. Original message: WARN: {}", e, message_content);
 			}
 		}
 	})
