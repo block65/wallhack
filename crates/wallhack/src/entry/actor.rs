@@ -71,10 +71,11 @@ impl TunActor {
 	}
 
 	/// Consume the actor, returning the netstack with an epoll-based readiness
-	/// callback already configured. This replaces the 1ms sleep poll with
-	/// proper fd readiness notification.
+	/// callback already configured, plus a clone of the TUN device fd for
+	/// injecting raw packets (e.g. ICMP errors).
 	#[must_use]
-	pub fn into_stack(mut self) -> Netstack<SmoltcpTunDevice> {
+	pub fn into_stack(mut self) -> (Netstack<SmoltcpTunDevice>, Arc<AsyncFd<Device>>) {
+		let tun_writer = Arc::clone(&self.async_device);
 		let fd = self.async_device;
 		let readiness_fn: ReadinessFn = Arc::new(move || {
 			let fd = Arc::clone(&fd);
@@ -85,7 +86,7 @@ impl TunActor {
 			})
 		});
 		self.stack.set_readable_fn(readiness_fn);
-		self.stack
+		(self.stack, tun_writer)
 	}
 }
 

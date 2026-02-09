@@ -10,12 +10,17 @@ use std::{
 
 use netstack::async_stack::{Netstack, udp_socket::UdpSocketAny};
 use smoltcp::phy::Device;
-use tokio::time::Instant;
+use tokio::{io::unix::AsyncFd, time::Instant};
 use transport::{BiStream, Transport};
 
 use crate::control::metrics::SharedMetrics;
 
-use super::{actor::TunActor, session::run_tcp_session, udp_session::send_udp_packet};
+use super::{
+	actor::TunActor,
+	icmp::{IcmpUnreachableReason, build_icmp_dest_unreachable},
+	session::run_tcp_session,
+	udp_session::{UdpForwardResult, send_udp_packet},
+};
 
 /// Warn once when connection rate exceeds this threshold (connections/sec)
 const HIGH_RATE_THRESHOLD: f64 = 50.0;
@@ -45,6 +50,7 @@ pub struct ConnectionManager<D: Device + Send + 'static, T: Transport + 'static>
 	stack: Netstack<D>,
 	transport: Arc<T>,
 	metrics: SharedMetrics,
+	tun_writer: Arc<AsyncFd<tun::Device>>,
 	udp_sessions: HashMap<(smoltcp::wire::IpEndpoint, u16), UdpSession>,
 	/// Timestamps of recent TCP connections for rate detection
 	recent_connections: Vec<Instant>,
@@ -54,10 +60,12 @@ pub struct ConnectionManager<D: Device + Send + 'static, T: Transport + 'static>
 
 impl<T: Transport + 'static> ConnectionManager<super::actor::SmoltcpTunDevice, T> {
 	pub fn new(actor: TunActor, transport: Arc<T>, metrics: SharedMetrics) -> Self {
+		let (stack, tun_writer) = actor.into_stack();
 		Self {
-			stack: actor.into_stack(),
+			stack,
 			transport,
 			metrics,
+			tun_writer,
 			udp_sessions: HashMap::new(),
 			recent_connections: Vec::new(),
 			rate_warned: AtomicBool::new(false),
@@ -145,19 +153,45 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 					let payload = udp_buf[..size].to_vec();
 					let transport = Arc::clone(&self.transport);
 					let response_tx = response_tx.clone();
+					let tun_writer = Arc::clone(&self.tun_writer);
 					tokio::spawn(async move {
 						match send_udp_packet(transport, &target, &source, &payload).await {
-							Ok(response) if !response.is_empty() => {
-								// Queue response to be sent back to client
+							Ok(UdpForwardResult::Response(data)) if !data.is_empty() => {
 								let _ = response_tx.send(UdpResponse {
 									local_port,
-									data: response,
+									data,
 									client_endpoint,
 									local_addr,
 								}).await;
 							}
-							Ok(_) => {
-								tracing::trace!("Empty UDP response from exit");
+							Ok(UdpForwardResult::Response(_) | UdpForwardResult::Timeout) => {
+								tracing::trace!("Empty/timeout UDP response from exit");
+							}
+							Ok(result @ (UdpForwardResult::PortUnreachable
+								| UdpForwardResult::HostUnreachable
+								| UdpForwardResult::NetUnreachable)) => {
+								let reason = match result {
+									UdpForwardResult::PortUnreachable => IcmpUnreachableReason::Port,
+									UdpForwardResult::HostUnreachable => IcmpUnreachableReason::Host,
+									UdpForwardResult::NetUnreachable => IcmpUnreachableReason::Net,
+									_ => unreachable!(),
+								};
+								if let (Some(target_ip), Some(client_ip)) = (local_addr, Some(client_endpoint.addr))
+									&& let Some(packet) = build_icmp_dest_unreachable(
+										reason,
+										client_ip,
+										target_ip,
+										local_port,
+										client_endpoint.port,
+										&payload,
+									)
+								{
+									if let Err(e) = tun_writer.get_ref().send(&packet) {
+										tracing::warn!("Failed to inject ICMP packet: {e}");
+									} else {
+										tracing::trace!(?reason, "Injected ICMP unreachable into TUN");
+									}
+								}
 							}
 							Err(e) => {
 								tracing::warn!("UDP forward failed: {e}");

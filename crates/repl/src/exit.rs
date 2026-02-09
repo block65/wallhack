@@ -718,27 +718,42 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				}
 			})
 			.await?;
+			// Connect so the kernel delivers ICMP errors to this socket
+			socket.connect(target).await?;
 			let mut buf = Vec::new();
 			tokio::io::AsyncReadExt::read_to_end(stream, &mut buf).await?;
 			tracing::trace!(buf_len = buf.len(), "Read UDP payload from stream");
 			if !buf.is_empty() {
 				tracing::trace!(target = %target, "Sending UDP to target");
-				let _ = socket.send_to(&buf, target).await?;
+				socket.send(&buf).await?;
 				let mut recv_buf = vec![0u8; 65535];
 				tracing::trace!("Waiting for UDP response...");
 				// Use timeout to avoid hanging streams that accumulate
-				match tokio::time::timeout(UDP_RESPONSE_TIMEOUT, socket.recv_from(&mut recv_buf))
-					.await
-				{
-					Ok(Ok((size, from))) => {
-						tracing::trace!(size, from = %from, "Received UDP response");
+				// Status prefix: 0x00=success, 0x01=port unreachable,
+				// 0x02=host unreachable, 0x03=network unreachable
+				match tokio::time::timeout(UDP_RESPONSE_TIMEOUT, socket.recv(&mut recv_buf)).await {
+					Ok(Ok(size)) => {
+						tracing::trace!(size, "Received UDP response");
+						stream.write_all(&[0x00]).await?;
 						stream.write_all(&recv_buf[..size]).await?;
 					}
 					Ok(Err(e)) => {
-						tracing::trace!("UDP recv error: {e}");
+						let status = match e.kind() {
+							std::io::ErrorKind::ConnectionRefused => Some(0x01u8),
+							std::io::ErrorKind::HostUnreachable => Some(0x02u8),
+							std::io::ErrorKind::NetworkUnreachable => Some(0x03u8),
+							_ => None,
+						};
+						if let Some(code) = status {
+							tracing::trace!("UDP ICMP error: {e}");
+							stream.write_all(&[code]).await?;
+						} else {
+							tracing::trace!("UDP recv error: {e}");
+						}
 					}
 					Err(_) => {
 						tracing::trace!("UDP recv timeout");
+						// No bytes = timeout (empty stream)
 					}
 				}
 				stream.finish().await?;
