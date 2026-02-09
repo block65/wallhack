@@ -702,6 +702,24 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
+/// Format a duration as a human-readable string.
+fn format_duration(d: std::time::Duration) -> String {
+	let total_secs = d.as_secs();
+	let hours = total_secs / 3600;
+	let mins = (total_secs % 3600) / 60;
+	let secs = total_secs % 60;
+
+	if hours > 0 {
+		format!("{hours}h {mins}m {secs}s")
+	} else if mins > 0 {
+		format!("{mins}m {secs}s")
+	} else if secs > 0 {
+		format!("{secs}s")
+	} else {
+		format!("{}ms", d.as_millis())
+	}
+}
+
 fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 	let list = peers.list();
 	if list.is_empty() {
@@ -712,9 +730,9 @@ fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 			let latency = peer
 				.latency_ms
 				.map_or_else(|| "N/A".to_string(), |ms| format!("{ms:.3}ms"));
-			let uptime = peer.connected_at.elapsed();
+			let uptime = format_duration(peer.connected_at.elapsed());
 			printer.print(format!(
-				"  {} ({}) - {} - latency: {}, uptime: {:.0?}",
+				"  {} ({}) - {} - latency: {}, uptime: {}",
 				peer.id, peer.role, peer.addr, latency, uptime
 			));
 		}
