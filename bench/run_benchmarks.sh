@@ -31,7 +31,7 @@ separator
 # Build
 log ""
 log "BUILDING..."
-cargo build -q --release -p repl --features websocket 2>&1 | tee -a "$RESULT_FILE"
+cargo build -q --release -p cli 2>&1 | tee -a "$RESULT_FILE"
 log "Build complete"
 
 # Binary info

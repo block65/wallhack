@@ -1,5 +1,5 @@
 [package]
-name = "repl"
+name = "cli"
 version = "0.1.0"
 edition = "2024"
 
@@ -16,7 +16,7 @@ websocket = ["wallhack/websocket"]
 full = ["quic", "websocket"]
 
 # REST API feature
-api = ["wallhack/api"]
+api = ["wallhack/http-api"]
 
 [dependencies]
 anstyle = "1"

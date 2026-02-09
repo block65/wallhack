@@ -9,7 +9,7 @@
 //!   wallhack relay --connect upstream:443 --listen :6565  # Relay
 
 use anyhow::Result;
-use repl::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
+use cli::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
 
 	// Handle --version flag
 	if cli.version {
-		repl::version::print_version();
+		cli::version::print_version();
 		return Ok(());
 	}
 
@@ -26,20 +26,20 @@ async fn main() -> Result<()> {
 
 	match &cli.command {
 		Some(Command::Entry(cmd)) => {
-			repl::info!("Starting as entry node");
+			cli::info!("Starting as entry node");
 			run_entry(&cli, cmd).await
 		}
 		Some(Command::Relay(cmd)) => {
-			repl::info!("Starting as relay node");
+			cli::info!("Starting as relay node");
 			run_relay(&cli, cmd).await
 		}
 		Some(Command::Exit(cmd)) => {
-			repl::info!("Starting as exit node");
+			cli::info!("Starting as exit node");
 			run_exit(&cli, cmd).await
 		}
 		None => {
 			// Default: entry node listening on default port
-			repl::info!("Starting as entry node (default)");
+			cli::info!("Starting as entry node (default)");
 			let cmd = EntryCommand {
 				listen: None,
 				connect: None,
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 	}
 }
 
-fn setup_tracing(cli: &repl::WallhackCli) {
+fn setup_tracing(cli: &cli::WallhackCli) {
 	let (level, filter_str) = if cli.trace || cli.trace_filter.is_some() {
 		(
 			LevelFilter::TRACE,
@@ -66,10 +66,10 @@ fn setup_tracing(cli: &repl::WallhackCli) {
 			cli.debug_filter.as_deref().unwrap_or(""),
 		)
 	} else {
-		// No internal tracing by default — user-facing output uses repl::info!/error!
+		// No internal tracing by default — user-facing output uses cli::info!/error!
 		(LevelFilter::OFF, "")
 	};
 
-	let subscriber = repl::subscriber::SimpleSubscriber::new(level, filter_str);
+	let subscriber = cli::subscriber::SimpleSubscriber::new(level, filter_str);
 	tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 }

@@ -82,7 +82,7 @@ for build in "${BUILDS[@]}"; do
     IFS='|' read -r label target features <<< "$build"
 
     # shellcheck disable=SC2086
-    if ! cargo build -q --release -p repl --target "$target" $features 2>&1; then
+    if ! cargo build -q --release -p cli --target "$target" $features 2>&1; then
         log "$(printf '%-16s %-30s %10s %10s %s' "$label" "$target" "BUILD FAIL" "-" "FAIL")"
         FAILED=$((FAILED + 1))
         continue

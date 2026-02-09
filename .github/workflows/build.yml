@@ -53,11 +53,11 @@ jobs:
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p repl
+        run: cargo build --release --target ${{ matrix.target }} -p cli
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p repl
+        run: cross build --release --target ${{ matrix.target }} -p cli
 
       - name: Run tests
         if: matrix.os == 'ubuntu-latest' && !matrix.cross
