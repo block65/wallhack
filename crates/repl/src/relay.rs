@@ -253,6 +253,10 @@ async fn connect_quic_upstream(
 		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
+				if crate::repl_common::is_nonretryable_error(&e) {
+					println!("Connection failed (not retrying): {e}");
+					return Err(e.into());
+				}
 				tracing::debug!(
 					"Upstream connection failed: {}, retrying in {:?}",
 					e,
@@ -300,6 +304,10 @@ async fn connect_ws_upstream(
 		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
+				if crate::repl_common::is_nonretryable_error(&e) {
+					println!("Connection failed (not retrying): {e}");
+					return Err(e.into());
+				}
 				tracing::debug!(
 					"Upstream connection failed: {}, retrying in {:?}",
 					e,

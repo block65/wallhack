@@ -807,6 +807,15 @@ async fn run_quic_exit(
 						// None = connection dropped, loop will retry
 					}
 					Err(e) => {
+						if crate::repl_common::is_nonretryable_error(&e) {
+							let msg = format!("Connection failed (not retrying): {e}");
+							if let Some(p) = printer {
+								p.print(msg);
+							} else {
+								println!("{msg}");
+							}
+							return Ok(ExitAction::StopConnect);
+						}
 						tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
 						if let Some(p) = printer {
 							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
@@ -888,6 +897,15 @@ async fn run_ws_exit(
 						// None = connection dropped, loop will retry
 					}
 					Err(e) => {
+						if crate::repl_common::is_nonretryable_error(&e) {
+							let msg = format!("Connection failed (not retrying): {e}");
+							if let Some(p) = printer {
+								p.print(msg);
+							} else {
+								println!("{msg}");
+							}
+							return Ok(ExitAction::StopConnect);
+						}
 						tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
 						if let Some(p) = printer {
 							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));

@@ -8,7 +8,10 @@
 use std::{
 	collections::HashMap,
 	io::IsTerminal,
-	sync::{Arc, atomic::Ordering},
+	sync::{
+		Arc,
+		atomic::{AtomicU64, Ordering},
+	},
 };
 
 use anyhow::{Context, Result};
@@ -256,6 +259,10 @@ async fn run_entry_connect(
 							handle_entry_connect_result(connect_result, &metrics).await?;
 						}
 						Err(e) => {
+							if crate::repl_common::is_nonretryable_error(&e) {
+								println!("Connection failed (not retrying): {e}");
+								return Err(e.into());
+							}
 							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
 							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
 							tokio::time::sleep(retry_delay).await;
@@ -293,6 +300,10 @@ async fn run_entry_connect(
 							handle_entry_connect_result(connect_result, &metrics).await?;
 						}
 						Err(e) => {
+							if crate::repl_common::is_nonretryable_error(&e) {
+								println!("Connection failed (not retrying): {e}");
+								return Err(e.into());
+							}
 							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
 							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
 							tokio::time::sleep(retry_delay).await;
