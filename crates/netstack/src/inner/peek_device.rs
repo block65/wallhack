@@ -16,4 +16,11 @@ pub trait PeekDevice: Device {
 	/// before calling `poll()` which will consume them. Returns a reference to
 	/// the internal queue to avoid cloning packet data.
 	fn peek_all_ingress(&mut self) -> &VecDeque<Vec<u8>>;
+
+	/// Remove pending packets that do not satisfy the predicate.
+	///
+	/// Packets for which `f` returns `false` are silently dropped before the
+	/// smoltcp poll loop processes them. Used to suppress RSTs for TCP
+	/// segments that arrive with no matching socket.
+	fn retain_pending<F: FnMut(&[u8]) -> bool>(&mut self, f: F);
 }

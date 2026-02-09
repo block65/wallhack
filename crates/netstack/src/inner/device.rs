@@ -70,6 +70,10 @@ impl PeekDevice for VecDevice {
 	fn peek_all_ingress(&mut self) -> &VecDeque<Vec<u8>> {
 		&self.ingress
 	}
+
+	fn retain_pending<F: FnMut(&[u8]) -> bool>(&mut self, mut f: F) {
+		self.ingress.retain(|pkt| f(pkt));
+	}
 }
 
 impl Device for VecDevice {

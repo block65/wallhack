@@ -291,6 +291,13 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
 						&udp_ports, &notify,
 					);
 				}
+
+				// Drop TCP segments that don't match any socket. Without this,
+				// smoltcp replies with RST to stray ACKs (e.g. from nmap host
+				// discovery), revealing the tunnel endpoint as "host up".
+				if jit_tcp {
+					drop_unmatched_tcp(&mut inner);
+				}
 			}
 			inner.poll(now);
 			// Periodically prune closed sockets and log state
@@ -437,4 +444,42 @@ fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
 		false
 	};
 	Some((next_header, dst_port, is_syn))
+}
+
+/// Drop pending TCP packets that have no matching socket.
+///
+/// smoltcp replies with RST to any TCP segment that doesn't match a socket.
+/// In a tunnel context this leaks the entry node's presence to scanners
+/// (e.g. nmap marks the host "up" on receiving a RST to a probe ACK).
+/// By silently dropping unmatched segments we behave like a filtered host.
+fn drop_unmatched_tcp<D: Device + Send + 'static + PeekDevice>(inner: &mut InnerStack<D>) {
+	use smoltcp::socket::Socket;
+
+	// Collect ports that have an active TCP socket to avoid borrow conflicts.
+	let active_ports: HashSet<u16> = inner
+		.sockets()
+		.iter()
+		.filter_map(|(_, socket)| {
+			let Socket::Tcp(tcp) = socket else {
+				return None;
+			};
+			if tcp.state() == smoltcp::socket::tcp::State::Closed {
+				return None;
+			}
+			let port = tcp
+				.local_endpoint()
+				.map_or_else(|| tcp.listen_endpoint().port, |ep| ep.port);
+			if port == 0 { None } else { Some(port) }
+		})
+		.collect();
+
+	inner.device_mut().retain_pending(|pkt| {
+		let Some((protocol, dst_port, _is_syn)) = parse_l4(pkt) else {
+			return true;
+		};
+		if protocol != IpProtocol::Tcp {
+			return true;
+		}
+		active_ports.contains(&dst_port)
+	});
 }
