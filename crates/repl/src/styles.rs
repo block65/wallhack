@@ -7,7 +7,7 @@ pub struct OutputStyles {
 	literal: Style,
 	_placeholder: Style,
 	valid: Style,
-	_invalid: Style,
+	invalid: Style,
 }
 
 impl Default for OutputStyles {
@@ -21,7 +21,7 @@ impl Default for OutputStyles {
 				literal: AnsiColor::Green.on_default(),
 				_placeholder: AnsiColor::Green.on_default(),
 				valid: AnsiColor::Green.on_default(),
-				_invalid: AnsiColor::Yellow.on_default(),
+				invalid: AnsiColor::Yellow.on_default(),
 			}
 		}
 		#[cfg(not(feature = "color"))]
@@ -48,6 +48,11 @@ impl OutputStyles {
 	#[must_use]
 	pub const fn get_error(&self) -> &Style {
 		&self.error
+	}
+
+	#[must_use]
+	pub const fn get_warning(&self) -> &Style {
+		&self.invalid
 	}
 
 	#[must_use]
