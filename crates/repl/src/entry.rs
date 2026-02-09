@@ -733,7 +733,6 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
-
 fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 	let list = peers.list();
 	if list.is_empty() {

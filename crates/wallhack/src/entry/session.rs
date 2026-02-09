@@ -47,10 +47,16 @@ where
 		read_length_delimited(&mut remote, crate::transport::bridge::SESSION_INIT_MTU).await?;
 	if status.status() != ResponseStatus::Success {
 		tracing::debug!(?target, status = ?status.status(), reason = %status.reason, "exit rejected connection");
-		return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, status.reason).into());
+		return Err(
+			std::io::Error::new(std::io::ErrorKind::ConnectionRefused, status.reason).into(),
+		);
 	}
 
-	tracing::debug!(?target, ?source, "exit confirmed, starting copy_bidirectional");
+	tracing::debug!(
+		?target,
+		?source,
+		"exit confirmed, starting copy_bidirectional"
+	);
 
 	match copy_bidirectional(&mut local, &mut remote).await {
 		Ok((to_remote, to_local)) => {
@@ -82,8 +88,9 @@ mod tests {
 		write_length_delimited(&mut writer, &status).await.unwrap();
 		drop(writer);
 
-		let read_status: SessionStatus =
-			read_length_delimited(&mut reader, SESSION_INIT_MTU).await.unwrap();
+		let read_status: SessionStatus = read_length_delimited(&mut reader, SESSION_INIT_MTU)
+			.await
+			.unwrap();
 		assert_eq!(read_status.status(), ResponseStatus::Success);
 	}
 
@@ -99,8 +106,9 @@ mod tests {
 		write_length_delimited(&mut writer, &status).await.unwrap();
 		drop(writer);
 
-		let read_status: SessionStatus =
-			read_length_delimited(&mut reader, SESSION_INIT_MTU).await.unwrap();
+		let read_status: SessionStatus = read_length_delimited(&mut reader, SESSION_INIT_MTU)
+			.await
+			.unwrap();
 		assert_eq!(read_status.status(), ResponseStatus::ConnectionRefused);
 		assert_eq!(read_status.reason, "Connection refused");
 	}
