@@ -119,6 +119,17 @@ services:
     mem_limit: 64m
     cpus: 0.25
 
+  ssh-server:
+    build:
+      context: .
+      dockerfile: images/ssh/Dockerfile
+    hostname: ssh-server
+    networks:
+      office:
+        ipv4_address: 10.99.2.22
+    mem_limit: 64m
+    cpus: 0.25
+
   printer:
     build:
       context: .
