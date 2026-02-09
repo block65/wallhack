@@ -23,12 +23,12 @@ cd "$ROOT_DIR"
 # Updated: 2026-02-09, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
 # Set ~10% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
-    # glibc x86_64 (~10% headroom)
-    ["glibc-slim"]=5200000         # current: ~4.7M
-    ["glibc-default"]=5500000      # current: ~4.9M
-    # musl x86_64 (~10% headroom)
-    ["musl-slim"]=5200000          # current: ~4.6M
-    ["musl-default"]=5500000       # current: ~4.9M
+    # glibc x86_64 (~2% headroom)
+    ["glibc-slim"]=4985000         # current: 4885896
+    ["glibc-default"]=5261000      # current: 5157464
+    # musl x86_64 (~2% headroom)
+    ["musl-slim"]=4963000          # current: 4865288
+    ["musl-default"]=5235000       # current: 5131528
 )
 
 # --- Build definitions ---
