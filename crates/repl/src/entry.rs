@@ -474,7 +474,7 @@ where
 						print_peers(&peers, &printer);
 					}
 					Some(ReplCommand::Sessions) => {
-						print_sessions(&sessions, &printer);
+						print_sessions(&sessions, &peers, &printer);
 					}
 					Some(ReplCommand::RouteAdd(cidr, peer_id)) => {
 						handle_route_add(&cidr, &peer_id, &routes, &sessions, &printer);
@@ -739,14 +739,17 @@ fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 	}
 }
 
-fn print_sessions(sessions: &SessionManager, printer: &Printer) {
+fn print_sessions(sessions: &SessionManager, peers: &Arc<Registry>, printer: &Printer) {
 	let list = sessions.list();
 	if list.is_empty() {
 		printer.print("No active sessions.");
 	} else {
 		printer.print(format!("Active sessions ({}):", list.len()));
 		for (exit_id, tun_name) in &list {
-			printer.print(format!("  {exit_id} -> {tun_name}"));
+			let addr = peers
+				.get(&exit_id)
+				.map_or_else(|| "disconnected".to_string(), |p| p.addr.clone());
+			printer.print(format!("  {exit_id} ({addr}) -> {tun_name}"));
 		}
 	}
 }
