@@ -139,7 +139,7 @@ impl Server for WsServer {
 		let listener = TcpListener::from_std(std_listener)?;
 
 		let (tls, fingerprint) = WsTlsConfig::new(config.tls).inspect(|_| {
-			tracing::debug!("WebSocket TLS enabled (self-signed if no cert provided)")
+			tracing::debug!("WebSocket TLS enabled (self-signed if no cert provided)");
 		})?;
 
 		tracing::info!("WebSocket server listening on {:?}", listener.local_addr());
