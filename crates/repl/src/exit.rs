@@ -7,7 +7,7 @@
 use std::{
 	str::FromStr,
 	sync::{Arc, atomic::Ordering},
-	time::Duration,
+	time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -51,7 +51,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// For slower protocols, streams queue on entry node (backpressure).
 const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
-use crate::repl_common::Printer;
+use crate::repl_common::{Printer, format_duration};
 
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
@@ -444,7 +444,7 @@ where
 					}
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							p.print("No peers tracked in listen-only mode.");
+							p.print("No connected peers.");
 						}
 					}
 					Some(ExitReplCommand::Help) => {
@@ -505,7 +505,7 @@ async fn run_idle_mode(
 			}
 			Some(ExitReplCommand::Peers) => {
 				if let Some(p) = printer {
-					p.print("No peers (node is idle).");
+					p.print("No connected peers.");
 				}
 			}
 			Some(ExitReplCommand::Help) => {
@@ -540,6 +540,8 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	if let Some(p) = printer {
 		p.print(format!("Connected to {peer_addr}"));
 	}
+
+	let connected_at = Instant::now();
 
 	// Create syscall adapter for local network access
 	let adapter = SyscallExitAdapter::new();
@@ -597,7 +599,9 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 					Some(ExitReplCommand::Disconnect) => return Ok(Some(ExitAction::StopConnect)),
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							p.print(format!("Peer: {peer_addr}"));
+							let uptime = format_duration(connected_at.elapsed());
+							p.print("Connected peers (1):");
+							p.print(format!("  {peer_addr} - uptime: {uptime}"));
 						}
 					}
 					Some(ExitReplCommand::Stats) => {
@@ -731,7 +735,8 @@ fn handle_connecting_repl_cmd(
 		Some(ExitReplCommand::Disconnect) => Some(ExitAction::StopConnect),
 		Some(ExitReplCommand::Peers) => {
 			if let Some(p) = printer {
-				p.print(format!("Peer: {peer_addr} (connecting...)"));
+				p.print("Connected peers (1):");
+				p.print(format!("  {peer_addr} (connecting...)"));
 			}
 			None
 		}
@@ -1030,6 +1035,7 @@ async fn run_quic_relay_capability(
 
 	let peer_addr_str = peer_addr.to_string();
 	let listen_port = listen_addr.port();
+	let connected_at = Instant::now();
 
 	// Accept and bridge peer connections
 	loop {
@@ -1076,8 +1082,10 @@ async fn run_quic_relay_capability(
 					}
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							p.print(format!("Peer: {peer_addr_str}"));
-							p.print(format!("Listening on :{listen_port} for peers"));
+							let uptime = format_duration(connected_at.elapsed());
+							p.print("Connected peers (1):");
+							p.print(format!("  {peer_addr_str} - uptime: {uptime}"));
+							p.print(format!("  Listening on :{listen_port} for peers"));
 						}
 					}
 					Some(ExitReplCommand::Stats) => {
@@ -1174,6 +1182,7 @@ async fn run_ws_relay_capability(
 
 	let peer_addr_str = peer_addr.to_string();
 	let listen_port = listen_addr.port();
+	let connected_at = Instant::now();
 
 	// Accept and bridge peer connections
 	loop {
@@ -1220,8 +1229,10 @@ async fn run_ws_relay_capability(
 					}
 					Some(ExitReplCommand::Peers) => {
 						if let Some(p) = printer {
-							p.print(format!("Peer: {peer_addr_str}"));
-							p.print(format!("Listening on :{listen_port} for peers"));
+							let uptime = format_duration(connected_at.elapsed());
+							p.print("Connected peers (1):");
+							p.print(format!("  {peer_addr_str} - uptime: {uptime}"));
+							p.print(format!("  Listening on :{listen_port} for peers"));
 						}
 					}
 					Some(ExitReplCommand::Stats) => {

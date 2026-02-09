@@ -43,6 +43,25 @@ pub fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
 		|| msg.contains("HandshakeFailure")
 }
 
+/// Format a duration as a human-readable string (e.g. "2m 30s", "1h 5m 0s").
+#[must_use]
+pub fn format_duration(d: std::time::Duration) -> String {
+	let total_secs = d.as_secs();
+	let hours = total_secs / 3600;
+	let mins = (total_secs % 3600) / 60;
+	let secs = total_secs % 60;
+
+	if hours > 0 {
+		format!("{hours}h {mins}m {secs}s")
+	} else if mins > 0 {
+		format!("{mins}m {secs}s")
+	} else if secs > 0 {
+		format!("{secs}s")
+	} else {
+		format!("{}ms", d.as_millis())
+	}
+}
+
 /// Format bytes in human-readable form.
 #[must_use]
 pub fn format_bytes(bytes: u64) -> String {

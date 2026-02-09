@@ -109,7 +109,7 @@ async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
 #[cfg(feature = "readline")]
 use rustyline::ExternalPrinter;
 
-use crate::repl_common::Printer;
+use crate::repl_common::{Printer, format_duration};
 
 /// Run as an entry node with interactive REPL.
 ///
@@ -734,23 +734,6 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 	));
 }
 
-/// Format a duration as a human-readable string.
-fn format_duration(d: std::time::Duration) -> String {
-	let total_secs = d.as_secs();
-	let hours = total_secs / 3600;
-	let mins = (total_secs % 3600) / 60;
-	let secs = total_secs % 60;
-
-	if hours > 0 {
-		format!("{hours}h {mins}m {secs}s")
-	} else if mins > 0 {
-		format!("{mins}m {secs}s")
-	} else if secs > 0 {
-		format!("{secs}s")
-	} else {
-		format!("{}ms", d.as_millis())
-	}
-}
 
 fn print_peers(peers: &Arc<Registry>, printer: &Printer) {
 	let list = peers.list();
