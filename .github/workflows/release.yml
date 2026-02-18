@@ -65,24 +65,37 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-gnu
         include:
+          # Per-target: os, artifact, cross
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: wallhack-linux-x64
-            bloat_label: default-glibc
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: wallhack-linux-x64-musl
-            bloat_label: default-musl
             cross: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: wallhack-linux-arm64
             cross: true
+          # Per-variant: features, suffix
           - variant: default
             features: ""
           - variant: slim
             features: --no-default-features --features slim
             suffix: -slim
+          # Per-target+variant: bloat_label
+          - target: x86_64-unknown-linux-gnu
+            variant: default
+            bloat_label: default-glibc
+          - target: x86_64-unknown-linux-gnu
+            variant: slim
+            bloat_label: slim-glibc
+          - target: x86_64-unknown-linux-musl
+            variant: default
+            bloat_label: default-musl
+          - target: x86_64-unknown-linux-musl
+            variant: slim
+            bloat_label: slim-musl
 
     runs-on: ${{ matrix.os }}
 
