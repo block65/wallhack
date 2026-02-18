@@ -7,7 +7,6 @@ on:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    if: ${{ !env.ACT }}
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
