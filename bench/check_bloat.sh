@@ -51,15 +51,18 @@ BUILDS_QUICK=(
 # Parse args
 MODE="all"
 NO_BUILD=false
+ONLY=""
 for arg in "$@"; do
     case "$arg" in
         --quick)    MODE="quick" ;;
         --no-build) NO_BUILD=true ;;
+        --only=*)   ONLY="${arg#--only=}" ;;
         --help|-h)
-            echo "Usage: $0 [--quick] [--no-build]"
-            echo "  (none)      Build all variants (glibc + musl)"
-            echo "  --quick     Native glibc only (2 builds)"
-            echo "  --no-build  Skip builds; check sizes of existing artifacts only"
+            echo "Usage: $0 [--quick] [--no-build] [--only=LABEL]"
+            echo "  (none)        Build all variants (glibc + musl)"
+            echo "  --quick       Native glibc only (2 builds)"
+            echo "  --no-build    Skip builds; check sizes of existing artifacts only"
+            echo "  --only=LABEL  Only check the named variant (e.g. --only=slim-glibc)"
             exit 0
             ;;
     esac
@@ -89,6 +92,8 @@ printf "%-16s %-30s %10s %10s %s\n" "-------" "------" "----" "-----" "------" |
 
 for build in "${BUILDS[@]}"; do
     IFS='|' read -r label target features <<< "$build"
+
+    [ -z "$ONLY" ] || [ "$label" = "$ONLY" ] || continue
 
     binary="target/$target/release/wallhack"
 
