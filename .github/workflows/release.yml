@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [full, slim]
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+        include:
+          # Per-target properties
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: wallhack-linux-x64
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: wallhack-linux-x64-musl
+            cross: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: wallhack-linux-arm64
+            cross: true
+          # Per-variant properties
+          - variant: full
+            features: --features full
+          - variant: slim
+            features: --no-default-features
+            suffix: -slim
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+
+      - name: Upload binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release upload ${{ github.event.release.tag_name }}
+          "target/${{ matrix.target }}/release/wallhack${{ matrix.ext }}#${{ matrix.artifact }}${{ matrix.suffix }}${{ matrix.ext }}"
