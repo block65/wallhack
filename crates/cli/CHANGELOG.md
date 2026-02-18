@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/block65/wallhack/compare/cli-v0.1.1...cli-v0.1.2) (2026-02-18)
+
+
+### Bug Fixes
+
+* **ci:** restore slim variant with proper feature isolation and fix r… ([e8f0f3b](https://github.com/block65/wallhack/commit/e8f0f3b43d2fe9e7fab24d3ea2d3a9c3c3f8c5a2))
+* **ci:** restore slim variant with proper feature isolation and fix release upload race ([7a04c81](https://github.com/block65/wallhack/commit/7a04c81787aca98c03a62b3211c2e61ddf1f4eee))
+
 ## [0.1.1](https://github.com/block65/wallhack/compare/cli-v0.1.0...cli-v0.1.1) (2026-02-18)
 
 
