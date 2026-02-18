@@ -76,7 +76,7 @@ mod tests {
 	use super::*;
 	use crate::transport::bridge::SESSION_INIT_MTU;
 
-	/// Verify that a success SessionStatus round-trips correctly.
+	/// Verify that a success `SessionStatus` round-trips correctly.
 	#[tokio::test]
 	async fn session_status_success_round_trip() {
 		let (mut writer, mut reader) = tokio::io::duplex(1024);
@@ -94,7 +94,7 @@ mod tests {
 		assert_eq!(read_status.status(), ResponseStatus::Success);
 	}
 
-	/// Verify that a refused SessionStatus round-trips with the reason intact.
+	/// Verify that a refused `SessionStatus` round-trips with the reason intact.
 	#[tokio::test]
 	async fn session_status_refused_round_trip() {
 		let (mut writer, mut reader) = tokio::io::duplex(1024);

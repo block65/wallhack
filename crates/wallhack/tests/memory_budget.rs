@@ -172,7 +172,7 @@ const BUDGET_MODERATE: usize = 256 * 1024 * 1024; // 256 MB
 /// If someone adds fields to the proto, this catches the stack-size increase.
 #[test]
 fn struct_sizes() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	let sizes = [
 		(
@@ -205,7 +205,7 @@ fn struct_sizes() {
 /// up-front at channel creation, even if no messages have been sent yet.
 #[test]
 fn broadcast_channel_scaling() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	println!();
 	println!("[memory] === broadcast<ExitNodeResponse> empty channel cost ===");
@@ -261,7 +261,7 @@ fn broadcast_channel_scaling() {
 /// This is what `QuicServer::accept` / `QuicClient::connect` creates.
 #[test]
 fn per_connection_overhead() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	println!();
 	println!("[memory] === per-connection overhead ===");
@@ -324,7 +324,7 @@ fn per_connection_overhead() {
 /// wrappers.
 #[test]
 fn channel_filled_default() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	println!();
 	println!("[memory] === filled channel cost (default messages) ===");
@@ -351,7 +351,7 @@ fn channel_filled_default() {
 /// This is the worst case: ring buffer full of 1400-byte UDP responses.
 #[test]
 fn channel_filled_mtu_payloads() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	let payload_size = 1400; // typical MTU
 
@@ -389,7 +389,7 @@ fn channel_filled_mtu_payloads() {
 /// matters for OOM risk.
 #[test]
 fn burst_peak_memory() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	let cap = 2048usize;
 	let payload_size = 1400;
@@ -436,7 +436,7 @@ fn burst_peak_memory() {
 /// tokio mpsc channel costs (used for control messages, UDP responses, etc.)
 #[test]
 fn mpsc_channel_costs() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	println!();
 	println!("[memory] === tokio mpsc channel costs ===");
@@ -455,7 +455,7 @@ fn mpsc_channel_costs() {
 /// A multi-thread runtime allocates more (worker threads, queues, etc.).
 #[test]
 fn tokio_runtime_overhead() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	println!();
 	println!("[memory] === tokio runtime overhead ===");
@@ -491,7 +491,7 @@ fn tokio_runtime_overhead() {
 /// we control.
 #[test]
 fn exit_node_connection_profile() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	println!();
 	println!("[memory] === exit node connection profile ===");
@@ -541,7 +541,7 @@ fn exit_node_connection_profile() {
 /// Summary: print a budget report for quick reference.
 #[test]
 fn zz_budget_report() {
-	let _lock = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+	let _lock = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
 	// Collect key measurements
 	let (_, cost_chan_1024) = measure(|| broadcast::channel::<ExitNodeResponse>(1024));
