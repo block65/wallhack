@@ -7,12 +7,12 @@ use protobuf::{
 	},
 };
 
+#[cfg(unix)]
+use crate::sessions::icmp::IcmpSession;
 use crate::{
 	session_key::SessionKey,
 	sessions::{tcp::TcpSession, udp::UdpSession},
 };
-#[cfg(unix)]
-use crate::sessions::icmp::IcmpSession;
 
 /// These must only be serious runtime errors, other "errors" like connection
 /// refused should be handled gracefully with a Response enum
