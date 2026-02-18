@@ -115,17 +115,8 @@ jobs:
         if: matrix.cross
         run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
 
-      - name: Check binary size
-        run: |
-          BINARY="target/${{ matrix.target }}/release/wallhack"
-          SIZE=$(stat -c '%s' "$BINARY")
-          SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $SIZE/1048576}")
-          echo "Binary size: ${SIZE_MB}MB ($SIZE bytes)"
-          LIMIT=6291456  # 6MB hard ceiling
-          if [ "$SIZE" -gt "$LIMIT" ]; then
-            echo "ERROR: Binary size ${SIZE_MB}MB exceeds 6MB limit"
-            exit 1
-          fi
+      - name: Check binary sizes
+        run: ./bench/check_bloat.sh --no-build
 
       - name: Upload binary
         env:
