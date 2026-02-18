@@ -15,8 +15,10 @@ use crate::{
 		ExitAdapter, RuntimeError, SendResponse, TcpCloseResponse, TcpStreamResponse,
 		TcpListenResponse, TcpListenCloseResponse,
 	},
-	sessions::{self, icmp::IcmpSession},
+	sessions,
 };
+#[cfg(unix)]
+use crate::sessions::icmp::IcmpSession;
 
 #[derive(Default)]
 pub struct NullExitAdapter {}
@@ -69,6 +71,7 @@ impl ExitAdapter for NullExitAdapter {
 		todo!()
 	}
 
+	#[cfg(unix)]
 	async fn icmp_session(
 		&self,
 		_pair: crate::SocketSet,

@@ -124,6 +124,7 @@ impl ExitAdapter for SyscallExitAdapter {
 		self.tcp_listen_close_impl(set)
 	}
 
+	#[cfg(unix)]
 	async fn icmp_session(
 		&self,
 		set: SocketSet,

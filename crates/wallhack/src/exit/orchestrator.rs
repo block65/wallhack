@@ -3,11 +3,13 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use protobuf::v2::{
-	self, EntryNodeInstruction, ExitNodeResponse, IcmpEchoRequest, IcmpSendInstruction,
-	RuntimeErrorResponse, TcpCloseInstruction, TcpConnectInstruction, TcpListenCloseInstruction,
-	TcpListenInstruction, TcpSendInstruction, UdpSendInstruction,
-	entry_node_instruction::Instruction, exit_node_response, icmp_response,
-	icmp_send_instruction::IcmpMessage,
+	self, EntryNodeInstruction, ExitNodeResponse, RuntimeErrorResponse, TcpCloseInstruction,
+	TcpConnectInstruction, TcpListenCloseInstruction, TcpListenInstruction, TcpSendInstruction,
+	UdpSendInstruction, entry_node_instruction::Instruction, exit_node_response,
+};
+#[cfg(unix)]
+use protobuf::v2::{
+	IcmpEchoRequest, IcmpSendInstruction, icmp_response, icmp_send_instruction::IcmpMessage,
 };
 use tokio::{sync::broadcast, task::JoinSet};
 
@@ -101,7 +103,10 @@ impl<A: ExitAdapter> Orchestrator<A> {
 						Some(Instruction::TcpSend(i)) => handle_tcp_send(i, &self.adapter, &responses, &mut tasks)?,
 						Some(Instruction::TcpClose(i)) => handle_tcp_close(i, &self.adapter, &responses)?,
 						Some(Instruction::UdpSend(i)) => handle_udp_send(i, &self.adapter, &responses, &mut tasks)?,
+						#[cfg(unix)]
 						Some(Instruction::IcmpSend(i)) => handle_icmp_send(i, &self.adapter, &responses, &mut tasks)?,
+						#[cfg(not(unix))]
+						Some(Instruction::IcmpSend(_)) => tracing::warn!("ICMP not supported on this platform"),
 						Some(Instruction::TcpListen(i)) => handle_tcp_listen(i, &self.adapter, &responses, &mut tasks)?,
 						Some(Instruction::TcpListenClose(i)) => handle_tcp_listen_close(i, &self.adapter, &responses, &mut tasks)?,
 						None => tracing::warn!("Received instruction with no variant set, ignoring"),
@@ -418,6 +423,7 @@ async fn run_udp_recv<A: ExitAdapter>(
 	Ok(())
 }
 
+#[cfg(unix)]
 fn handle_icmp_send<A: ExitAdapter>(
 	instr: IcmpSendInstruction,
 	adapter: &Arc<A>,

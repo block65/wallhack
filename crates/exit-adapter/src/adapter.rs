@@ -9,8 +9,10 @@ use protobuf::{
 
 use crate::{
 	session_key::SessionKey,
-	sessions::{icmp::IcmpSession, tcp::TcpSession, udp::UdpSession},
+	sessions::{tcp::TcpSession, udp::UdpSession},
 };
+#[cfg(unix)]
+use crate::sessions::icmp::IcmpSession;
 
 /// These must only be serious runtime errors, other "errors" like connection
 /// refused should be handled gracefully with a Response enum
@@ -332,6 +334,7 @@ pub trait ExitAdapter: Send + Sync + 'static {
 		set: SocketSet,
 	) -> impl std::future::Future<Output = Result<TcpListenCloseResponse, RuntimeError>> + Send;
 
+	#[cfg(unix)]
 	fn icmp_session(
 		&self,
 		set: SocketSet,
