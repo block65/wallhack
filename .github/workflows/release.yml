@@ -120,5 +120,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.resolve-tag.outputs.tag_name }}
         run: >
-          gh release upload "$TAG_NAME"
+          gh release upload --clobber "$TAG_NAME"
           "target/${{ matrix.target }}/release/wallhack#${{ matrix.artifact }}${{ matrix.suffix }}"
