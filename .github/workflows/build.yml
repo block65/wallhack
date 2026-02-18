@@ -56,17 +56,23 @@ jobs:
           key: ${{ runner.os }}-build-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-build-cargo-
 
-      - name: Install musl target
-        run: rustup target add x86_64-unknown-linux-musl
-
       - name: Build
-        run: cargo build --features full
+        run: cargo build --release --features full
 
       - name: Test
         run: cargo test --features full
 
-      - name: Check binary sizes
-        run: ./bench/check_bloat.sh --quick
+      - name: Check binary size
+        run: |
+          BINARY="target/release/wallhack"
+          SIZE=$(stat -c '%s' "$BINARY")
+          SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $SIZE/1048576}")
+          echo "Binary size: ${SIZE_MB}MB"
+          LIMIT=6291456  # 6MB hard ceiling
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "ERROR: Binary ${SIZE_MB}MB exceeds 6MB limit"
+            exit 1
+          fi
 
   clippy:
     needs: [validate]
