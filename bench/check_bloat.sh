@@ -22,28 +22,30 @@ cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
 # Updated: 2026-02-09, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
-# Set ~10% above current measured sizes. Adjust as features are added.
+# Set ~2% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
-    # glibc x86_64 (~2% headroom)
-    ["glibc-slim"]=4985000         # current: 4885896
-    ["glibc-default"]=5261000      # current: 5157464
-    # musl x86_64 (~2% headroom)
-    ["musl-slim"]=4963000          # current: 4865288
-    ["musl-default"]=5235000       # current: 5131528
+    # glibc x86_64
+    ["slim-glibc"]=4985000         # current: 4885896
+    ["default-glibc"]=5261000      # current: 5157464
+    # musl x86_64
+    ["slim-musl"]=4963000          # current: 4865288
+    ["default-musl"]=5235000       # current: 5131528
 )
 
 # --- Build definitions ---
 # format: "label|target|cargo_features"
+#   wallhack       = default features (quic + websocket + http-api + color + readline)
+#   wallhack-slim  = --no-default-features --features quic,websocket,color (network + color, no readline/api)
 BUILDS_ALL=(
-    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features full"
-    "glibc-default|x86_64-unknown-linux-gnu|"
-    "musl-slim|x86_64-unknown-linux-musl|--no-default-features --features full"
-    "musl-default|x86_64-unknown-linux-musl|"
+    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features quic,websocket,color"
+    "default-glibc|x86_64-unknown-linux-gnu|"
+    "slim-musl|x86_64-unknown-linux-musl|--no-default-features --features quic,websocket,color"
+    "default-musl|x86_64-unknown-linux-musl|"
 )
 
 BUILDS_QUICK=(
-    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features full"
-    "glibc-default|x86_64-unknown-linux-gnu|"
+    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features quic,websocket,color"
+    "default-glibc|x86_64-unknown-linux-gnu|"
 )
 
 # Parse args
@@ -55,7 +57,7 @@ for arg in "$@"; do
         --no-build) NO_BUILD=true ;;
         --help|-h)
             echo "Usage: $0 [--quick] [--no-build]"
-            echo "  (none)      Build all variants (glibc + musl, slim to full)"
+            echo "  (none)      Build all variants (glibc + musl)"
             echo "  --quick     Native glibc only (2 builds)"
             echo "  --no-build  Skip builds; check sizes of existing artifacts only"
             exit 0

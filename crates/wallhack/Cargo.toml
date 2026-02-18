@@ -5,7 +5,7 @@ edition = "2024"
 categories = ["network-programming"]
 
 [features]
-default = ["full"]
+default = ["quic", "websocket", "http-api"]
 quic = ["dep:quinn", "transport/quic"]
 websocket = [
     "dep:tokio-tungstenite",
@@ -22,8 +22,6 @@ http-api = [
     "dep:urlencoding",
     "dep:base64",
 ]
-full = ["quic", "websocket", "http-api"]
-slim = ["quic", "websocket"]
 
 [dependencies]
 exit_adapter = { path = "../exit-adapter" }

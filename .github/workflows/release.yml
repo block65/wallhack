@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [full, slim]
+        variant: [default, slim]
         target:
           - x86_64-unknown-linux-gnu
           - x86_64-unknown-linux-musl
@@ -76,10 +76,10 @@ jobs:
             os: ubuntu-latest
             artifact: wallhack-linux-arm64
             cross: true
-          - variant: full
-            features: --features full
+          - variant: default
+            features: ""
           - variant: slim
-            features: --no-default-features
+            features: --no-default-features --features quic,websocket,color
             suffix: -slim
 
     runs-on: ${{ matrix.os }}
