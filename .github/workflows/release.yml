@@ -18,7 +18,6 @@ jobs:
       pull-requests: write
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
-      tag_name: ${{ steps.release.outputs['crates--cli--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -26,13 +25,37 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build:
+  resolve-tag:
     needs: [release-please]
     if: |
       always() && (
         (needs.release-please.result == 'success' && needs.release-please.outputs.releases_created) ||
         github.event_name == 'workflow_dispatch'
       )
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.tag.outputs.tag_name }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            TAG=$(gh release list --repo ${{ github.repository }} --limit 10 --json tagName --jq '[.[].tagName | select(startswith("cli-v"))][0]')
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not determine release tag"
+            exit 1
+          fi
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: $TAG"
+
+  build:
+    needs: [release-please, resolve-tag]
+    if: always() && needs.resolve-tag.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -62,16 +85,6 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Validate tag
-        env:
-          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || needs.release-please.outputs.tag_name }}
-        run: |
-          if [ -z "$TAG_NAME" ]; then
-            echo "::error::TAG_NAME is empty. Provide a tag via workflow_dispatch input or ensure releases_created is true."
-            exit 1
-          fi
-          echo "Building for release tag: $TAG_NAME"
-
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
@@ -105,7 +118,7 @@ jobs:
       - name: Upload binary
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || needs.release-please.outputs.tag_name }}
+          TAG_NAME: ${{ needs.resolve-tag.outputs.tag_name }}
         run: >
-          gh release upload $TAG_NAME
+          gh release upload "$TAG_NAME"
           "target/${{ matrix.target }}/release/wallhack#${{ matrix.artifact }}${{ matrix.suffix }}"
