@@ -393,6 +393,7 @@ fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
 		.with_context(|| format!("Invalid listen address: {full_addr}"))
 }
 
+#[cfg(any(feature = "quic", feature = "websocket"))]
 fn build_server_config(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
