@@ -24,27 +24,20 @@ cd "$ROOT_DIR"
 # Updated: 2026-02-09, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
 # Set ~2% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
-    # glibc x86_64
-    ["slim-glibc"]=4985000         # current: 4885896
+    # glibc x86_64 (~2% headroom)
     ["default-glibc"]=5261000      # current: 5157464
-    # musl x86_64
-    ["slim-musl"]=4963000          # current: 4865288
+    # musl x86_64 (~2% headroom)
     ["default-musl"]=5235000       # current: 5131528
 )
 
 # --- Build definitions ---
 # format: "label|target|cargo_features"
-#   wallhack       = default features (quic + websocket + http-api + color + readline)
-#   wallhack-slim  = --no-default-features --features slim (network + color, no readline/api)
 BUILDS_ALL=(
-    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features slim"
     "default-glibc|x86_64-unknown-linux-gnu|"
-    "slim-musl|x86_64-unknown-linux-musl|--no-default-features --features slim"
     "default-musl|x86_64-unknown-linux-musl|"
 )
 
 BUILDS_QUICK=(
-    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features slim"
     "default-glibc|x86_64-unknown-linux-gnu|"
 )
 

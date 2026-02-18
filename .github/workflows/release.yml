@@ -59,11 +59,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [default, slim]
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-gnu
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -76,11 +71,6 @@ jobs:
             os: ubuntu-latest
             artifact: wallhack-linux-arm64
             cross: true
-          - variant: default
-            features: ""
-          - variant: slim
-            features: --no-default-features --features slim
-            suffix: -slim
 
     runs-on: ${{ matrix.os }}
 
@@ -100,8 +90,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target/
-          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Install cross
         if: matrix.cross
@@ -109,14 +99,14 @@ jobs:
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+        run: cargo build --release --target ${{ matrix.target }} -p cli
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+        run: cross build --release --target ${{ matrix.target }} -p cli
 
-      - name: Check binary sizes
-        run: ./bench/check_bloat.sh --no-build
+      - name: Check binary size
+        run: ./bench/check_bloat.sh --no-build --only=default-${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl' || 'glibc' }}
 
       - name: Upload binary
         env:
@@ -124,4 +114,4 @@ jobs:
           TAG_NAME: ${{ needs.resolve-tag.outputs.tag_name }}
         run: >
           gh release upload --clobber "$TAG_NAME"
-          "target/${{ matrix.target }}/release/wallhack#${{ matrix.artifact }}${{ matrix.suffix }}"
+          "target/${{ matrix.target }}/release/wallhack#${{ matrix.artifact }}"
