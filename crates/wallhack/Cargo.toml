@@ -6,6 +6,7 @@ categories = ["network-programming"]
 
 [features]
 default = ["quic", "websocket", "http-api"]
+slim = ["quic", "websocket"]
 quic = ["dep:quinn", "transport/quic"]
 websocket = [
     "dep:tokio-tungstenite",
