@@ -13,15 +13,15 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource/dm-serif-display": "^5.2.8",
     "@fontsource/inter": "^5.2.8",
-    "@iconify-json/lucide": "^1.2.87",
+    "@iconify-json/lucide": "^1.2.91",
     "@iconify-json/ph": "^1.2.2",
     "@tailwindcss/vite": "^4.1.18",
-    "astro": "^5.17.1",
+    "astro": "^5.17.2",
     "astro-icon": "^1.1.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "shiki": "^3.22.0",
-    "tailwind-merge": "^3.4.0",
+    "tailwind-merge": "^3.4.1",
     "tailwindcss": "^4.1.18"
   }
 }
