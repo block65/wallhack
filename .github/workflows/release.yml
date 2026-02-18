@@ -62,6 +62,16 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: Validate tag
+        env:
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || needs.release-please.outputs.tag_name }}
+        run: |
+          if [ -z "$TAG_NAME" ]; then
+            echo "::error::TAG_NAME is empty. Provide a tag via workflow_dispatch input or ensure releases_created is true."
+            exit 1
+          fi
+          echo "Building for release tag: $TAG_NAME"
+
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
