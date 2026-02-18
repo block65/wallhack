@@ -1,5 +1,6 @@
 {
   "release-type": "rust",
+  "bootstrap-sha": "bfeef40",
   "packages": {
     "crates/cli": {}
   }
