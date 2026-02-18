@@ -1,12 +1,12 @@
 # wallhack
 
-![Build](https://github.com/maxholman/wallhack/actions/workflows/build.yml/badge.svg)
+![Build](https://github.com/block65/wallhack/actions/workflows/build.yml/badge.svg)
 
-**wallhack** (plural **wallhacks**)
+### Layer 3 tunneling tool for network pivoting in penetration testing scenarios.
 
-_(video games)_ A patch enabling a player to cheat by modifying the properties
-of walls, as by making them transparent or nonsolid.
-
-Layer 3 tunneling tool for network pivoting.
+> **wallhack** (plural **wallhacks**)
+> 
+> _(video games)_ A patch enabling a player to cheat by modifying the properties
+> of walls, as by making them transparent or nonsolid.
 
 Read the docs at **[wallhack.net](https://wallhack.net)**
