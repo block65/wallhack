@@ -1,9 +1,13 @@
 {
   "release-type": "rust",
   "bootstrap-sha": "bfeef40",
+  "plugins": ["cargo-workspace"],
   "packages": {
-    ".": {
-      "package-name": "wallhack"
-    }
+    "crates/cli": {},
+    "crates/exit-adapter": {},
+    "crates/netstack": {},
+    "crates/protobuf": {},
+    "crates/transport": {},
+    "crates/wallhack": {}
   }
 }
