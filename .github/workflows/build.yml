@@ -30,6 +30,9 @@ jobs:
       - name: Build
         run: cargo build --features full
 
+      - name: Check slim
+        run: cargo check --no-default-features
+
       - name: Test
         run: cargo test --features full
 
