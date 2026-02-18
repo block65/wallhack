@@ -1,11 +1,26 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    branches: ["main"]
 
 jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    if: ${{ !env.ACT }}
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   build:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
     strategy:
       fail-fast: false
       matrix:
@@ -15,7 +30,6 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-gnu
         include:
-          # Per-target properties
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: wallhack-linux-x64
@@ -27,7 +41,6 @@ jobs:
             os: ubuntu-latest
             artifact: wallhack-linux-arm64
             cross: true
-          # Per-variant properties
           - variant: full
             features: --features full
           - variant: slim
@@ -43,6 +56,17 @@ jobs:
         run: |
           rustup show
           rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-
 
       - name: Install cross
         if: matrix.cross
@@ -60,5 +84,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >
-          gh release upload ${{ github.event.release.tag_name }}
-          "target/${{ matrix.target }}/release/wallhack${{ matrix.ext }}#${{ matrix.artifact }}${{ matrix.suffix }}${{ matrix.ext }}"
+          gh release upload ${{ needs.release-please.outputs.tag_name }}
+          "target/${{ matrix.target }}/release/wallhack#${{ matrix.artifact }}${{ matrix.suffix }}"
