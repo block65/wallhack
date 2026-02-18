@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/block65/wallhack/compare/exit_adapter-v0.1.0...exit_adapter-v0.1.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* reorder cfg(unix) import to satisfy rustfmt ([e574113](https://github.com/block65/wallhack/commit/e574113002b9f04f083d0cc4ed4f11a11473bfe3))
+
 ## 0.1.0 (2026-02-18)
 
 

@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.1.1](https://github.com/block65/wallhack/compare/wallhack-v0.1.0...wallhack-v0.1.1) (2026-02-18)
+
 ## 0.1.0 (2026-02-18)
 
 
