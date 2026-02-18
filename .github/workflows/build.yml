@@ -1,8 +1,6 @@
-name: Rust Build
+name: CI
 
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["main"]
 
@@ -11,41 +9,12 @@ env:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: wallhack-linux-x64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            artifact: wallhack-linux-x64-musl
-            cross: true
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact: wallhack-linux-arm64
-            cross: true
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: wallhack-windows-x64
-            ext: .exe
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: wallhack-macos-x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: wallhack-macos-arm64
-
-    runs-on: ${{ matrix.os }}
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        run: |
-          rustup show
-          rustup target add ${{ matrix.target }}
+        run: rustup show
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -55,31 +24,14 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+          key: ${{ runner.os }}-build-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-build-cargo-
 
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build
+        run: cargo build --features full
 
-      - name: Build (native)
-        if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p cli
-
-      - name: Build (cross)
-        if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p cli
-
-      - name: Run tests
-        if: matrix.os == 'ubuntu-latest' && !matrix.cross
-        run: cargo test --release
-
-      - name: Upload artifact
-        if: ${{ !env.ACT }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: target/${{ matrix.target }}/release/wallhack${{ matrix.ext }}
+      - name: Test
+        run: cargo test --features full
 
   clippy:
     runs-on: ubuntu-latest
@@ -99,6 +51,14 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Format check
+        run: cargo fmt --all -- --check
 
   bloat-check:
     runs-on: ubuntu-latest
@@ -124,21 +84,3 @@ jobs:
 
       - name: Check binary sizes
         run: ./bench/check_bloat.sh --quick
-
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-fmt-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-fmt-cargo-
-
-      - name: Format check
-        run: cargo fmt --all -- --check
