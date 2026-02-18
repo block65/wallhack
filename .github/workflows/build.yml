@@ -37,8 +37,11 @@ jobs:
           key: ${{ runner.os }}-clippy-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-clippy-cargo-
 
-      - name: Clippy
+      - name: Clippy (default)
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (slim)
+        run: cargo clippy --all-targets --no-default-features --features slim -- -D warnings
 
   build:
     needs: [clippy]
@@ -63,11 +66,17 @@ jobs:
       - name: Install x86_64-unknown-linux-gnu target
         run: rustup target add x86_64-unknown-linux-gnu
 
-      - name: Build
+      - name: Build (default)
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
-      - name: Check binary size
+      - name: Check default binary size
         run: ./bench/check_bloat.sh --no-build --only=default-glibc
+
+      - name: Build (slim)
+        run: cargo build --release --target x86_64-unknown-linux-gnu --no-default-features --features slim
+
+      - name: Check slim binary size
+        run: ./bench/check_bloat.sh --no-build --only=slim-glibc
 
       - name: Test
         run: cargo test

@@ -21,24 +21,29 @@ mkdir -p "$RESULTS_DIR"
 cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
-# Updated: 2026-02-09, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
+# Updated: 2026-02-18, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
 # Set ~2% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
     # glibc x86_64 (~2% headroom)
-    ["default-glibc"]=5261000      # current: 5157464
-    # musl x86_64 (~2% headroom)
-    ["default-musl"]=5235000       # current: 5131528
+    ["default-glibc"]=6480000      # current: 6352672
+    ["slim-glibc"]=4980000         # current: 4881448
+    # musl x86_64 (~2% headroom, estimated — update after first musl build)
+    ["default-musl"]=6480000       # estimated ~6.3MB (not yet measured)
+    ["slim-musl"]=5000000          # estimated ~4.9MB (not yet measured)
 )
 
 # --- Build definitions ---
 # format: "label|target|cargo_features"
 BUILDS_ALL=(
     "default-glibc|x86_64-unknown-linux-gnu|"
+    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features slim"
     "default-musl|x86_64-unknown-linux-musl|"
+    "slim-musl|x86_64-unknown-linux-musl|--no-default-features --features slim"
 )
 
 BUILDS_QUICK=(
     "default-glibc|x86_64-unknown-linux-gnu|"
+    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features slim"
 )
 
 # Parse args

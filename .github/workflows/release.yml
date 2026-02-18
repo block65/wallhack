@@ -59,6 +59,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        variant: [default, slim]
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -73,6 +78,11 @@ jobs:
             os: ubuntu-latest
             artifact: wallhack-linux-arm64
             cross: true
+          - variant: default
+            features: ""
+          - variant: slim
+            features: --no-default-features --features slim
+            suffix: -slim
 
     runs-on: ${{ matrix.os }}
 
@@ -92,8 +102,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-
 
       - name: Install cross
         if: matrix.cross
@@ -101,11 +111,11 @@ jobs:
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p cli
+        run: cargo build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p cli
+        run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
 
       - name: Check binary size
         if: matrix.bloat_label
@@ -115,6 +125,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.resolve-tag.outputs.tag_name }}
-        run: >
-          gh release upload --clobber "$TAG_NAME"
-          "target/${{ matrix.target }}/release/wallhack#${{ matrix.artifact }}"
+        run: |
+          ARTIFACT="${{ matrix.artifact }}${{ matrix.suffix }}"
+          cp "target/${{ matrix.target }}/release/wallhack" "$ARTIFACT"
+          gh release upload --clobber "$TAG_NAME" "$ARTIFACT"

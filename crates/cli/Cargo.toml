@@ -4,7 +4,8 @@ version = "0.1.1"
 edition = "2024"
 
 [features]
-default = ["quic", "websocket", "color", "readline"]
+default = ["quic", "websocket", "color", "readline", "http-api"]
+slim = ["quic", "websocket", "color"]
 color = []
 readline = ["dep:rustyline"]                         # Full REPL with history/completion
 tokio-console = ["dep:console-subscriber"]
@@ -14,7 +15,7 @@ dns-resolver = ["dep:hickory-resolver"]
 quic = ["wallhack/quic"]
 websocket = ["wallhack/websocket"]
 
-# REST API feature
+# REST API feature (forwarded to wallhack)
 http-api = ["wallhack/http-api"]
 
 [dependencies]
@@ -36,7 +37,7 @@ shlex = "1"
 thiserror = "2"
 tokio.workspace = true
 tracing.workspace = true
-wallhack = { path = "../wallhack" }
+wallhack = { path = "../wallhack", default-features = false }
 subtle = "2"
 console-subscriber = { workspace = true, optional = true }
 rand = { version = "0.9", default-features = false, features = [
