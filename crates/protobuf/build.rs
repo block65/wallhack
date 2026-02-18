@@ -1,4 +1,8 @@
+#[allow(unsafe_code)]
+// REASON: build scripts are single-threaded; set_var is safe in this context
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+	// SAFETY: build scripts are single-threaded, no other threads can race on env
+	unsafe { std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap()) };
 	// Step 1: Compile existing protos (no extern_path needed)
 	let base_protos = ["proto/command/v2.proto", "proto/control.proto"];
 
