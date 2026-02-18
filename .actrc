@@ -1,1 +1,3 @@
--P ubuntu-latest=ghcr.io/catthehacker/ubuntu:rust-latest
+-P ubuntu-latest=wallhack-ci:latest
+--pull=false
+--container-options=--volume=/home/mholman/.cargo/registry:/root/.cargo/registry --container-options=--volume=/home/mholman/.cargo/git:/root/.cargo/git
