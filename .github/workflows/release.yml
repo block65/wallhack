@@ -79,7 +79,7 @@ jobs:
           - variant: default
             features: ""
           - variant: slim
-            features: --no-default-features --features quic,websocket,color
+            features: --no-default-features --features slim
             suffix: -slim
 
     runs-on: ${{ matrix.os }}

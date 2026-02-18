@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 default = ["quic", "websocket", "color", "readline"]
+slim = ["quic", "websocket", "color"]                # Network-capable, no readline/repl/api
 color = []
 readline = ["dep:rustyline"]                         # Full REPL with history/completion
 tokio-console = ["dep:console-subscriber"]

@@ -35,16 +35,16 @@ declare -A THRESHOLDS=(
 # --- Build definitions ---
 # format: "label|target|cargo_features"
 #   wallhack       = default features (quic + websocket + http-api + color + readline)
-#   wallhack-slim  = --no-default-features --features quic,websocket,color (network + color, no readline/api)
+#   wallhack-slim  = --no-default-features --features slim (network + color, no readline/api)
 BUILDS_ALL=(
-    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features quic,websocket,color"
+    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features slim"
     "default-glibc|x86_64-unknown-linux-gnu|"
-    "slim-musl|x86_64-unknown-linux-musl|--no-default-features --features quic,websocket,color"
+    "slim-musl|x86_64-unknown-linux-musl|--no-default-features --features slim"
     "default-musl|x86_64-unknown-linux-musl|"
 )
 
 BUILDS_QUICK=(
-    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features quic,websocket,color"
+    "slim-glibc|x86_64-unknown-linux-gnu|--no-default-features --features slim"
     "default-glibc|x86_64-unknown-linux-gnu|"
 )
 
