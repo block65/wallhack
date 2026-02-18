@@ -1623,7 +1623,7 @@ fn run_exit_repl_input(
 
 		let mut line = String::new();
 		match stdin.lock().read_line(&mut line) {
-			Ok(0) => {
+			Ok(0) | Err(_) => {
 				let _ = tx.blocking_send(ExitReplCommand::Quit);
 				break;
 			}
@@ -1638,10 +1638,6 @@ fn run_exit_repl_input(
 				if tx.blocking_send(cmd).is_err() || is_quit {
 					break;
 				}
-			}
-			Err(_) => {
-				let _ = tx.blocking_send(ExitReplCommand::Quit);
-				break;
 			}
 		}
 	}

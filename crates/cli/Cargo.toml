@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["full", "color", "readline"]
+default = ["quic", "websocket", "color", "readline"]
 color = []
 readline = ["dep:rustyline"]                         # Full REPL with history/completion
 tokio-console = ["dep:console-subscriber"]
@@ -13,7 +13,6 @@ dns-resolver = ["dep:hickory-resolver"]
 # Transport features (forwarded to wallhack)
 quic = ["wallhack/quic"]
 websocket = ["wallhack/websocket"]
-full = ["quic", "websocket"]
 
 # REST API feature
 http-api = ["wallhack/http-api"]

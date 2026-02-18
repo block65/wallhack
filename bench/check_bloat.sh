@@ -8,6 +8,7 @@ set -euo pipefail
 # Usage:
 #   ./bench/check_bloat.sh              # build all variants
 #   ./bench/check_bloat.sh --quick      # native glibc only (faster)
+#   ./bench/check_bloat.sh --no-build   # check sizes of already-built artifacts, skip missing
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -21,41 +22,44 @@ cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
 # Updated: 2026-02-09, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
-# Set ~10% above current measured sizes. Adjust as features are added.
+# Set ~2% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
     # glibc x86_64 (~2% headroom)
-    ["glibc-slim"]=4985000         # current: 4885896
-    ["glibc-default"]=5261000      # current: 5157464
+    ["default-glibc"]=5261000      # current: 5157464
     # musl x86_64 (~2% headroom)
-    ["musl-slim"]=4963000          # current: 4865288
-    ["musl-default"]=5235000       # current: 5131528
+    ["default-musl"]=5235000       # current: 5131528
 )
 
 # --- Build definitions ---
 # format: "label|target|cargo_features"
 BUILDS_ALL=(
-    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features full"
-    "glibc-default|x86_64-unknown-linux-gnu|"
-    "musl-slim|x86_64-unknown-linux-musl|--no-default-features --features full"
-    "musl-default|x86_64-unknown-linux-musl|"
+    "default-glibc|x86_64-unknown-linux-gnu|"
+    "default-musl|x86_64-unknown-linux-musl|"
 )
 
 BUILDS_QUICK=(
-    "glibc-slim|x86_64-unknown-linux-gnu|--no-default-features --features full"
-    "glibc-default|x86_64-unknown-linux-gnu|"
+    "default-glibc|x86_64-unknown-linux-gnu|"
 )
 
 # Parse args
 MODE="all"
-case "${1:-}" in
-    --quick) MODE="quick" ;;
-    --help|-h)
-        echo "Usage: $0 [--quick]"
-        echo "  (none)   Build all variants (glibc + musl, slim to full)"
-        echo "  --quick  Native glibc only (2 builds)"
-        exit 0
-        ;;
-esac
+NO_BUILD=false
+ONLY=""
+for arg in "$@"; do
+    case "$arg" in
+        --quick)    MODE="quick" ;;
+        --no-build) NO_BUILD=true ;;
+        --only=*)   ONLY="${arg#--only=}" ;;
+        --help|-h)
+            echo "Usage: $0 [--quick] [--no-build] [--only=LABEL]"
+            echo "  (none)        Build all variants (glibc + musl)"
+            echo "  --quick       Native glibc only (2 builds)"
+            echo "  --no-build    Skip builds; check sizes of existing artifacts only"
+            echo "  --only=LABEL  Only check the named variant (e.g. --only=slim-glibc)"
+            exit 0
+            ;;
+    esac
+done
 
 case "$MODE" in
     quick) BUILDS=("${BUILDS_QUICK[@]}") ;;
@@ -65,6 +69,7 @@ esac
 # --- Run ---
 FAILED=0
 PASS_COUNT=0
+SKIP_COUNT=0
 
 log() {
     echo "$*" | tee -a "$RESULT_FILE"
@@ -73,7 +78,7 @@ log() {
 log "WALLHACK BINARY SIZE CHECK"
 log "Date: $(date)"
 log "Commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-log "Mode: $MODE"
+log "Mode: $MODE${NO_BUILD:+ (no-build)}"
 log ""
 printf "%-16s %-30s %10s %10s %s\n" "VARIANT" "TARGET" "SIZE" "LIMIT" "STATUS" | tee -a "$RESULT_FILE"
 printf "%-16s %-30s %10s %10s %s\n" "-------" "------" "----" "-----" "------" | tee -a "$RESULT_FILE"
@@ -81,14 +86,25 @@ printf "%-16s %-30s %10s %10s %s\n" "-------" "------" "----" "-----" "------" |
 for build in "${BUILDS[@]}"; do
     IFS='|' read -r label target features <<< "$build"
 
-    # shellcheck disable=SC2086
-    if ! cargo build -q --release -p cli --target "$target" $features 2>&1; then
-        log "$(printf '%-16s %-30s %10s %10s %s' "$label" "$target" "BUILD FAIL" "-" "FAIL")"
-        FAILED=$((FAILED + 1))
-        continue
-    fi
+    [ -z "$ONLY" ] || [ "$label" = "$ONLY" ] || continue
 
     binary="target/$target/release/wallhack"
+
+    if [ "$NO_BUILD" = "true" ]; then
+        if [ ! -f "$binary" ]; then
+            log "$(printf '%-16s %-30s %10s %10s %s' "$label" "$target" "-" "-" "skip")"
+            SKIP_COUNT=$((SKIP_COUNT + 1))
+            continue
+        fi
+    else
+        # shellcheck disable=SC2086
+        if ! cargo build -q --release -p cli --target "$target" $features 2>&1; then
+            log "$(printf '%-16s %-30s %10s %10s %s' "$label" "$target" "BUILD FAIL" "-" "FAIL")"
+            FAILED=$((FAILED + 1))
+            continue
+        fi
+    fi
+
     size=$(stat --format='%s' "$binary" 2>/dev/null || stat -f'%z' "$binary")
     threshold=${THRESHOLDS[$label]:-0}
 
@@ -107,7 +123,7 @@ for build in "${BUILDS[@]}"; do
 done
 
 log ""
-log "Results: $PASS_COUNT passed, $FAILED failed"
+log "Results: $PASS_COUNT passed, $FAILED failed, $SKIP_COUNT skipped"
 log "Saved to: $RESULT_FILE"
 
 if [ "$FAILED" -gt 0 ]; then
