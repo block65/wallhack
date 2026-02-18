@@ -8,7 +8,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ${{ runner.os }}-validate-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-validate-cargo-
+
+      - name: Check
+        run: cargo check --all-features
+
+      - name: Check slim
+        run: cargo check --no-default-features
+
   build:
+    needs: [validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,13 +59,11 @@ jobs:
       - name: Build
         run: cargo build --features full
 
-      - name: Check slim
-        run: cargo check --no-default-features
-
       - name: Test
         run: cargo test --features full
 
   clippy:
+    needs: [validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,14 +81,6 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Format check
-        run: cargo fmt --all -- --check
 
   bloat-check:
     runs-on: ubuntu-latest
