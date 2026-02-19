@@ -19,6 +19,25 @@ const metaDescription = description ?? 'Layer 3 tunneling over QUIC and WebSocke
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
 const slug = Astro.url.pathname.replace(/^\/|\/$/g, '') || 'index';
 const ogImage = new URL(`/og/${slug}.png`, Astro.site).href;
+
+const jsonLd = isHome
+  ? {
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'wallhack',
+      description: metaDescription,
+      applicationCategory: 'SecurityApplication',
+      operatingSystem: 'Linux',
+      url: canonicalUrl,
+      downloadUrl: new URL('/download', Astro.site).href,
+    }
+  : {
+      '@context': 'https://schema.org',
+      '@type': 'TechArticle',
+      headline: title,
+      description: metaDescription,
+      url: canonicalUrl,
+    };
 ---
 
 <!doctype html>
@@ -30,6 +49,7 @@ const ogImage = new URL(`/og/${slug}.png`, Astro.site).href;
     <meta name="description" content={metaDescription} />
     <title>{pageTitle}</title>
     <link rel="canonical" href={canonicalUrl} />
+    <link rel="sitemap" href="/sitemap-index.xml" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
@@ -46,6 +66,9 @@ const ogImage = new URL(`/og/${slug}.png`, Astro.site).href;
     <meta name="twitter:title" content={pageTitle} />
     <meta name="twitter:description" content={metaDescription} />
     <meta name="twitter:image" content={ogImage} />
+
+    <!-- JSON-LD -->
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
 
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
