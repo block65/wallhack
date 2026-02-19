@@ -1,234 +1,401 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "wallhack REST API",
-    "version": "0.1.2",
-    "description": "Headless control plane for wallhack entry nodes. All endpoints except /health require Basic authentication when --api-user and --api-pass are configured."
-  },
-  "servers": [
-    { "url": "https://127.0.0.1:6566", "description": "Local entry node (default port)" }
-  ],
-  "components": {
-    "securitySchemes": {
-      "basicAuth": {
-        "type": "http",
-        "scheme": "basic",
-        "description": "Configured via --api-user and --api-pass. Optional — if not configured, no authentication is required."
-      }
-    },
-    "schemas": {
-      "PingResponse": {
-        "type": "object",
-        "required": ["uptime_ms", "version", "node_role"],
-        "properties": {
-          "uptime_ms": { "type": "integer", "description": "Node uptime in milliseconds." },
-          "version": { "type": "string", "description": "Binary version string." },
-          "node_role": { "type": "string", "description": "Operational role of this node (e.g., Entry, Relay, Exit)." }
-        }
-      },
-      "StatsResponse": {
-        "type": "object",
-        "required": ["bytes_in", "bytes_out", "packets_in", "packets_out", "active_connections", "active_flows"],
-        "properties": {
-          "bytes_in": { "type": "integer", "description": "Total bytes received by the node." },
-          "bytes_out": { "type": "integer", "description": "Total bytes transmitted by the node." },
-          "packets_in": { "type": "integer", "description": "Total packets received by the node." },
-          "packets_out": { "type": "integer", "description": "Total packets transmitted by the node." },
-          "active_connections": { "type": "integer", "description": "Number of currently active peer connections." },
-          "active_flows": { "type": "integer", "description": "Number of active L4 network flows being tracked." }
-        }
-      },
-      "PeerResponse": {
-        "type": "object",
-        "required": ["id", "addr", "role", "connected_at", "bytes_transferred"],
-        "properties": {
-          "id": { "type": "string", "description": "Unique identifier for the peer." },
-          "addr": { "type": "string", "description": "Remote socket address of the peer." },
-          "role": { "type": "string", "enum": ["exit", "relay"], "description": "Functional role of the connected peer." },
-          "connected_at": { "type": "integer", "description": "Unix timestamp (seconds) when the connection was established." },
-          "bytes_transferred": { "type": "integer", "description": "Total data volume exchanged with this peer." },
-          "latency_ms": { "type": "number", "nullable": true, "description": "Current round-trip time (RTT) to the peer in milliseconds." }
-        }
-      },
-      "PeersResponse": {
-        "type": "object",
-        "required": ["peers"],
-        "properties": {
-          "peers": { "type": "array", "items": { "$ref": "#/components/schemas/PeerResponse" }, "description": "List of all currently connected peers." }
-        }
-      },
-      "RouteAddRequest": {
-        "type": "object",
-        "required": ["cidr", "peer_id"],
-        "properties": {
-          "cidr": { "type": "string", "description": "Target network in CIDR notation (e.g., 10.0.0.0/24)." },
-          "peer_id": { "type": "string", "description": "ID of the peer through which the network should be routed." }
-        }
-      },
-      "RouteResponse": {
-        "type": "object",
-        "required": ["cidr", "peer_id", "added_at_secs"],
-        "properties": {
-          "cidr": { "type": "string", "description": "Network range routed through the tunnel." },
-          "peer_id": { "type": "string", "description": "ID of the peer responsible for this route." },
-          "added_at_secs": { "type": "integer", "description": "Unix timestamp when the route was established." }
-        }
-      },
-      "RoutesResponse": {
-        "type": "object",
-        "required": ["routes"],
-        "properties": {
-          "routes": { "type": "array", "items": { "$ref": "#/components/schemas/RouteResponse" }, "description": "List of active routing entries." }
-        }
-      },
-      "SuccessResponse": {
-        "type": "object",
-        "required": ["success"],
-        "properties": {
-          "success": { "type": "boolean", "description": "Indicates if the requested operation completed successfully." },
-          "message": { "type": "string", "description": "Optional detail providing context for success or failure." }
-        }
-      },
-      "Event": {
-        "type": "object",
-        "description": "SSE event notification.",
-        "required": ["type", "data"],
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": ["PeerConnected", "PeerDisconnected", "PeerLatency", "StatsUpdate", "Error"],
-            "description": "The category of the event."
-          },
-          "data": { "type": "object", "description": "Event-specific payload data." }
-        }
-      }
-    }
-  },
-  "paths": {
-    "/health": {
-      "get": {
-        "summary": "Process health",
-        "description": "Verifies that the node process is active and responding. Always returns 200. No authentication required.",
-        "operationId": "health",
-        "security": [],
-        "responses": {
-          "200": { "description": "Node process is responsive.", "content": { "text/plain": { "schema": { "type": "string", "example": "ok" } } } }
-        }
-      }
-    },
-    "/ping": {
-      "get": {
-        "summary": "Node status",
-        "description": "Retrieves high-level node identity and uptime information.",
-        "operationId": "ping",
-        "security": [{ "basicAuth": [] }],
-        "responses": {
-          "200": { "description": "Status retrieved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PingResponse" } } } },
-          "401": { "description": "Unauthorized." }
-        }
-      }
-    },
-    "/stats": {
-      "get": {
-        "summary": "Traffic metrics",
-        "description": "Retrieves current traffic volume and flow statistics.",
-        "operationId": "stats",
-        "security": [{ "basicAuth": [] }],
-        "responses": {
-          "200": { "description": "Metrics retrieved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatsResponse" } } } },
-          "401": { "description": "Unauthorized." }
-        }
-      }
-    },
-    "/peers": {
-      "get": {
-        "summary": "List connections",
-        "description": "Retrieves a list of all currently connected peers.",
-        "operationId": "listPeers",
-        "security": [{ "basicAuth": [] }],
-        "responses": {
-          "200": { "description": "Connections retrieved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PeersResponse" } } } },
-          "401": { "description": "Unauthorized." }
-        }
-      }
-    },
-    "/peers/{id}": {
-      "delete": {
-        "summary": "Disconnect peer",
-        "description": "Terminates the connection with a specific peer.",
-        "operationId": "disconnectPeer",
-        "security": [{ "basicAuth": [] }],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Identifier of the peer to disconnect." }
-        ],
-        "responses": {
-          "200": { "description": "Peer disconnected.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
-          "400": { "description": "Malformed peer ID." },
-          "401": { "description": "Unauthorized." },
-          "404": { "description": "Specified peer not found." }
-        }
-      }
-    },
-    "/routes": {
-      "get": {
-        "summary": "List routing table",
-        "description": "Retrieves all active routing entries established through this node.",
-        "operationId": "listRoutes",
-        "security": [{ "basicAuth": [] }],
-        "responses": {
-          "200": { "description": "Routing table retrieved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoutesResponse" } } } },
-          "401": { "description": "Unauthorized." }
-        }
-      },
-      "post": {
-        "summary": "Add route",
-        "description": "Configures a new route to a target network through an active peer.",
-        "operationId": "addRoute",
-        "security": [{ "basicAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RouteAddRequest" } } }
-        },
-        "responses": {
-          "201": { "description": "Route established.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
-          "400": { "description": "Invalid network specification or peer ID." },
-          "401": { "description": "Unauthorized." }
-        }
-      }
-    },
-    "/routes/{cidr}": {
-      "delete": {
-        "summary": "Remove route",
-        "description": "Deletes a routing entry by its network specification.",
-        "operationId": "deleteRoute",
-        "security": [{ "basicAuth": [] }],
-        "parameters": [
-          { "name": "cidr", "in": "path", "required": true, "schema": { "type": "string" }, "description": "URL-encoded CIDR specification (e.g., 10.0.0.0%2F24)." }
-        ],
-        "responses": {
-          "200": { "description": "Route removed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
-          "400": { "description": "Invalid CIDR format." },
-          "401": { "description": "Unauthorized." },
-          "404": { "description": "Specified route does not exist." }
-        }
-      }
-    },
-    "/events": {
-      "get": {
-        "summary": "Live event stream",
-        "description": "Subscribes to real-time node events (peer lifecycle, latency, stats) via Server-Sent Events (SSE).",
-        "operationId": "events",
-        "security": [{ "basicAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "SSE stream established.",
-            "content": {
-              "text/event-stream": { "schema": { "$ref": "#/components/schemas/Event" } }
-            }
-          },
-          "401": { "description": "Unauthorized." }
-        }
-      }
-    }
-  }
+	"openapi": "3.1.0",
+	"info": {
+		"title": "wallhack REST API",
+		"version": "0.1.2",
+		"description": "Headless control plane for wallhack entry nodes. All endpoints except /health require Basic authentication when --api-user and --api-pass are configured."
+	},
+	"servers": [
+		{
+			"url": "https://127.0.0.1:6566",
+			"description": "Local entry node (default port)"
+		}
+	],
+	"components": {
+		"securitySchemes": {
+			"basicAuth": {
+				"type": "http",
+				"scheme": "basic",
+				"description": "Configured via --api-user and --api-pass. Optional — if not configured, no authentication is required."
+			}
+		},
+		"schemas": {
+			"PingResponse": {
+				"type": "object",
+				"required": ["uptime_ms", "version", "node_role"],
+				"properties": {
+					"uptime_ms": {
+						"type": "integer",
+						"description": "Node uptime in milliseconds."
+					},
+					"version": {
+						"type": "string",
+						"description": "Binary version string."
+					},
+					"node_role": {
+						"type": "string",
+						"description": "Operational role of this node (e.g., Entry, Relay, Exit)."
+					}
+				}
+			},
+			"StatsResponse": {
+				"type": "object",
+				"required": [
+					"bytes_in",
+					"bytes_out",
+					"packets_in",
+					"packets_out",
+					"active_connections",
+					"active_flows"
+				],
+				"properties": {
+					"bytes_in": {
+						"type": "integer",
+						"description": "Total bytes received by the node."
+					},
+					"bytes_out": {
+						"type": "integer",
+						"description": "Total bytes transmitted by the node."
+					},
+					"packets_in": {
+						"type": "integer",
+						"description": "Total packets received by the node."
+					},
+					"packets_out": {
+						"type": "integer",
+						"description": "Total packets transmitted by the node."
+					},
+					"active_connections": {
+						"type": "integer",
+						"description": "Number of currently active peer connections."
+					},
+					"active_flows": {
+						"type": "integer",
+						"description": "Number of active L4 network flows being tracked."
+					}
+				}
+			},
+			"PeerResponse": {
+				"type": "object",
+				"required": ["id", "addr", "role", "connected_at", "bytes_transferred"],
+				"properties": {
+					"id": {
+						"type": "string",
+						"description": "Unique identifier for the peer."
+					},
+					"addr": {
+						"type": "string",
+						"description": "Remote socket address of the peer."
+					},
+					"role": {
+						"type": "string",
+						"enum": ["exit", "relay"],
+						"description": "Functional role of the connected peer."
+					},
+					"connected_at": {
+						"type": "integer",
+						"description": "Unix timestamp (seconds) when the connection was established."
+					},
+					"bytes_transferred": {
+						"type": "integer",
+						"description": "Total data volume exchanged with this peer."
+					},
+					"latency_ms": {
+						"type": "number",
+						"nullable": true,
+						"description": "Current round-trip time (RTT) to the peer in milliseconds."
+					}
+				}
+			},
+			"PeersResponse": {
+				"type": "object",
+				"required": ["peers"],
+				"properties": {
+					"peers": {
+						"type": "array",
+						"items": { "$ref": "#/components/schemas/PeerResponse" },
+						"description": "List of all currently connected peers."
+					}
+				}
+			},
+			"RouteAddRequest": {
+				"type": "object",
+				"required": ["cidr", "peer_id"],
+				"properties": {
+					"cidr": {
+						"type": "string",
+						"description": "Target network in CIDR notation (e.g., 10.0.0.0/24)."
+					},
+					"peer_id": {
+						"type": "string",
+						"description": "ID of the peer through which the network should be routed."
+					}
+				}
+			},
+			"RouteResponse": {
+				"type": "object",
+				"required": ["cidr", "peer_id", "added_at_secs"],
+				"properties": {
+					"cidr": {
+						"type": "string",
+						"description": "Network range routed through the tunnel."
+					},
+					"peer_id": {
+						"type": "string",
+						"description": "ID of the peer responsible for this route."
+					},
+					"added_at_secs": {
+						"type": "integer",
+						"description": "Unix timestamp when the route was established."
+					}
+				}
+			},
+			"RoutesResponse": {
+				"type": "object",
+				"required": ["routes"],
+				"properties": {
+					"routes": {
+						"type": "array",
+						"items": { "$ref": "#/components/schemas/RouteResponse" },
+						"description": "List of active routing entries."
+					}
+				}
+			},
+			"SuccessResponse": {
+				"type": "object",
+				"required": ["success"],
+				"properties": {
+					"success": {
+						"type": "boolean",
+						"description": "Indicates if the requested operation completed successfully."
+					},
+					"message": {
+						"type": "string",
+						"description": "Optional detail providing context for success or failure."
+					}
+				}
+			},
+			"Event": {
+				"type": "object",
+				"description": "SSE event notification.",
+				"required": ["type", "data"],
+				"properties": {
+					"type": {
+						"type": "string",
+						"enum": [
+							"PeerConnected",
+							"PeerDisconnected",
+							"PeerLatency",
+							"StatsUpdate",
+							"Error"
+						],
+						"description": "The category of the event."
+					},
+					"data": {
+						"type": "object",
+						"description": "Event-specific payload data."
+					}
+				}
+			}
+		}
+	},
+	"paths": {
+		"/health": {
+			"get": {
+				"summary": "Process health",
+				"description": "Verifies that the node process is active and responding. Always returns 200. No authentication required.",
+				"operationId": "health",
+				"security": [],
+				"responses": {
+					"200": {
+						"description": "Node process is responsive.",
+						"content": {
+							"text/plain": { "schema": { "type": "string", "example": "ok" } }
+						}
+					}
+				}
+			}
+		},
+		"/ping": {
+			"get": {
+				"summary": "Node status",
+				"description": "Retrieves high-level node identity and uptime information.",
+				"operationId": "ping",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Status retrieved.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/PingResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/stats": {
+			"get": {
+				"summary": "Traffic metrics",
+				"description": "Retrieves current traffic volume and flow statistics.",
+				"operationId": "stats",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Metrics retrieved.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/StatsResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/peers": {
+			"get": {
+				"summary": "List connections",
+				"description": "Retrieves a list of all currently connected peers.",
+				"operationId": "listPeers",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Connections retrieved.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/PeersResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/peers/{id}": {
+			"delete": {
+				"summary": "Disconnect peer",
+				"description": "Terminates the connection with a specific peer.",
+				"operationId": "disconnectPeer",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string" },
+						"description": "Identifier of the peer to disconnect."
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Peer disconnected.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"400": { "description": "Malformed peer ID." },
+					"401": { "description": "Unauthorized." },
+					"404": { "description": "Specified peer not found." }
+				}
+			}
+		},
+		"/routes": {
+			"get": {
+				"summary": "List routing table",
+				"description": "Retrieves all active routing entries established through this node.",
+				"operationId": "listRoutes",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Routing table retrieved.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/RoutesResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			},
+			"post": {
+				"summary": "Add route",
+				"description": "Configures a new route to a target network through an active peer.",
+				"operationId": "addRoute",
+				"security": [{ "basicAuth": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/RouteAddRequest" }
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Route established.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"400": { "description": "Invalid network specification or peer ID." },
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/routes/{cidr}": {
+			"delete": {
+				"summary": "Remove route",
+				"description": "Deletes a routing entry by its network specification.",
+				"operationId": "deleteRoute",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "cidr",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string" },
+						"description": "URL-encoded CIDR specification (e.g., 10.0.0.0%2F24)."
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Route removed.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"400": { "description": "Invalid CIDR format." },
+					"401": { "description": "Unauthorized." },
+					"404": { "description": "Specified route does not exist." }
+				}
+			}
+		},
+		"/events": {
+			"get": {
+				"summary": "Live event stream",
+				"description": "Subscribes to real-time node events (peer lifecycle, latency, stats) via Server-Sent Events (SSE).",
+				"operationId": "events",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "SSE stream established.",
+						"content": {
+							"text/event-stream": {
+								"schema": { "$ref": "#/components/schemas/Event" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		}
+	}
 }

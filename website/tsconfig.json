@@ -1,13 +1,13 @@
 {
-  "extends": "astro/tsconfigs/strictest",
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    },
-    "noEmit": true,
-    "verbatimModuleSyntax": true
-  },
-  "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist", "node_modules"]
+	"extends": "astro/tsconfigs/strictest",
+	"compilerOptions": {
+		"baseUrl": ".",
+		"paths": {
+			"@/*": ["src/*"]
+		},
+		"noEmit": true,
+		"verbatimModuleSyntax": true
+	},
+	"include": [".astro/types.d.ts", "**/*"],
+	"exclude": ["dist", "node_modules"]
 }

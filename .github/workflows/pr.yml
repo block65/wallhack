@@ -12,6 +12,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint-website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: website/package.json
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: website
+
+      - name: Biome check
+        run: pnpm check
+        working-directory: website
+
   lint:
     runs-on: ubuntu-latest
     steps:
