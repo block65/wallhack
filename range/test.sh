@@ -14,6 +14,10 @@ PING_TIMEOUT=1
 # IP addresses
 IP_WEB_EXTERNAL="10.99.1.80"
 IP_FTP_SERVER="10.99.1.21"
+IP_CORP_PROXY="10.99.1.50"
+PORT_CORP_PROXY=3128
+IP_CORP_SOCKS="10.99.1.51"
+PORT_CORP_SOCKS=1080
 IP_GATEWAY_OFFICE="10.99.2.10"
 IP_GATEWAY_DATACENTER="10.99.3.10"
 IP_GATEWAY_MANAGEMENT="10.99.4.10"
@@ -78,6 +82,40 @@ if docker exec "$(container gateway-perimeter)" nc -z -w "$NC_TIMEOUT" "$IP_FTP_
   ok "ftp-server (${IP_FTP_SERVER}:21)"
 else
   err "ftp-server not accessible"
+fi
+
+# --- corp proxy --------------------------------------------------------------
+
+section "Corp proxy"
+
+if docker exec "$(container attacker)" nc -z -w "$NC_TIMEOUT" "$IP_CORP_PROXY" "$PORT_CORP_PROXY" 2>/dev/null; then
+  ok "corp-proxy (${IP_CORP_PROXY}:${PORT_CORP_PROXY}) reachable from attacker"
+else
+  err "corp-proxy not reachable from attacker"
+fi
+
+if docker exec "$(container attacker)" curl -s -m "$CURL_TIMEOUT" \
+    --proxy "http://${IP_CORP_PROXY}:${PORT_CORP_PROXY}" \
+    "http://${IP_WEB_EXTERNAL}" >/dev/null 2>&1; then
+  ok "HTTP CONNECT through corp-proxy -> web-external works"
+else
+  err "HTTP CONNECT through corp-proxy failed"
+fi
+
+section "Corp SOCKS5 proxy"
+
+if docker exec "$(container attacker)" nc -z -w "$NC_TIMEOUT" "$IP_CORP_SOCKS" "$PORT_CORP_SOCKS" 2>/dev/null; then
+  ok "corp-socks (${IP_CORP_SOCKS}:${PORT_CORP_SOCKS}) reachable from attacker"
+else
+  err "corp-socks not reachable from attacker"
+fi
+
+if docker exec "$(container attacker)" curl -s -m "$CURL_TIMEOUT" \
+    --proxy "socks5://${IP_CORP_SOCKS}:${PORT_CORP_SOCKS}" \
+    "http://${IP_WEB_EXTERNAL}" >/dev/null 2>&1; then
+  ok "SOCKS5 through corp-socks -> web-external works"
+else
+  err "SOCKS5 through corp-socks failed"
 fi
 
 # --- pivot path --------------------------------------------------------------

@@ -61,7 +61,7 @@ services:
     mem_limit: 256m
     cpus: 0.5
 
-  # Corporate proxy - all outbound must go through here
+  # Corporate HTTP CONNECT proxy
   corp-proxy:
     build:
       context: .
@@ -71,6 +71,18 @@ services:
       perimeter:
         ipv4_address: 10.99.1.50
     mem_limit: 64m
+    cpus: 0.25
+
+  # Corporate SOCKS5 proxy
+  corp-socks:
+    build:
+      context: .
+      dockerfile: images/socks/Dockerfile
+    hostname: corp-socks
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.51
+    mem_limit: 32m
     cpus: 0.25
 
   # ===========================================================================
