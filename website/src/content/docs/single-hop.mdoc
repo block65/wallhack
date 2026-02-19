@@ -6,7 +6,7 @@ order: 7
 
 # Single Hop Example
 
-The most common deployment scenario. A compromised host (`10.0.1.5`) connects back to your machine (`10.0.0.5`). Once the tunnel is established, traffic is routed to the networks the compromised host can reach — in this example, `192.168.1.0/24`.
+Establish a direct tunnel between an entry node and a single compromised host. In this scenario, the host (`10.0.1.5`) connects back to your machine (`10.0.0.5`). Once the tunnel is established, traffic is routed to the networks accessible through that host — in this example, `192.168.1.0/24`.
 
 {% steps %}
 {% step title="Attacker" number=1 %}
