@@ -8,6 +8,12 @@ order: 10
 
 Mutual TLS (mTLS) authenticates and secures tunnel connections. Both endpoints verify each other's identity using X.509 certificates to establish a cryptographically secure tunnel.
 
+## Zero Config
+
+Tunnel traffic is encrypted and authenticated by default using ephemeral, self-signed certificates. This ensures out-of-the-box protection against eavesdropping and unauthorized access without manual certificate management. 
+
+For persistent deployments or infrastructure where you want to maintain your own Root of Trust, you can provide your own certificates.
+
 ### Key Security Features
 
 - **Mutual Authentication:** Both client and server authenticate each other, preventing unauthorized access.
