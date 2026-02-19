@@ -95,6 +95,69 @@ impl AsyncWrite for MaybeTlsStream {
 	}
 }
 
+/// Parse a proxy URL string into (is_socks5, host, port).
+/// Handles: socks5://, socks5h://, http://, https://, bare host:port.
+/// Strips user:pass@ credentials. Returns None if unparseable.
+fn parse_proxy_url(url: &str) -> Option<(bool, String, u16)> {
+	let (is_socks5, rest) = if let Some(r) = url
+		.strip_prefix("socks5://")
+		.or_else(|| url.strip_prefix("socks5h://"))
+	{
+		(true, r)
+	} else {
+		let r = url
+			.strip_prefix("http://")
+			.or_else(|| url.strip_prefix("https://"))
+			.unwrap_or(url);
+		(false, r)
+	};
+
+	// Strip any trailing path component
+	let rest = rest.split('/').next()?;
+	// Strip user:pass@ credentials
+	let rest = rest.rsplit_once('@').map_or(rest, |(_, after)| after);
+
+	let (host, port_str) = rest.rsplit_once(':')?;
+	let port = port_str.parse().ok()?;
+	Some((is_socks5, host.to_string(), port))
+}
+
+/// Detect proxy for a given target from standard env vars.
+/// Follows curl conventions: HTTPS_PROXY > ALL_PROXY for TLS, HTTP_PROXY > ALL_PROXY for plain.
+/// Respects NO_PROXY comma-separated list (exact match or domain suffix).
+/// Returns None when no proxy is configured or target is in NO_PROXY.
+fn detect_proxy(use_tls: bool, target_host: &str) -> Option<(bool, String, u16)> {
+	// Check NO_PROXY / no_proxy first
+	let no_proxy = std::env::var("NO_PROXY")
+		.or_else(|_| std::env::var("no_proxy"))
+		.unwrap_or_default();
+	for entry in no_proxy.split(',') {
+		let entry = entry.trim();
+		if entry.is_empty() {
+			continue;
+		}
+		if entry == "*"
+			|| target_host.eq_ignore_ascii_case(entry)
+			|| target_host
+				.strip_suffix(entry)
+				.is_some_and(|s| s.ends_with('.'))
+		{
+			return None;
+		}
+	}
+
+	let raw = if use_tls {
+		std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy"))
+	} else {
+		std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy"))
+	}
+	.or_else(|_| std::env::var("ALL_PROXY"))
+	.or_else(|_| std::env::var("all_proxy"))
+	.ok()?;
+
+	parse_proxy_url(&raw)
+}
+
 /// WebSocket client configuration.
 #[derive(Debug, Clone)]
 pub struct WsClientConfig {
@@ -186,8 +249,31 @@ impl WsClient {
 			self.config.path
 		);
 
-		// Connect TCP
-		let tcp_stream = TcpStream::connect(addr).await?;
+		// Connect TCP — route through proxy if HTTPS_PROXY / ALL_PROXY / SOCKS5 env vars are set
+		let tcp_stream = {
+			let proxy = detect_proxy(self.tls_connector.is_some(), &hostname);
+			if let Some((is_socks5, proxy_host, proxy_port)) = proxy {
+				if is_socks5 {
+					tracing::debug!("Connecting via SOCKS5 proxy {proxy_host}:{proxy_port}");
+					tokio_socks::tcp::Socks5Stream::connect(
+						(proxy_host.as_str(), proxy_port),
+						(hostname.as_str(), addr.port()),
+					)
+					.await
+					.map_err(|e| Error::Io(std::io::Error::other(e)))?
+					.into_inner()
+				} else {
+					tracing::debug!("Connecting via HTTP CONNECT proxy {proxy_host}:{proxy_port}");
+					let mut stream = TcpStream::connect((proxy_host.as_str(), proxy_port)).await?;
+					async_http_proxy::http_connect_tokio(&mut stream, &hostname, addr.port())
+						.await
+						.map_err(|e| Error::Io(std::io::Error::other(e)))?;
+					stream
+				}
+			} else {
+				TcpStream::connect(addr).await?
+			}
+		};
 		let peer_addr = tcp_stream.peer_addr().ok();
 		let remote_addr_str = peer_addr.map_or_else(|| addr.to_string(), |a| a.to_string());
 

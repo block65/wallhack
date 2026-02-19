@@ -23,6 +23,12 @@ Use the `tracing` crate. Log levels are controlled via CLI flags — not `RUST_L
 
 Make decisions based on proof, not theory.
 
+## OpenAPI spec
+
+The spec is manually maintained at `website/src/data/openapi.json`. If you
+add, remove, or change any route, request body, or response shape in
+`crates/wallhack/src/api/`, update that file to match.
+
 ## Website
 
 Follow the rules in `./website/WRITING.md`

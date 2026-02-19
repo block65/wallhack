@@ -3,7 +3,12 @@
 //! Thin HTTP wrapper over the existing control plane protocol.
 //! Provides endpoints for health checks, metrics, and real-time events.
 //!
-//! Enable with the `api` feature flag.
+//! Enable with the `http-api` feature flag.
+//!
+//! **Maintenance note:** the OpenAPI spec is manually maintained at
+//! `website/src/data/openapi.json`. If you add, remove, or change any route,
+//! request body, or response shape in this module or `handlers.rs`, update
+//! that file to match.
 
 mod auth;
 mod handlers;
