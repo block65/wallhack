@@ -1,6 +1,4 @@
 ---
-import { Icon } from 'astro-icon/components';
-
 interface Props {
   flow: string;
   label?: string;
@@ -18,7 +16,7 @@ const items = flow.split(' -> ');
         <>
           <span>{item}</span>
           {index < items.length - 1 && (
-            <Icon name="lucide:arrow-right" class="w-3.5 h-3.5" />
+            <span class="text-muted-foreground/50">·</span>
           )}
         </>
       ))}
