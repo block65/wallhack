@@ -6,7 +6,7 @@ order: 7
 
 # Single Hop Example
 
-Establish a direct tunnel between an entry node and a single compromised host. In this scenario, the host (`10.0.1.5`) connects back to the entry node (`10.0.0.5`). Once the tunnel is established, traffic is routed to the networks accessible through that host (`192.168.1.0/24` in this example).
+In this example, an entry node runs on the attacker machine (`10.0.0.5`) and a compromised host (`10.0.1.5`) connects back to it. Once established, traffic to `192.168.1.0/24` routes through the compromised host.
 
 {% steps %}
 {% step title="Attacker" number=1 %}

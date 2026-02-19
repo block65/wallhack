@@ -6,9 +6,9 @@ order: 11
 
 # Mutual TLS Example
 
-By default, tunnel connections are encrypted and authenticated using ephemeral self-signed certificates generated at startup. No configuration is required.
+In this example, a CA is generated, node certificates are issued and signed by that CA, and both the entry and exit nodes are started with those certificates for mutual authentication.
 
-For persistent deployments, or where control over the root of trust and certificate rotation is required, custom certificates can be supplied. This example walks through generating a CA, issuing node certificates, and passing them to entry and exit nodes.
+By default, nodes generate ephemeral self-signed certificates at startup with no configuration required. Custom certificates are useful for persistent deployments or where control over the root of trust and certificate rotation is required.
 
 ## Generating Certificates
 

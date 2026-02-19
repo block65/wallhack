@@ -6,7 +6,7 @@ order: 8
 
 # Multi-Hop Example
 
-Chain through intermediate relays to reach targets that cannot connect directly to the entry node. A relay in the middle bridges the gap: the DMZ host (`10.0.1.10`) connects to the entry node (`10.0.0.5`) and listens for the next hop. Once the tunnel is established, traffic is routed to the networks the internal host can reach (`192.168.1.0/24` and `192.168.2.0/24` in this example).
+In this example, three hosts form a chain: an entry node (`10.0.0.5`), a DMZ host (`10.0.1.10`) acting as a relay, and an internal host with no direct path to the entry node. The DMZ host connects outward to the entry node and listens inward for the next hop. Once established, traffic to `192.168.1.0/24` and `192.168.2.0/24` routes through the internal host.
 
 {% steps %}
 {% step title="Attacker" number=1 %}
