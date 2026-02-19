@@ -1,6 +1,6 @@
 # wallhack
 
-![Build](https://github.com/block65/wallhack/actions/workflows/build.yml/badge.svg)
+![Build](https://github.com/block65/wallhack/actions/workflows/pr.yml/badge.svg)
 
 ### Layer 3 tunneling tool for network pivoting in penetration testing scenarios.
 
