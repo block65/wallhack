@@ -13,6 +13,13 @@ This guide ensures a consistent, professional, and high-signal voice across the 
     - ❌ "Multiple distribution methods to fit your deployment workflow"
     - ✅ "Choose the distribution method that fits your environment"
 - **Direct & Opinionated:** Clearly state tradeoffs. If a mode is "faster but less reliable," say it exactly like that.
+- **Write for humans, not systems:** Before publishing any sentence, ask whether a real person would say it out loud. Jargon like "isolated Linux network namespaces connected via virtual ethernet pairs" means nothing to a reader. Translate it: "both nodes on the same machine with no real network between them."
+- **Context before data:** Never drop numbers or tables on the reader without first explaining what is being measured, why it was measured, and what it means. A page full of tables with no introduction is not documentation.
+- **Establish before describing:** Don't introduce a term and immediately describe its behaviour. The reader needs to know what something *is* before you tell them what it *does*.
+    - ❌ "WebSocket wraps traffic as HTTPS for firewall traversal." (first mention of WebSocket)
+    - ✅ "Two transports are available. WebSocket wraps traffic as HTTPS..."
+- **Use line breaks:** A wall of sentences is hard to read. Break introductory paragraphs into separate thoughts. One idea per paragraph.
+- **Undefined terms:** If you introduce a term, tool, or concept that a reader might not recognise, explain it or link to it. Don't assume they know what netem, yamux, or veth pairs are.
 
 ## Document Structure
 
@@ -58,7 +65,10 @@ Use `{% trafficflow flow="..." label="..." /%}` to visualize tunnel topology. Th
 
 - **CLI Flags:** Use canonical flag names in backticks (`--fast`).
 - **Context:** When introducing a flag, show it in a command example immediately or shortly after.
-- **Consistency:** Use established terms. Don't switch between "relay," "hop," and "proxy" if they refer to the same component.
+- **Consistency:** Use established terms. Don't switch between "relay," "hop," and "proxy" if they refer to the same component. This applies site-wide — if a term is introduced on one page, use the same term on all pages.
+    - Canonical terms for network conditions: **packet loss** (not "lossy networks", not "degraded"). "All networks are lossy" — be specific.
+    - Canonical terms for transport choice: **reliable** (low/no packet loss), **high packet loss** (>~1%).
+- **Audience-aware brevity:** Don't explain what the audience already knows. The target audience knows ligolo, knows SOCKS proxies, knows why Layer 3 matters. State differentiators directly without re-teaching the problem they already understand.
 - **Avoid Ambiguous Directional Terms:** Do not use terms like "upstream," "downstream," "inbound," or "outbound" without explicit context. In a pivot, "inbound" could mean "towards the attacker" or "towards the target."
     - ❌ "Connect upstream to the entry node."
     - ✅ "Connect back to the entry node."

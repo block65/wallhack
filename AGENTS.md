@@ -2,8 +2,8 @@
 
 Before starting any work, read the following standards from the `standards/` submodule:
 
-- **Git & Workflow:** `standards/workflow/git.md`
-- **Rust Standards:** `standards/lang/rust.md`
+- **Git & Workflow:** `./standards/workflow/git.md`
+- **Rust Standards:** `./standards/lang/rust.md`
 
 ## Toolchain
 
@@ -22,3 +22,7 @@ Use the `tracing` crate. Log levels are controlled via CLI flags — not `RUST_L
 - `--trace [--trace-filter <substr>]` — TRACE level, optional module filter
 
 Make decisions based on proof, not theory.
+
+## Website
+
+Follow the rules in `./website/WRITING.md`
