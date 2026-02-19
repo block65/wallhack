@@ -57,3 +57,24 @@ const iconName = icon ? (iconMap[icon] ?? icon) : undefined;
     <slot />
   </div>
 </div>
+
+<style>
+  h3 {
+    margin: 0;
+  }
+
+  div :global(ul) {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  div :global(li) {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+</style>

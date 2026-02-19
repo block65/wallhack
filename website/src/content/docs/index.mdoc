@@ -12,7 +12,7 @@ order: 1
 
 A Layer 3 tunneling tool built for network pivoting in penetration testing scenarios. By establishing a full dual-stack TUN interface on the entry node, traffic routes to the target network transparently — TCP, UDP, ICMP, over both IPv4 and IPv6 — without the need for proxy chains or SOCKS configuration.
 
-UDP is first-class: DNS, SNMP, and any other UDP service on the target network are directly reachable. The QUIC transport carries the tunnel over UDP, so any open outbound UDP port — including commonly unfiltered ones like 53 or 443 — can serve as the egress path.
+UDP is first-class: DNS, SNMP, and any other UDP service on the target network are directly reachable. The QUIC transport carries the tunnel over UDP, so any open outbound UDP port can serve as the egress path.
 
 Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/rest-api) for live tunnel management. The entire tool is distributed as a single static binary with no dependencies.
 
@@ -31,24 +31,11 @@ Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/re
 
 ## Performance and Reliability
 
-Both transports sustain multi-gigabit throughput. QUIC handles high packet loss with per-stream recovery — a dropped packet stalls only that connection, not the entire tunnel.
+[QUIC (UDP)](/transport-modes#udp-quic) and [WebSockets (TCP)](/transport-modes#tcp-websockets) both reach **2.4 Gbps** in loopback benchmarks — the tunnel itself is not the bottleneck.
 
-{% grid %}
-{% card title="UDP (QUIC)" icon="wifi" %}
-- **Single stream:** 2.4 Gbps
-- **4 streams:** 2.4 Gbps
-- **Reverse:** 581 Mbps
-- **4 streams @ 2% loss:** 17 Mbps
-{% /card %}
-{% card title="TCP (WebSockets)" icon="plug" %}
-- **Single stream:** 2.4 Gbps
-- **4 streams:** 2.5 Gbps
-- **Latency:** ~21% lower RTT
-- **4 streams @ 2% loss:** 7.7 Mbps
-{% /card %}
-{% /grid %}
+On unreliable networks, at 2% packet loss, WebSockets drops to 7.7 Mbps — QUIC's per-stream loss recovery keeps it at **17 Mbps**.
 
-Measured with both nodes on the same machine with no real network between them. See [Benchmarks](/benchmarks) for full results including performance under packet loss.
+See [Benchmarks](/benchmarks) for full results.
 
 ## Interfaces
 
