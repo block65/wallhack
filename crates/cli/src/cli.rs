@@ -109,13 +109,13 @@ pub struct EntryCommand {
 	#[argh(option)]
 	pub api: Option<String>,
 
-	/// REST API username for basic auth
+	/// REST API username for basic auth (default: admin)
 	#[argh(option)]
 	pub api_user: Option<String>,
 
-	/// REST API password for basic auth
+	/// REST API secret for basic auth (default: auto-generated, printed on startup)
 	#[argh(option)]
-	pub api_pass: Option<String>,
+	pub api_secret: Option<String>,
 
 	/// maximum number of concurrent peer connections
 	#[argh(option)]

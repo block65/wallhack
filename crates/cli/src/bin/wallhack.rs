@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
 				connect: None,
 				api: None,
 				api_user: None,
-				api_pass: None,
+				api_secret: None,
 				max_peers: None,
 				fast: false,
 			};

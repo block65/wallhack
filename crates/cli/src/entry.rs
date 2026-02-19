@@ -155,13 +155,15 @@ async fn run_entry_listen(
 	// Start REST API if enabled
 	#[cfg(feature = "http-api")]
 	if let Some(api_addr) = cmd.api_addr() {
+		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
 		start_api(
-			global,
 			api_addr,
 			&metrics,
 			&peers,
 			&routes,
 			server_config.tls.clone(),
+			api_user,
+			api_secret,
 		);
 	}
 
@@ -261,7 +263,10 @@ async fn run_entry_connect(
 	if let Some(api_addr) = cmd.api_addr() {
 		let tls = build_tls_config(global);
 		let routes = RouteTable::shared();
-		start_api(global, api_addr, &metrics, &peers, &routes, tls);
+		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
+		start_api(
+			api_addr, &metrics, &peers, &routes, tls, api_user, api_secret,
+		);
 	}
 
 	match spec.protocol {
@@ -1130,19 +1135,50 @@ fn build_tls_config(global: &WallhackCli) -> Option<wallhack::server::config::Tl
 	}
 }
 
+/// Resolve API credentials, generating a random secret if not provided.
+///
+/// Always logs credentials so the user knows how to authenticate.
+#[cfg(feature = "http-api")]
+fn resolve_api_credentials(cmd: &EntryCommand, api_addr: std::net::SocketAddr) -> (String, String) {
+	let username = cmd.api_user.clone().unwrap_or_else(|| "admin".to_string());
+
+	let (secret, generated) = if let Some(s) = &cmd.api_secret {
+		(s.clone(), false)
+	} else {
+		use rand::Rng;
+		const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+		let mut rng = rand::rng();
+		let secret: String = (0..32)
+			.map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
+			.collect();
+		(secret, true)
+	};
+
+	crate::info!("REST API listening on {api_addr}");
+	crate::info!("  API username: {username}");
+	if generated {
+		crate::info!("  API secret:   {secret}  (auto-generated)");
+	} else {
+		crate::info!("  API secret:   {secret}");
+	}
+
+	(username, secret)
+}
+
 #[cfg(feature = "http-api")]
 fn start_api(
-	_global: &WallhackCli,
 	api_addr: std::net::SocketAddr,
 	metrics: &Arc<Metrics>,
 	peers: &Arc<Registry>,
 	routes: &SharedRouteTable,
 	tls_config: Option<wallhack::server::config::TlsConfig>,
+	username: String,
+	secret: String,
 ) {
 	use wallhack::api::{Auth, State as ApiState};
 
 	let handler_config = HandlerConfig::new(NodeRole::Entry);
-	let auth = Auth::default();
+	let auth = Auth::new(username, secret);
 	let state = ApiState::new(
 		handler_config,
 		Arc::clone(metrics),
