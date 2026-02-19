@@ -1,0 +1,19 @@
+---
+title: Management
+description: Interactive and programmatic interfaces for tunnel management and monitoring.
+order: 9
+---
+
+# Management
+
+## REPL
+
+An interactive terminal built into every entry node for real-time tunnel management. Use it to view peers, active connections, and traffic statistics, or to reconfigure routes on the fly.
+
+Common commands include: `peers`, `connections`, `stats`, `route add`, and `route del`.
+
+## REST API
+
+An HTTP API for programmatic control. Use the API to query status, list peers, manage routes, and pull metrics. Enable the API with the `--api` flag.
+
+{% codeblock code="wallhack entry --listen :443 --api 127.0.0.1:6566" /%}

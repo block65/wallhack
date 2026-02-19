@@ -1,0 +1,73 @@
+# Website Writing Guide
+
+This guide ensures a consistent, professional, and high-signal voice across the wallhack documentation.
+
+## Voice & Tone
+
+- **Technical but Accessible:** Write for someone with a solid networking background. Don't over-explain IP routing or SOCKS, but don't assume deep expertise in QUIC internals.
+- **Avoid "wallhack" as a Subject:** Do not refer to the project in the third person.
+    - ❌ "wallhack creates a TUN interface..."
+    - ✅ "Establish a TUN interface..." (Imperative)
+    - ✅ "The TUN interface provides..." (Descriptive)
+- **No Filler:** Avoid marketing-speak and "filler" phrases.
+    - ❌ "Multiple distribution methods to fit your deployment workflow"
+    - ✅ "Choose the distribution method that fits your environment"
+- **Direct & Opinionated:** Clearly state tradeoffs. If a mode is "faster but less reliable," say it exactly like that.
+
+## Document Structure
+
+### Frontmatter
+
+Every page requires frontmatter for SEO and navigation:
+
+- `title`: Short and concise (e.g., "Installation", "Single Hop"). Used in the sidebar and `<title>` tag.
+- `description`: A 1-2 sentence summary for SEO. **Do not repeat this description as the first sentence of your document.**
+- `order`: Integer for sidebar sorting.
+
+### Headings
+
+- **H1 Start:** Every document must start with a single H1 (`#`) that matches the `title`.
+- **Hierarchy:** Use H2 (`##`) and H3 (`###`) for sub-sections. Avoid going deeper than H3 unless absolutely necessary.
+- **No Self-Links:** Don't start a section by repeating its title.
+    - ❌ `## Scan Mode` followed by "Scan mode is..."
+    - ✅ `## Scan Mode` followed by "Use this mode to identify..."
+
+## Components (Markdoc Tags)
+
+Use the built-in components to add structure and visual interest.
+
+### Callouts
+Use `{% callout type="..." title="..." %}` for information that needs to stand out.
+- `info` (default): General useful information.
+- `note`: Important context or subtle "gotchas."
+- `tip`: Helpful shortcuts or best practices.
+- `warning`: Critical safety or stability warnings.
+
+### Steps
+Use `{% steps %}` and `{% step %}` for any sequential process (installation, configuration, deployment). Do not use lists or plain headers for sequences.
+
+### Grids & Cards
+Use `{% grid %}` and `{% card %}` only for **genuinely parallel comparisons** (e.g., comparing QUIC vs WebSocket). 
+- **Rule of Thumb:** If the content reads better as sequential H2 sections, don't use a grid.
+- Do not put prose or long descriptions inside card fields. Use them for high-level summaries.
+
+### Traffic Flows
+Use `{% trafficflow flow="..." label="..." /%}` to visualize tunnel topology. This is essential for complex usage examples.
+
+## Terminology & Formatting
+
+- **CLI Flags:** Use canonical flag names in backticks (`--fast`).
+- **Context:** When introducing a flag, show it in a command example immediately or shortly after.
+- **Consistency:** Use established terms. Don't switch between "relay," "hop," and "proxy" if they refer to the same component.
+- **Avoid Ambiguous Directional Terms:** Do not use terms like "upstream," "downstream," "inbound," or "outbound" without explicit context. In a pivot, "inbound" could mean "towards the attacker" or "towards the target."
+    - ❌ "Connect upstream to the entry node."
+    - ✅ "Connect back to the entry node."
+    - ✅ "Listen for connections from the next hop."
+- **Paths & Files:** Use backticks for file paths, environment variables, and binary names (`/etc/wallhack.conf`, `$HOME`, `wallhack-slim`).
+
+## Code Examples
+
+- **Realism:** Use realistic values (private IPs like `10.0.0.5`, standard ports like `443` or `8080`).
+- **Focus:** Keep examples focused on the feature being discussed. Don't include unrelated flags.
+- **Verification:** Always verify flags against the actual CLI source. Never document a flag that hasn't been implemented yet.
+- **Output:** If a command produces unique or important output, show it in a separate code block or a comment to manage expectations.
