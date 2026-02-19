@@ -12,7 +12,7 @@ order: 1
 
 A Layer 3 tunneling tool built for network pivoting in penetration testing scenarios. By establishing a full dual-stack TUN interface on the [entry node](/concepts), traffic is routed transparently (TCP, UDP, ICMP, over both IPv4 and IPv6) without the need for proxy chains or SOCKS configuration.
 
-The QUIC transport carries the tunnel over UDP, so any open outbound UDP port can serve as the egress path.
+The tunnel runs over QUIC (UDP) or WebSockets (TCP). QUIC can egress over any open outbound UDP port; WebSockets traverses HTTP proxies and deep packet inspection as standard HTTPS.
 
 Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/rest-api) for live tunnel management. The entire tool is distributed as a single static binary with no dependencies.
 

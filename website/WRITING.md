@@ -24,6 +24,9 @@ Use these built-in tags to add structure:
 - **IP Realism:** Use private IPs (`10.0.0.5`, `192.168.1.1`) and standard ports (`443`, `8080`).
 - **Formatting:** Use backticks for CLI flags (`--fast`), file paths (`/etc/config`), and env vars (`$HOME`).
 
-## 4. Build-Time Rules (Technical)
+## 4. Terminology
+- **Introduce before referencing:** Never use "The X" or "this X" unless X has already been named in the same page or section. Introduce the term first, then use the definite article.
+
+## 5. Build-Time Rules (Technical)
 - **Prop Consistency:** Component props for code tags must use `content` and `language` to match standard Markdown highlighters.
 - **Tailwind v4 Scoped Styles:** When using `@apply` in `<style>` blocks, include `@reference "../styles/global.css";` to avoid build errors.
