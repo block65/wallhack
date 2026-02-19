@@ -3,11 +3,6 @@
   "bootstrap-sha": "bfeef40",
   "plugins": ["cargo-workspace"],
   "packages": {
-    "crates/cli": {},
-    "crates/exit-adapter": {},
-    "crates/netstack": {},
-    "crates/protobuf": {},
-    "crates/transport": {},
-    "crates/wallhack": {}
+    "crates/cli": {}
   }
 }
