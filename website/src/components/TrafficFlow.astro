@@ -10,7 +10,7 @@ const { flow, label } = Astro.props;
 const items = flow.split(' -> ');
 ---
 
-<div class="p-4 bg-muted/50 border border-border rounded-lg">
+<div class="my-6 p-4 bg-muted/50 border border-border rounded-lg">
   <div class="flex items-center gap-2 text-sm flex-wrap">
     {label && <span class="font-semibold text-foreground">{label}</span>}
     <div class="flex items-center gap-1 text-muted-foreground flex-wrap">
