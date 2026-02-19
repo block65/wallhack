@@ -24,9 +24,18 @@ The default transport. Network conditions in penetration testing environments ar
 
 ## TCP (WebSockets)
 
-Traffic is wrapped in WebSockets to appear as standard HTTPS to proxies, firewalls, and Deep Packet Inspection (DPI) tools. Append `/tcp` to the address.
+Traffic is wrapped in WebSockets to appear as standard HTTPS to firewalls and Deep Packet Inspection (DPI) tools. Append `/tcp` to the address.
 
 {% codeblock code="wallhack entry --listen :443/tcp" /%}
+
+When an explicit HTTP or SOCKS5 proxy is required, set the standard environment variables before starting the exit node. Both HTTP CONNECT and SOCKS5 (`socks5://`) schemes are supported.
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.internal:8080
+wallhack exit --connect 192.168.1.5:443/tcp
+```
+
+`NO_PROXY` is also respected for comma-separated host exclusions.
 
 ### CDN Fronting
 

