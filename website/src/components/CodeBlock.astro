@@ -10,38 +10,38 @@ interface Props {
   title?: string;
 }
 
-const { 
-  code: codeProp, 
-  content, 
-  lang: langProp, 
-  language, 
-  title 
+const {
+  code: codeProp,
+  content,
+  lang: langProp,
+  language,
+  title
 } = Astro.props;
 
 const code = codeProp ?? content ?? '';
 const lang = langProp ?? language ?? 'bash';
 ---
 
-<div class="group relative not-prose my-6">
-  <div class="flex flex-col">
-    {title && (
-      <div class="flex items-center px-4 py-2 bg-neutral-800 border border-neutral-700 border-b-0 rounded-t-lg">
-        <span class="text-xs font-medium text-neutral-400">{title}</span>
-      </div>
-    )}
-    <div class="relative">
-      <Code code={code} lang={lang} theme="github-dark-default" class={title ? '[&>pre]:rounded-t-none [&>pre]:border-t-0' : ''} />
-      <button
-        type="button"
-        class="copy-button absolute top-3 right-3 p-1.5 rounded-md bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/20"
-        data-code={code}
-        aria-label="Copy code"
-      >
-        <Icon name="lucide:copy" class="copy-icon w-4 h-4 text-neutral-400" />
-        <Icon name="lucide:check" class="check-icon w-4 h-4 text-green-400 hidden" />
-      </button>
+<div class="not-prose py-3">
+<div class="group rounded-lg overflow-hidden border border-neutral-700">
+  {title && (
+    <div class="flex items-center px-4 py-2 bg-neutral-800 border-b border-neutral-700">
+      <span class="text-xs font-medium text-neutral-400">{title}</span>
     </div>
+  )}
+  <div class="relative">
+    <Code code={code} lang={lang} theme="github-dark-default" class="!m-0" />
+    <button
+      type="button"
+      class="copy-button absolute top-3 right-3 p-1.5 rounded-md bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/20"
+      data-code={code}
+      aria-label="Copy code"
+    >
+      <Icon name="lucide:copy" class="copy-icon w-4 h-4 text-neutral-400" />
+      <Icon name="lucide:check" class="check-icon w-4 h-4 text-green-400 hidden" />
+    </button>
   </div>
+</div>
 </div>
 
 <script>
@@ -50,13 +50,13 @@ const lang = langProp ?? language ?? 'bash';
       button.addEventListener('click', async () => {
         const code = button.getAttribute('data-code') ?? '';
         await navigator.clipboard.writeText(code);
-        
+
         const copyIcon = button.querySelector('.copy-icon');
         const checkIcon = button.querySelector('.check-icon');
-        
+
         copyIcon?.classList.add('hidden');
         checkIcon?.classList.remove('hidden');
-        
+
         setTimeout(() => {
           copyIcon?.classList.remove('hidden');
           checkIcon?.classList.add('hidden');
@@ -64,7 +64,7 @@ const lang = langProp ?? language ?? 'bash';
       });
     });
   }
-  
+
   initCopyButtons();
   document.addEventListener('astro:after-swap', initCopyButtons);
 </script>

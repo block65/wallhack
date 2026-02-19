@@ -44,15 +44,20 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
 );
 
 const startExample = `wallhack entry --listen :443 --api 127.0.0.1:6566`;
-const authExample = `wallhack entry --listen :443 --api 127.0.0.1:6566 --api-user admin --api-pass secret`;
-const curlExample = `# Get stats
-curl -k -u admin:secret https://localhost:6566/stats
+const startupOutput = `REST API listening on 127.0.0.1:6566
+  Username: admin
+  Secret:   a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4  (auto-generated)`;
+const customCredsExample = `wallhack entry --listen :443 --api 127.0.0.1:6566 --api-user operator --api-secret mysecret`;
+const curlExample = `SECRET=a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4  # from startup output
+
+# Get stats
+curl -k -u admin:$SECRET https://localhost:6566/stats
 
 # List peers
-curl -k -u admin:secret https://localhost:6566/peers
+curl -k -u admin:$SECRET https://localhost:6566/peers
 
 # Add a route through a peer
-curl -k -u admin:secret -X POST https://localhost:6566/routes \\
+curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
   -H 'Content-Type: application/json' \\
   -d '{"cidr": "192.168.1.0/24", "peer_id": "bench"}'`;
 ---
@@ -71,14 +76,23 @@ curl -k -u admin:secret -X POST https://localhost:6566/routes \\
 
   <CodeBlock code={startExample} />
 
-  <p>Add <code>--api-user</code> and <code>--api-pass</code> to require authentication:</p>
+  <p>
+    Basic authentication is always required. A random secret is generated at startup and printed to stdout alongside
+    the username:
+  </p>
 
-  <CodeBlock code={authExample} />
+  <CodeBlock code={startupOutput} />
 
   <p>
-    The API is served over HTTPS. wallhack auto-generates a self-signed certificate unless <code>--cert</code> and
-    <code>--key</code> are provided. Pass <code>-k</code> to curl to skip certificate verification when using
-    the self-signed cert.
+    To set fixed credentials, pass <code>--api-user</code> and <code>--api-secret</code>:
+  </p>
+
+  <CodeBlock code={customCredsExample} />
+
+  <p>
+    The API is served over HTTPS using the same TLS certificate as the tunnel. A self-signed certificate is
+    auto-generated unless <code>--cert</code> and <code>--key</code> are provided. Pass <code>-k</code> to
+    curl to accept the self-signed certificate.
   </p>
 
   <h2>Example Usage</h2>
