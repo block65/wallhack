@@ -80,7 +80,12 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
       wire/TUN/smoltcp layer.
 - [x] HTTP CONNECT and SOCKS5 proxy support (HTTPS_PROXY / ALL_PROXY / NO_PROXY env vars)
 - [ ] DNS tunneling
-- [ ] ICMP tunneling
+- [ ] Full ICMP support — forward control messages (e.g., Time Exceeded,
+      Parameter Problem) to support diagnostic tools like `traceroute` and
+      enable Path MTU Discovery.
+- [ ] ICMP as an egress transport — provide an alternative transport layer that
+      encapsulates the tunnel inside ICMP Echo packets to bypass firewalls
+      that block all outbound TCP/UDP traffic.
 - [ ] HTTP/2 multiplexing
 - [ ] Domain fronting support
 - [x] Default zero-config TLS for WebSocket transport, matching QUIC's
@@ -146,3 +151,8 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 
 - [x] Add memory and CPU constraints to prevent host crashes due to runaway
       processes.
+
+
+## Correctness
+
+- [ ] search for "allow(clippy" calls and make sure that they are legit and are not shortcuts for ignoring errors that should be dealt with properly, or in an alternate manner. eg #[allow(clippy::cast_possible_truncation)].  If they are legit, then they should be commented as such.
