@@ -32,10 +32,11 @@ Benchmarks measured with iperf3 over isolated network namespaces with veth pairs
 
 ## Binary Size
 
-| Target | Size |
-|--------|------|
-| Linux x64 (musl, static) | **4.9 MB** |
-| Linux x64 (glibc, dynamic) | 4.9 MB |
+| Target | Default | Slim |
+|--------|---------|------|
+| Linux x64 (glibc) | 6.05 MB | 4.65 MB |
+| Linux x64 (musl, static) | 6.01 MB | 4.63 MB |
+| Linux arm64 | 5.34 MB | 4.07 MB |
 
 ### Quick Install
 
