@@ -20,26 +20,31 @@ An [entry node](/concepts) listening for WebSocket connections on TCP/443.
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting. The `-i` flag sets a stable peer identifier used when adding routes.
+An [exit node](/concepts) connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting. `--exit-id` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL.
 
 ```bash
 export HTTPS_PROXY=http://proxy.corp.internal:8080
-wallhack exit --connect 192.168.1.5:443/tcp -i peer1
+wallhack exit --connect 192.168.1.5:443/tcp --exit-id peer1
 ```
+
+If `--exit-id` is omitted, a random identifier is generated — run `peers` in the REPL to discover it.
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
-Add routes for the networks accessible through the compromised host. Use the wallhack REPL or the system `ip` tool — both work.
+Add routes for the networks accessible through the compromised host. Use the wallhack REPL **or** the system `ip` tool — pick one.
 
-**Via the wallhack REPL** (on the entry node):
+{% grid cols=2 %}
+{% card title="wallhack REPL" icon="repl" description="Run on the entry node. The REPL also configures the OS route automatically." %}
 ```
 wallhack> route add 10.10.0.0/24 via peer1
 ```
-
-**Via the system `ip` tool** (on the attacker machine):
+{% /card %}
+{% card title="System ip tool" icon="terminal" description="Run on the attacker machine." %}
 ```bash
 ip route add 10.10.0.0/24 dev tun0
 ```
+{% /card %}
+{% /grid %}
 {% /step %}
 {% /steps %}
 
