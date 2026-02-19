@@ -26,7 +26,7 @@ cd "$ROOT_DIR"
 declare -A THRESHOLDS=(
     # glibc x86_64 (~2% headroom)
     ["default-glibc"]=6480000      # current: 6352672
-    ["slim-glibc"]=4980000         # current: 4881448
+    ["slim-glibc"]=4920000         # current: ~4823000 (4.6M in CI)
     # musl x86_64 (~2% headroom, estimated — update after first musl build)
     ["default-musl"]=6480000       # estimated ~6.3MB (not yet measured)
     ["slim-musl"]=5000000          # estimated ~4.9MB (not yet measured)

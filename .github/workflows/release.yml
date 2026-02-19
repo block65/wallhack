@@ -3,129 +3,15 @@ name: Release
 on:
   push:
     branches: ["main"]
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: "Release tag to upload binaries to (e.g. cli-v0.1.0)"
-        required: true
 
 jobs:
   release-please:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
-    outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
     steps:
       - uses: googleapis/release-please-action@v4
-        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-  resolve-tag:
-    needs: [release-please]
-    if: |
-      always() && (
-        (needs.release-please.result == 'success' && needs.release-please.outputs.releases_created) ||
-        github.event_name == 'workflow_dispatch'
-      )
-    runs-on: ubuntu-latest
-    outputs:
-      tag_name: ${{ steps.tag.outputs.tag_name }}
-    steps:
-      - name: Resolve tag
-        id: tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
-            TAG="${{ github.event.inputs.tag_name }}"
-          else
-            TAG=$(gh release list --repo ${{ github.repository }} --limit 10 --json tagName --jq '[.[].tagName | select(startswith("cli-v"))][0]')
-          fi
-          if [ -z "$TAG" ]; then
-            echo "::error::Could not determine release tag"
-            exit 1
-          fi
-          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Resolved release tag: $TAG"
-
-  build:
-    needs: [release-please, resolve-tag]
-    if: always() && needs.resolve-tag.result == 'success'
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [default, slim]
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-gnu
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: wallhack-linux-x64
-            bloat_label: default-glibc
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: wallhack-linux-x64-musl
-            bloat_label: default-musl
-            cross: true
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: wallhack-linux-arm64
-            cross: true
-          - variant: default
-            features: ""
-          - variant: slim
-            features: --no-default-features --features slim
-            suffix: -slim
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        run: |
-          rustup show
-          rustup target add ${{ matrix.target }}
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-
-
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build (native)
-        if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
-
-      - name: Build (cross)
-        if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
-
-      - name: Check binary size
-        if: matrix.bloat_label
-        run: ./bench/check_bloat.sh --no-build --only=${{ matrix.bloat_label }}
-
-      - name: Upload binary
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ needs.resolve-tag.outputs.tag_name }}
-        run: |
-          ARTIFACT="${{ matrix.artifact }}${{ matrix.suffix }}"
-          cp "target/${{ matrix.target }}/release/wallhack" "$ARTIFACT"
-          gh release upload --clobber "$TAG_NAME" "$ARTIFACT"

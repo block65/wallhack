@@ -1,0 +1,107 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to upload binaries to (e.g. cli-v0.1.0)"
+        required: true
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+
+jobs:
+  build:
+    if: startsWith(github.event.release.tag_name, 'cli-v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [default, slim]
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+        include:
+          # Per-target: os, artifact, cross
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: wallhack-linux-x64
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: wallhack-linux-x64-musl
+            cross: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: wallhack-linux-arm64
+            cross: true
+          # Per-variant: features, suffix
+          - variant: default
+            features: ""
+          - variant: slim
+            features: --no-default-features --features slim
+            suffix: -slim
+          # Per-target+variant: bloat_label
+          - target: x86_64-unknown-linux-gnu
+            variant: default
+            bloat_label: default-glibc
+          - target: x86_64-unknown-linux-gnu
+            variant: slim
+            bloat_label: slim-glibc
+          - target: x86_64-unknown-linux-musl
+            variant: default
+            bloat_label: default-musl
+          - target: x86_64-unknown-linux-musl
+            variant: slim
+            bloat_label: slim-musl
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+
+      - name: Check binary size
+        if: matrix.bloat_label
+        run: ./bench/check_bloat.sh --no-build --only=${{ matrix.bloat_label }}
+
+      - name: Upload binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          ARTIFACT="${{ matrix.artifact }}${{ matrix.suffix }}"
+          cp "target/${{ matrix.target }}/release/wallhack" "$ARTIFACT"
+          gh release upload --clobber "$TAG_NAME" "$ARTIFACT"
