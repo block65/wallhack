@@ -6,11 +6,11 @@ order: 1
 
 # wallhack
 
-A Layer 3 tunneling tool built for network pivoting in penetration testing scenarios.
+Layer 3 tunneling over QUIC and WebSockets, built for network pivoting in penetration testing scenarios.
 
 By establishing a full dual-stack TUN interface on the [entry node](/concepts), traffic is routed transparently (TCP, UDP, ICMP, over both IPv4 and IPv6) without the need for proxy chains or SOCKS configuration.
 
-Tunnels run over QUIC (UDP) or WebSockets (TCP). QUIC can egress over any open outbound UDP port; WebSockets can traverse HTTP proxies and deep packet inspection, appearing as HTTPS traffic on port 443.
+QUIC can egress over any open outbound UDP port; WebSockets can traverse HTTP proxies and deep packet inspection, appearing as HTTPS traffic on port 443.
 
 Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/rest-api) for live tunnel management. The entire tool is distributed as a single static binary with no dependencies.
 
@@ -34,10 +34,6 @@ Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/re
 On unreliable networks, at 2% packet loss, WebSockets drops to 7.7 Mbps. QUIC's per-stream loss recovery keeps it at **17 Mbps**.
 
 See [Benchmarks](/benchmarks) for full results.
-
-## Interfaces
-
-Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/rest-api) for live tunnel management.
 
 ## Binary Size
 
