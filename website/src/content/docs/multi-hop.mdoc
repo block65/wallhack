@@ -8,6 +8,8 @@ order: 8
 
 In this example, three hosts form a chain: an entry node (`10.0.0.5`), a DMZ host (`10.0.1.10`) acting as a relay, and an internal host with no direct path to the entry node. The DMZ host connects outward to the entry node and listens inward for the next hop. Once established, traffic to `192.168.1.0/24` and `192.168.2.0/24` routes through the internal host.
 
+The binary reached the DMZ host via initial access — a web shell, exposed service, or similar foothold. From there, it was transferred to the internal host using whatever lateral movement is available: `scp`, a shared mount, or a simple HTTP server on the DMZ host.
+
 {% trafficflow flow="10.0.0.5 (entry) -> 10.0.1.10 (DMZ) -> internal host -> 192.168.1.0/24, 192.168.2.0/24" label="Traffic Flow:" /%}
 
 {% steps %}

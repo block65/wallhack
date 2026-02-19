@@ -8,6 +8,8 @@ order: 7
 
 In this example, an entry node runs on the attacker machine (`10.0.0.5`) and a compromised host (`10.0.1.5`) connects back to it. Once established, traffic to `192.168.1.0/24` routes through the compromised host.
 
+The binary reached the host via initial access — a web shell, RCE exploit, or similar foothold. Once transferred and marked executable, the exit node can be started.
+
 {% trafficflow flow="10.0.0.5 (entry) -> 10.0.1.5 (compromised) -> 192.168.1.0/24 (target)" label="Traffic Flow:" /%}
 
 {% steps %}
