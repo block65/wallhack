@@ -1,0 +1,13 @@
+{
+  // https://developers.cloudflare.com/workers/wrangler/configuration/
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  "name": "wallhack-website",
+  "compatibility_date": "2026-02-18",
+  "assets": {
+    "directory": "./dist",
+    // Redirect /page/ → /page to match Astro's trailingSlash: 'never'
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}
