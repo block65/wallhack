@@ -3,12 +3,23 @@ import { Code } from 'astro:components';
 import { Icon } from 'astro-icon/components';
 
 interface Props {
-  code: string;
+  code?: string;
+  content?: string;
   lang?: string;
+  language?: string;
   title?: string;
 }
 
-const { code, lang = 'bash', title } = Astro.props;
+const { 
+  code: codeProp, 
+  content, 
+  lang: langProp, 
+  language, 
+  title 
+} = Astro.props;
+
+const code = codeProp ?? content ?? '';
+const lang = langProp ?? language ?? 'bash';
 ---
 
 <div class="group relative not-prose my-6">
