@@ -1,23 +1,23 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { getCollection } from "astro:content";
-import type { APIRoute, GetStaticPaths } from "astro";
+import type { APIContext, InferGetStaticPropsType } from "astro";
 import { Resvg } from "@resvg/resvg-js";
 import satori from "satori";
 
-const interRegular = readFileSync(
-	resolve("node_modules/@fontsource/inter/files/inter-latin-400-normal.woff"),
-);
-const interBold = readFileSync(
-	resolve("node_modules/@fontsource/inter/files/inter-latin-700-normal.woff"),
-);
-const dmSerif = readFileSync(
-	resolve(
-		"node_modules/@fontsource/dm-serif-display/files/dm-serif-display-latin-400-normal.woff",
-	),
-);
+ function load(specifier: string) {
+	if (!import.meta.resolve) {
+		throw new Error("import.meta.resolve is not available")
+	};
+	return Promise.resolve(import.meta.resolve(specifier)).then((url) => readFile(new URL(url)));
+}
 
-export const getStaticPaths: GetStaticPaths = async () => {
+const [interRegular, interBold, dmSerif] = await Promise.all([
+	load("@fontsource/inter/files/inter-latin-400-normal.woff"),
+	load("@fontsource/inter/files/inter-latin-700-normal.woff"),
+	load("@fontsource/dm-serif-display/files/dm-serif-display-latin-400-normal.woff")		,
+]);
+
+export async function getStaticPaths() {
 	const docs = await getCollection("docs");
 	return [
 		...docs.map((doc) => ({
@@ -28,18 +28,16 @@ export const getStaticPaths: GetStaticPaths = async () => {
 			params: { slug: "rest-api" },
 			props: {
 				title: "REST API",
-				description:
-					"Programmatic HTTP interface for headless management of entry nodes.",
+				description: "Programmatic HTTP interface for headless management of entry nodes.",
 			},
 		},
 	];
-};
+}
 
-export const GET: APIRoute = async ({ props }) => {
-	const { title, description } = props as {
-		title: string;
-		description?: string;
-	};
+type Props = InferGetStaticPropsType<typeof getStaticPaths>;
+
+export async function GET({ props }: APIContext<Props>) {
+	const { title, description } = props;
 
 	const svg = await satori(
 		{
@@ -109,21 +107,21 @@ export const GET: APIRoute = async ({ props }) => {
 								// Description
 								...(description
 									? [
-											{
-												type: "div",
-												props: {
-													style: {
-														fontFamily: "Inter",
-														fontWeight: 400,
-														fontSize: 24,
-														color: "#8890a0",
-														marginTop: 20,
-														lineHeight: 1.4,
-													},
-													children: description,
+										{
+											type: "div",
+											props: {
+												style: {
+													fontFamily: "Inter",
+													fontWeight: 400,
+													fontSize: 24,
+													color: "#8890a0",
+													marginTop: 20,
+													lineHeight: 1.4,
 												},
+												children: description,
 											},
-										]
+										},
+									]
 									: []),
 								// Domain
 								{
@@ -158,10 +156,10 @@ export const GET: APIRoute = async ({ props }) => {
 					style: "normal",
 				},
 			],
-		},
+		}
 	);
 
-	const png = new Resvg(svg).render().asPng();
+	const png = new Uint8Array(new Resvg(svg).render().asPng());
 
 	return new Response(png, {
 		headers: {
@@ -169,4 +167,4 @@ export const GET: APIRoute = async ({ props }) => {
 			"Cache-Control": "public, max-age=31536000, immutable",
 		},
 	});
-};
+}

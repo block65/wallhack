@@ -26,6 +26,13 @@ shell2:
 test:
     bash test.sh
 
+# Record a demo video to demo.mp4 and demo.gif (requires vhs and tmux)
+record:
+    @command -v vhs  >/dev/null 2>&1 || { echo "error: vhs not installed — see https://github.com/charmbracelet/vhs"; exit 1; }
+    @command -v tmux >/dev/null 2>&1 || { echo "error: tmux not installed"; exit 1; }
+    docker compose up -d --build --wait
+    vhs demo.tape
+
 # Stop and remove all volumes/images
 clean:
     docker compose down -v --rmi local

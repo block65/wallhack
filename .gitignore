@@ -19,4 +19,20 @@ tarpaulin-report.html
 bench/bin/iperf3
 bench/results
 
+# range demo video artifacts
+range/demo.mp4
+range/demo.gif
+
 *.log
+
+# WIP local files — DO NOT COMMIT THIS CHANGE BELOW
+# WIP local files — DO NOT COMMIT THIS CHANGE BELOW
+# WIP local files — DO NOT COMMIT THIS CHANGE BELOW
+CLAUDE.md
+GEMINI.md
+.github/copilot-instructions.md
+docs/*AUDIT*.md
+docs/*PROPOSAL*.md
+# WIP local files — DO NOT COMMIT THIS CHANGE ABOVE
+# WIP local files — DO NOT COMMIT THIS CHANGE ABOVE
+# WIP local files — DO NOT COMMIT THIS CHANGE ABOVEuh push it
