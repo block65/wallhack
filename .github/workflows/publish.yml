@@ -9,9 +9,14 @@ on:
         description: "Release tag to upload binaries to (e.g. cli-v0.1.0)"
         required: true
 
+concurrency:
+  group: publish-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+
 jobs:
   build:
     if: startsWith(github.event.release.tag_name, 'cli-v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
