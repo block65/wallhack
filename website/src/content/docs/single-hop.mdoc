@@ -22,7 +22,7 @@ Connect back to the attacker.
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
-Add routes for the internal network through the tunnel interface.
+Add routes for the networks accessible through the compromised host.
 
 ```bash
 ip route add 192.168.1.0/24 dev tun0
