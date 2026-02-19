@@ -16,7 +16,7 @@ Every entry node includes an interactive command-line interface for direct acces
 | `stats` | `s` | Display traffic statistics |
 | `peers` | - | List connected peers |
 | `sessions` | `t`, `tuns` | List active exit node sessions |
-| `route add <cidr>` | - | Add a network route |
+| `route add <cidr> [via] <peer_id>` | - | Add a network route via a peer |
 | `route del <cidr>` | `route rm` | Remove a network route |
 | `disconnect <id>` | `kick`, `kill` | Disconnect a peer |
 | `help` | `?` | Show available commands |
@@ -30,6 +30,6 @@ Traffic Statistics:
   Bytes In:     1.23 MB
   Bytes Out:    456.78 KB
 
-wallhack> route add 10.0.0.0/8
+wallhack> route add 10.0.0.0/8 via peer1
 Route added: 10.0.0.0/8
 ```

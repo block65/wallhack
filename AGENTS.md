@@ -52,3 +52,10 @@ add, remove, or change any route, request body, or response shape in
 ## Website
 
 Follow the rules in `./website/WRITING.md`
+
+### Peer naming in docs and examples
+
+- Never use "host", "client", "upstream", or "downstream" to refer to a peer identifier.
+- Never use directional or role-based language for peer IDs unless the role is absolute and unambiguous (e.g. `entry` or `exit` as node types, not as peer names).
+- In code examples, use explicit peer IDs like `peer1`, `peer2`, `dmz1`, `node1` — names that are clearly wallhack peer identifiers, not network roles.
+- Always show the `-i <peer_id>` flag on exit/relay commands when the REPL `route add` is demonstrated so examples are self-consistent.

@@ -26,9 +26,9 @@ A [relay node](/concepts) connecting to the entry node and listening for the nex
 {% /step %}
 
 {% step title="Internal Host (10.10.1.5)" number=3 %}
-An [exit node](/concepts) connecting back to the relay.
+An [exit node](/concepts) connecting back to the relay. The `-i` flag sets a stable peer identifier used when adding routes.
 
-{% codeblock code="wallhack exit --connect 10.0.1.10:6565" /%}
+{% codeblock code="wallhack exit --connect 10.0.1.10:6565 -i peer1" /%}
 {% /step %}
 
 {% step title="Configure Routes" number=4 %}
@@ -36,8 +36,8 @@ Add routes for the networks accessible through the internal host. Use the wallha
 
 **Via the wallhack REPL** (on the entry node):
 ```
-wallhack> route add 10.20.0.0/24
-wallhack> route add 10.30.0.0/24
+wallhack> route add 10.20.0.0/24 via peer1
+wallhack> route add 10.30.0.0/24 via peer1
 ```
 
 **Via the system `ip` tool** (on the attacker machine):
