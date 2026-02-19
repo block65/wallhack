@@ -5,9 +5,6 @@ import icon from 'astro-icon';
 
 export default defineConfig({
   trailingSlash: 'never',
-  build: {
-    format: 'file',
-  },
   prefetch: {
     prefetchAll: true,
     defaultStrategy: 'hover',
