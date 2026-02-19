@@ -416,3 +416,105 @@ impl WsClient {
 		))
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// parse_proxy_url is a pure function — test exhaustively without touching env vars.
+
+	#[test]
+	fn parse_socks5_scheme() {
+		assert_eq!(
+			parse_proxy_url("socks5://proxy.corp:1080"),
+			Some((true, "proxy.corp".to_string(), 1080))
+		);
+	}
+
+	#[test]
+	fn parse_socks5h_scheme() {
+		// socks5h:// (remote DNS) treated the same as socks5://
+		assert_eq!(
+			parse_proxy_url("socks5h://proxy.corp:1080"),
+			Some((true, "proxy.corp".to_string(), 1080))
+		);
+	}
+
+	#[test]
+	fn parse_http_scheme() {
+		assert_eq!(
+			parse_proxy_url("http://squid:3128"),
+			Some((false, "squid".to_string(), 3128))
+		);
+	}
+
+	#[test]
+	fn parse_https_scheme() {
+		// https:// proxy URL is still an HTTP CONNECT proxy, not SOCKS5
+		assert_eq!(
+			parse_proxy_url("https://squid:3128"),
+			Some((false, "squid".to_string(), 3128))
+		);
+	}
+
+	#[test]
+	fn parse_bare_host_port() {
+		// No scheme — treated as HTTP CONNECT proxy
+		assert_eq!(
+			parse_proxy_url("squid.corp:3128"),
+			Some((false, "squid.corp".to_string(), 3128))
+		);
+	}
+
+	#[test]
+	fn parse_strips_credentials() {
+		assert_eq!(
+			parse_proxy_url("http://user:pass@squid.corp:3128"),
+			Some((false, "squid.corp".to_string(), 3128))
+		);
+	}
+
+	#[test]
+	fn parse_strips_credentials_socks5() {
+		assert_eq!(
+			parse_proxy_url("socks5://alice:secret@proxy:1080"),
+			Some((true, "proxy".to_string(), 1080))
+		);
+	}
+
+	#[test]
+	fn parse_strips_trailing_path() {
+		assert_eq!(
+			parse_proxy_url("http://squid:3128/"),
+			Some((false, "squid".to_string(), 3128))
+		);
+	}
+
+	#[test]
+	fn parse_ipv4_address() {
+		assert_eq!(
+			parse_proxy_url("socks5://127.0.0.1:1080"),
+			Some((true, "127.0.0.1".to_string(), 1080))
+		);
+	}
+
+	#[test]
+	fn parse_empty_string_is_none() {
+		assert_eq!(parse_proxy_url(""), None);
+	}
+
+	#[test]
+	fn parse_missing_port_is_none() {
+		assert_eq!(parse_proxy_url("http://squid"), None);
+	}
+
+	#[test]
+	fn parse_non_numeric_port_is_none() {
+		assert_eq!(parse_proxy_url("http://squid:abc"), None);
+	}
+
+	#[test]
+	fn parse_port_out_of_range_is_none() {
+		assert_eq!(parse_proxy_url("http://squid:99999"), None);
+	}
+}
