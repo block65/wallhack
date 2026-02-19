@@ -26,8 +26,14 @@ An [exit node](/concepts) connecting back to the entry node.
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
-Add routes for the networks accessible through the compromised host.
+Add routes for the networks accessible through the compromised host. Use the wallhack REPL or the system `ip` tool — both work.
 
+**Via the wallhack REPL** (on the entry node):
+```
+wallhack> route add 10.10.0.0/24
+```
+
+**Via the system `ip` tool** (on the attacker machine):
 ```bash
 ip route add 10.10.0.0/24 dev tun0
 ```

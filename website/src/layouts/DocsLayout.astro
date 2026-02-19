@@ -13,6 +13,12 @@ interface Props {
 
 const { title, description } = Astro.props;
 const currentPath = Astro.url.pathname;
+const isHome = currentPath === '/';
+const pageTitle = isHome ? 'wallhack — Layer 3 tunneling for network pivoting' : `${title} | wallhack`;
+const metaDescription = description ?? 'A Layer 3 tunneling tool for network pivoting in penetration testing — QUIC and WebSocket transports, zero-config mTLS, single static binary.';
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
+const slug = Astro.url.pathname.replace(/^\/|\/$/g, '') || 'index';
+const ogImage = new URL(`/og/${slug}.png`, Astro.site).href;
 ---
 
 <!doctype html>
@@ -21,12 +27,26 @@ const currentPath = Astro.url.pathname;
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <meta
-      name="description"
-      content={description ??
-        "wallhack - Layer 3 tunneling tool for network pivoting"}
-    />
-    <title>{title} | wallhack</title>
+    <meta name="description" content={metaDescription} />
+    <title>{pageTitle}</title>
+    <link rel="canonical" href={canonicalUrl} />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="wallhack" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={metaDescription} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={metaDescription} />
+    <meta name="twitter:image" content={ogImage} />
+
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
