@@ -30,6 +30,6 @@ Traffic is wrapped in WebSockets to appear as standard HTTPS to proxies, firewal
 
 ### CDN Fronting
 
-With TLS enabled, WebSockets can be fronted through a CDN, making tunnel traffic appear as legitimate HTTPS to a known CDN domain. This adds an additional layer of obfuscation and makes the connection significantly harder to attribute or block.
+Traffic can be proxied through a CDN worker such as a Cloudflare Worker. The traffic legitimately terminates at the CDN's infrastructure, making it significantly harder to attribute or block.
 
 {% codeblock code="wallhack entry --listen :443/tcp --cert cert.pem --key key.pem" /%}

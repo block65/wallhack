@@ -1,0 +1,64 @@
+---
+title: Security
+description: mTLS authentication, end-to-end encryption, and certificate management.
+order: 10
+---
+
+# mTLS Security
+
+Mutual TLS (mTLS) authenticates and secures tunnel connections. Both endpoints verify each other's identity using X.509 certificates to establish a cryptographically secure tunnel.
+
+### Key Security Features
+
+- **Mutual Authentication:** Both client and server authenticate each other, preventing unauthorized access.
+- **End-to-End Encryption:** All traffic is encrypted using TLS 1.3 to ensure confidentiality and integrity across the entire tunnel chain.
+- **Certificate Validation:** Strict validation ensures only authorized nodes can join the infrastructure.
+- **Perfect Forward Secrecy:** Ephemeral session keys prevent retroactive decryption of intercepted traffic.
+
+### Security Benefits
+
+- Prevents man-in-the-middle attacks on tunnel connections.
+- Protects sensitive traffic from eavesdropping.
+- Complies with zero-trust security models.
+
+{% separator /%}
+
+# Certificate Management
+
+## Generation
+
+Generate a self-signed CA certificate to act as the root of trust:
+
+```bash
+openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
+  -keyout ca-key.pem -out ca-cert.pem \
+  -subj "/CN=wallhack-ca"
+```
+
+Generate node certificates signed by that CA:
+
+```bash
+openssl req -newkey rsa:4096 -nodes \
+  -keyout node-key.pem -out node-req.pem \
+  -subj "/CN=wallhack-node"
+
+openssl x509 -req -in node-req.pem -days 365 \
+  -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+  -out node-cert.pem
+```
+
+## Deployment
+
+Pass the certificates to the entry and exit nodes using the `--cert`, `--key`, and `--ca` flags.
+
+**Entry node requiring client certificates:**
+
+{% codeblock code="wallhack entry --listen :443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Entry node with mTLS" /%}
+
+**Exit node presenting a client certificate:**
+
+{% codeblock code="wallhack exit --connect ENTRY:443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Exit node with mTLS" /%}
+
+{% callout type="note" %}
+**Best Practice:** Use a unique certificate for each node and rotate them regularly. Private keys should never be transferred over the tunnel or stored on insecure media.
+{% /callout %}

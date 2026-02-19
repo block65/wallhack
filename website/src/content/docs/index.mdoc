@@ -14,13 +14,22 @@ A Layer 3 tunneling tool built for network pivoting in penetration testing scena
 
 A single 4 MB binary with no dependencies provides throughput and operational control via a built-in REPL and REST API on every entry node.
 
-A full TUN interface on the entry node routes all traffic to the target network transparently — TCP, UDP, ICMP, any protocol — without proxy chains or SOCKS configuration.
+A full TUN interface on the [entry node](/concepts) routes all traffic to the target network transparently — TCP, UDP, ICMP, any protocol — without proxy chains or SOCKS configuration.
+
+## Key Features
+
+{% featurelist title="Core Capabilities" items=[
+  "Transparent Layer 3 tunneling (all protocols)",
+  "Multi-hop pivoting via intermediate relays",
+  "High-performance QUIC and WebSockets transports",
+  "mTLS mutual authentication and E2EE security",
+  "Interactive REPL and REST API for live management",
+  "Zero-dependency static binaries (6 MB)"
+] icon="check" /%}
 
 ## Performance and Reliability
 
-Two transports are available: **UDP (QUIC)** and **TCP (WebSockets)**. Both sustain multi-gigabit throughput.
-
-WebSockets has lower latency on reliable paths; QUIC holds up better under packet loss with multiple concurrent connections.
+Both transports sustain multi-gigabit throughput. QUIC handles high packet loss with per-stream recovery — a dropped packet stalls only that connection, not the entire tunnel.
 
 {% grid %}
 {% card title="UDP (QUIC)" icon="wifi" %}
@@ -41,19 +50,15 @@ WebSockets has lower latency on reliable paths; QUIC holds up better under packe
 Measured with both nodes on the same machine with no real network between them. See [Benchmarks](/benchmarks) for full results including performance under packet loss.
 {% /callout %}
 
-[Transport Modes →](/transport-modes)
+## Management and Security
 
-## Management
+Every [entry node](/concepts) includes a built-in REPL and REST API for live tunnel management. Secure the entire infrastructure with mutual TLS authentication using X.509 certificates.
 
-Every entry node includes a built-in REPL for real-time tunnel management — inspect peers, view active connections, monitor traffic, and adjust routes without restarting. A REST API is also available for programmatic control.
-
-[Management →](/management)
+[Management →](/management) | [Security →](/security)
 
 ## Binary Size
 
-Distributed as a single static binary with no runtime dependencies.
-
-The slim build strips out the REST API and REPL for constrained environments.
+Distributed as a single static binary. Use the slim build to strip out the REST API and REPL for constrained environments.
 
 | Target | Default | Slim |
 |--------|---------|------|

