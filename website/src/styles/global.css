@@ -125,6 +125,12 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Speed up view transitions — functional, not decorative */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 80ms;
+}
+
 /* Selection */
 ::selection {
   @apply bg-primary/20 text-foreground;
@@ -252,14 +258,24 @@ html {
     @apply w-full text-sm;
     margin-top: 1.5em;
     margin-bottom: 1.5em;
+    border-collapse: separate;
+    border-spacing: 0;
   }
 
   th {
-    @apply border-b border-border px-4 py-2 text-left font-semibold;
+    @apply bg-muted/60 border-b border-border px-4 py-2.5 text-left font-semibold text-foreground;
   }
 
   td {
-    @apply border-b border-border px-4 py-2;
+    @apply border-b border-border/60 px-4 py-2;
+  }
+
+  tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  tbody tr:hover {
+    @apply bg-muted/20;
   }
 
   img {
@@ -279,11 +295,11 @@ html {
   }
 }
 
-/* Shiki code block styling */
+/* Shiki code block styling — border/radius handled by CodeBlock wrapper */
 .astro-code,
 pre.shiki,
 pre[class*="astro-code"] {
-  @apply rounded-lg border border-border p-4 text-sm leading-relaxed overflow-x-auto;
+  @apply p-4 text-sm leading-relaxed overflow-x-auto;
   background-color: #0d1117 !important;
 }
 
