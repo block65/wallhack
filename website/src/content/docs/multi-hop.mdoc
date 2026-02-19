@@ -6,14 +6,14 @@ order: 8
 
 # Multi-Hop Example
 
-In this example, three hosts form a chain: an entry node (`10.0.0.5`), a DMZ host (`10.0.1.10`) acting as a relay, and an internal host with no direct path to the entry node. The DMZ host connects outward to the entry node and listens inward for the next hop. Once established, traffic to `192.168.1.0/24` and `192.168.2.0/24` routes through the internal host.
+In this example, three hosts form a chain: an entry node (`192.168.1.5`), a DMZ host (`10.0.1.10`) acting as a relay, and an internal host (`10.10.1.5`) with no direct path to the entry node. The DMZ host connects outward to the entry node and listens inward for the next hop. Once established, traffic to `10.20.0.0/24` and `10.30.0.0/24` routes through the internal host.
 
 The binary reached the DMZ host via initial access — a web shell, exposed service, or similar foothold. From there, it was transferred to the internal host using whatever lateral movement is available: `scp`, a shared mount, or a simple HTTP server on the DMZ host.
 
-{% trafficflow flow="10.0.0.5 (entry) -> 10.0.1.10 (DMZ) -> internal host -> 192.168.1.0/24, 192.168.2.0/24" label="Traffic Flow:" /%}
+{% trafficflow flow="192.168.1.5 (entry) -> 10.0.1.10 (DMZ) -> 10.10.1.5 (internal) -> 10.20.0.0/24, 10.30.0.0/24" label="Traffic Flow:" /%}
 
 {% steps %}
-{% step title="Attacker (10.0.0.5)" number=1 %}
+{% step title="Attacker (192.168.1.5)" number=1 %}
 An [entry node](/concepts) listening for the first hop. The default transport is QUIC (UDP).
 
 {% codeblock code="wallhack entry --listen :4444" /%}
@@ -22,10 +22,10 @@ An [entry node](/concepts) listening for the first hop. The default transport is
 {% step title="DMZ Host (10.0.1.10)" number=2 %}
 A [relay node](/concepts) connecting to the entry node and listening for the next hop on an arbitrary internal port.
 
-{% codeblock code="wallhack relay --connect 10.0.0.5:4444 --listen :6565" /%}
+{% codeblock code="wallhack relay --connect 192.168.1.5:4444 --listen :6565" /%}
 {% /step %}
 
-{% step title="Internal Host" number=3 %}
+{% step title="Internal Host (10.10.1.5)" number=3 %}
 An [exit node](/concepts) connecting back to the relay.
 
 {% codeblock code="wallhack exit --connect 10.0.1.10:6565" /%}
@@ -35,8 +35,8 @@ An [exit node](/concepts) connecting back to the relay.
 Add routes for the networks accessible through the internal host.
 
 ```bash
-ip route add 192.168.1.0/24 dev tun0
-ip route add 192.168.2.0/24 dev tun0
+ip route add 10.20.0.0/24 dev tun0
+ip route add 10.30.0.0/24 dev tun0
 ```
 {% /step %}
 {% /steps %}

