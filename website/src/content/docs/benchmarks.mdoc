@@ -6,13 +6,13 @@ order: 5
 
 # Benchmarks
 
-These benchmarks measure the throughput and latency cost of the tunnel itself — encryption, framing, and multiplexing — and how each transport holds up under packet loss. The goal is to provide enough data to choose the right transport for the environment.
+These benchmarks measure the throughput and latency cost of the tunnel itself (encryption, framing, and multiplexing) and how each transport holds up under packet loss. The goal is to provide enough data to choose the right transport for the environment.
 
 All results use `iperf3` pushing traffic through a full end-to-end tunnel with both nodes running and encryption active. Results are from v0.1.2 on Linux x86_64. To reproduce: `just benchmark` in the `bench/` directory.
 
 ## Loopback
 
-The entry and exit nodes are on the same machine with no real network between them. This isolates the cost of the tunnel itself — encryption, framing, and multiplexing — from any network conditions.
+The entry and exit nodes are on the same machine with no real network between them. This isolates the cost of the tunnel itself (encryption, framing, and multiplexing) from any network conditions.
 
 ### Throughput
 
@@ -43,4 +43,4 @@ The same loopback setup with [netem](https://wiki.linuxfoundation.org/networking
 | UDP (QUIC) | 58 Mbps | 17 Mbps |
 | TCP (WebSockets) | 89 Mbps | 7.7 Mbps |
 
-At low loss WebSockets still leads. At 2% loss QUIC pulls ahead — each connection gets an independent stream, so a dropped packet stalls only that stream rather than everything sharing the same TCP flow.
+At low loss WebSockets still leads. At 2% loss QUIC pulls ahead. Each connection gets an independent stream, so a dropped packet stalls only that stream rather than everything sharing the same TCP flow.

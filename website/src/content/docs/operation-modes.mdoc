@@ -8,7 +8,7 @@ order: 6
 
 When a TCP SYN arrives at the entry node's TUN interface, the destination port's reachability on the target network isn't yet known. The entry node has to decide what to do before completing the handshake.
 
-By default, the exit node is probed first. If the port is closed, the exit responds and a RST is sent back — preserving correct TCP semantics. Tools like nmap see `closed` for closed ports, not `filtered`.
+By default, the exit node is probed first. If the port is closed, the exit responds and a RST is sent back, preserving correct TCP semantics. Tools like nmap see `closed` for closed ports, not `filtered`.
 
 The tradeoff is one round-trip per connection. For interactive sessions this is negligible. For high-rate scanning where throughput matters more than per-port accuracy, use `--fast` to skip the probe entirely.
 
@@ -28,7 +28,7 @@ PORT     STATE  SERVICE
 
 ## Fast (`--fast`)
 
-Skips the probe, removing the per-connection round-trip overhead. The tradeoff: without the probe, RSTs can't be sent for closed ports — nmap will report them as `filtered` rather than `closed`. Better suited to masscan-style tools where throughput matters more than accuracy.
+Skips the probe, removing the per-connection round-trip overhead. The tradeoff: without the probe, RSTs can't be sent for closed ports, so nmap will report them as `filtered` rather than `closed`. Better suited to masscan-style tools where throughput matters more than accuracy.
 
 {% codeblock code="wallhack entry --listen :443 --fast" /%}
 

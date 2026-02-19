@@ -10,7 +10,7 @@ Choosing the right transport depends on the network environment and operational 
 
 ## Choosing a Transport
 
-If UDP is blocked or rate-limited — common in corporate networks and cloud environments — use **TCP (WebSockets)**. It appears as standard HTTPS traffic and can pass through most HTTP proxies.
+UDP is often blocked or rate-limited in corporate networks and cloud environments. In those cases, use **TCP (WebSockets)**, which appears as standard HTTPS traffic and can pass through most HTTP proxies.
 
 Use **WebSockets** on reliable, low-latency networks where UDP is available and throughput is the priority. It has a slightly lower RTT due to its well-optimized path through the OS network stack.
 
@@ -18,7 +18,7 @@ Use **UDP (QUIC)** when packet loss is above ~1%, or when network conditions are
 
 ## UDP (QUIC)
 
-The default transport. QUIC handles unpredictable network conditions — a core assumption in penetration testing environments — better than TCP. Per-stream loss recovery means a dropped packet stalls only that connection, not the entire tunnel. Native stream multiplexing and built-in TLS 1.3. Append `/udp` to the address, or omit the suffix entirely.
+The default transport. Network conditions in penetration testing environments are rarely predictable. QUIC handles this better than TCP. Per-stream loss recovery means a dropped packet stalls only that connection, not the entire tunnel. Native stream multiplexing and built-in TLS 1.3. Append `/udp` to the address, or omit the suffix entirely.
 
 {% codeblock code="wallhack entry --listen :443/udp" /%}
 
