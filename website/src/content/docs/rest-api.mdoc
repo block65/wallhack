@@ -1,0 +1,50 @@
+---
+title: REST API
+description: Programmatic HTTP interface for headless management of entry nodes.
+order: 10
+---
+
+# REST API
+
+An optional REST API provides headless management via HTTPS. It shares the same TLS certificate as the tunnel and can be protected with basic authentication.
+
+## Starting the API
+
+Enable the REST API on an entry node with the `--api` flag:
+
+{% codeblock code="wallhack entry --listen :443 --api 127.0.0.1:6566" title="Entry node with API" /%}
+
+Enable the API with authentication:
+
+{% codeblock code="wallhack entry --listen :443 --api 127.0.0.1:6566 --api-user admin --api-pass secret" title="Authenticated API" /%}
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check (no auth required) |
+| GET | `/ping` | Version, uptime, and node role |
+| GET | `/stats` | Traffic statistics and metrics |
+| GET | `/peers` | List connected peers with latency |
+| DELETE | `/peers/{id}` | Disconnect a peer |
+| POST | `/routes` | Add a route (body: `{"cidr": "10.0.0.0/8"}`) |
+| DELETE | `/routes/{cidr}` | Remove a route |
+| GET | `/events` | SSE stream for real-time events |
+
+## Example Usage
+
+```bash
+# Get stats (with auth)
+curl -k -u admin:secret https://localhost:6566/stats
+
+# Add a route
+curl -k -u admin:secret -X POST https://localhost:6566/routes 
+  -H "Content-Type: application/json" 
+  -d '{"cidr": "10.0.0.0/8"}'
+```
+
+{% callout type="note" %}
+The REST API requires the `api` feature: `cargo build --release --features api`.
+{% /callout %}
+
+[API Reference →](/api-reference)

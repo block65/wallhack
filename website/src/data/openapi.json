@@ -114,7 +114,7 @@
     "/health": {
       "get": {
         "summary": "Health check",
-        "description": "Always returns 200. No authentication required. Use this for load balancer checks.",
+        "description": "Always returns 200. No authentication required.",
         "operationId": "health",
         "security": [],
         "responses": {

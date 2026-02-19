@@ -1,0 +1,35 @@
+---
+title: CLI
+description: Built-in interactive command-line interface for real-time tunnel management.
+order: 9
+---
+
+# CLI
+
+Every entry node includes an interactive command-line interface for direct access to the node state. The CLI is automatically disabled when stdin is not a terminal (e.g., in Docker or when running as a daemon).
+
+## Commands
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `ping` | `p` | Show version and uptime |
+| `stats` | `s` | Display traffic statistics |
+| `peers` | - | List connected peers |
+| `sessions` | `t`, `tuns` | List active exit node sessions |
+| `route add <cidr>` | - | Add a network route |
+| `route del <cidr>` | `route rm` | Remove a network route |
+| `disconnect <id>` | `kick`, `kill` | Disconnect a peer |
+| `help` | `?` | Show available commands |
+| `quit` | `q`, `exit` | Exit the application |
+
+## Example Session
+
+```
+wallhack> stats
+Traffic Statistics:
+  Bytes In:     1.23 MB
+  Bytes Out:    456.78 KB
+
+wallhack> route add 10.0.0.0/8
+Route added: 10.0.0.0/8
+```

@@ -25,14 +25,14 @@ function resolveRef(ref: string): Record<string, unknown> {
   return (spec.components.schemas as Record<string, unknown>)[name] as Record<string, unknown>;
 }
 
-function schemaToFields(schema: Record<string, unknown>): { name: string; type: string; required: boolean; description: string }[] {
+function schemaToFields(schema: Record<string, unknown>): { name: string; type: string; description: string }[] {
   if (!schema.properties) return [];
-  const required = (schema.required as string[]) ?? [];
-  return Object.entries(schema.properties as Record<string, { type?: string; $ref?: string; description?: string; nullable?: boolean; enum?: string[] }>).map(([name, prop]) => {
+  return Object.entries(schema.properties as Record<string, { type?: string; $ref?: string; description?: string; nullable?: boolean; enum?: string[]; items?: { $ref?: string } }>).map(([name, prop]) => {
     let type = prop.type ?? (prop.$ref ? prop.$ref.replace('#/components/schemas/', '') : 'object');
+    if (prop.type === 'array' && prop.items?.$ref) type = `${prop.items.$ref.replace('#/components/schemas/', '')}[]`;
     if (prop.enum) type = prop.enum.map(v => `"${v}"`).join(' | ');
     if (prop.nullable) type = `${type} | null`;
-    return { name, type, required: required.includes(name), description: prop.description ?? '' };
+    return { name, type, description: prop.description ?? '' };
   });
 }
 
@@ -47,22 +47,15 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
   <h1>API Reference</h1>
 
   <p>
-    REST API for headless control of entry nodes. Enable with <code>--api &lt;addr&gt;</code>, e.g.
-    <code>--api 127.0.0.1:6566</code>. Secure with <code>--api-user</code> and <code>--api-pass</code> —
-    without credentials the API is unauthenticated.
+    Enable with <code>--api &lt;addr&gt;</code>, e.g. <code>--api 127.0.0.1:6566</code>.
+    Secure with <code>--api-user</code> and <code>--api-pass</code> — without credentials the API is unauthenticated.
+    All endpoints are served over HTTPS with a self-signed certificate unless <code>--cert</code> and <code>--key</code> are provided.
   </p>
 
-  <p>
-    All endpoints are served over HTTPS. A self-signed certificate is generated automatically if
-    <code>--cert</code> and <code>--key</code> are not provided.
-  </p>
-
-  {endpoints.map(({ path, method, summary, description, security, parameters, requestBody, responses }) => {
-    const requiresAuth = !security || security.length > 0;
+  {endpoints.map(({ path, method, summary, description, parameters, requestBody, responses }) => {
     const pathParams = (parameters ?? []).filter(p => p.in === 'path');
 
-    const responseEntries = Object.entries(responses);
-    const successResponse = responseEntries.find(([code]) => code.startsWith('2'));
+    const successResponse = Object.entries(responses).find(([code]) => code.startsWith('2'));
     const successSchema = successResponse?.[1]?.content?.['application/json']?.schema
       ?? successResponse?.[1]?.content?.['text/plain']?.schema
       ?? successResponse?.[1]?.content?.['text/event-stream']?.schema;
@@ -71,6 +64,9 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
     const reqBodySchema = requestBody?.content?.['application/json']?.schema;
     const resolvedReqBody = reqBodySchema?.$ref ? resolveRef(reqBodySchema.$ref) : reqBodySchema;
 
+    const fields = resolvedSuccess ? schemaToFields(resolvedSuccess) : [];
+    const reqFields = resolvedReqBody ? schemaToFields(resolvedReqBody) : [];
+
     return (
       <div class="not-prose border border-border rounded-lg overflow-hidden my-6">
         <div class="flex items-center gap-3 px-4 py-3 bg-muted/40 border-b border-border">
@@ -78,10 +74,6 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
             {method}
           </span>
           <code class="font-mono text-sm text-foreground">{path}</code>
-          <span class="flex-1" />
-          {requiresAuth && (
-            <span class="text-xs text-muted-foreground">auth required</span>
-          )}
         </div>
 
         <div class="px-4 py-3 space-y-4">
@@ -92,20 +84,13 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
 
           {pathParams.length > 0 && (
             <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Path Parameters</p>
+              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Parameters</p>
               <table class="w-full text-sm">
-                <thead>
-                  <tr class="border-b border-border">
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Name</th>
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Type</th>
-                    <th class="text-left py-1 font-medium text-foreground">Description</th>
-                  </tr>
-                </thead>
                 <tbody>
                   {pathParams.map(p => (
                     <tr class="border-b border-border/50">
-                      <td class="py-1 pr-4"><code class="font-mono text-xs">{p.name}</code></td>
-                      <td class="py-1 pr-4 text-muted-foreground text-xs">{p.schema.type}</td>
+                      <td class="py-1 pr-4 w-32"><code class="font-mono text-xs">{p.name}</code></td>
+                      <td class="py-1 pr-4 text-muted-foreground text-xs w-24">{p.schema.type}</td>
                       <td class="py-1 text-muted-foreground text-xs">{p.description}</td>
                     </tr>
                   ))}
@@ -114,24 +99,15 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
             </div>
           )}
 
-          {resolvedReqBody && (
+          {reqFields.length > 0 && (
             <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Request Body</p>
+              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Body</p>
               <table class="w-full text-sm">
-                <thead>
-                  <tr class="border-b border-border">
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Field</th>
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Type</th>
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Required</th>
-                    <th class="text-left py-1 font-medium text-foreground">Description</th>
-                  </tr>
-                </thead>
                 <tbody>
-                  {schemaToFields(resolvedReqBody).map(f => (
+                  {reqFields.map(f => (
                     <tr class="border-b border-border/50">
-                      <td class="py-1 pr-4"><code class="font-mono text-xs">{f.name}</code></td>
-                      <td class="py-1 pr-4 text-muted-foreground text-xs">{f.type}</td>
-                      <td class="py-1 pr-4 text-muted-foreground text-xs">{f.required ? 'yes' : 'no'}</td>
+                      <td class="py-1 pr-4 w-32"><code class="font-mono text-xs">{f.name}</code></td>
+                      <td class="py-1 pr-4 text-muted-foreground text-xs w-24">{f.type}</td>
                       <td class="py-1 text-muted-foreground text-xs">{f.description}</td>
                     </tr>
                   ))}
@@ -140,22 +116,15 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
             </div>
           )}
 
-          {resolvedSuccess && resolvedSuccess.properties && (
+          {fields.length > 0 && (
             <div>
               <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Response</p>
               <table class="w-full text-sm">
-                <thead>
-                  <tr class="border-b border-border">
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Field</th>
-                    <th class="text-left py-1 pr-4 font-medium text-foreground">Type</th>
-                    <th class="text-left py-1 font-medium text-foreground">Description</th>
-                  </tr>
-                </thead>
                 <tbody>
-                  {schemaToFields(resolvedSuccess).map(f => (
+                  {fields.map(f => (
                     <tr class="border-b border-border/50">
-                      <td class="py-1 pr-4"><code class="font-mono text-xs">{f.name}</code></td>
-                      <td class="py-1 pr-4 text-muted-foreground text-xs">{f.type}</td>
+                      <td class="py-1 pr-4 w-32"><code class="font-mono text-xs">{f.name}</code></td>
+                      <td class="py-1 pr-4 text-muted-foreground text-xs w-24">{f.type}</td>
                       <td class="py-1 text-muted-foreground text-xs">{f.description}</td>
                     </tr>
                   ))}
@@ -163,14 +132,6 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
               </table>
             </div>
           )}
-
-          <div class="flex gap-2 flex-wrap">
-            {responseEntries.map(([code, resp]) => (
-              <span class={`text-xs font-mono px-2 py-0.5 rounded ${code.startsWith('2') ? 'bg-green-500/15 text-green-500' : code.startsWith('4') ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground'}`}>
-                {code} {resp.description}
-              </span>
-            ))}
-          </div>
         </div>
       </div>
     );
