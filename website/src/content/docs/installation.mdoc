@@ -1,0 +1,29 @@
+---
+title: Installation
+description: Download pre-built binaries or build from source for specific platforms.
+order: 2
+---
+
+# Installation
+
+## Pre-built Binaries
+
+Download pre-built binaries from the [latest GitHub release](https://github.com/block65/wallhack/releases/latest). Binaries are available for Linux x64 and arm64 in both default and slim variants.
+
+## Build from Source
+
+If you'd rather build from source, clone the repo and run a standard release build. You'll need the Rust toolchain installed.
+
+{% codeblock code="git clone https://github.com/block65/wallhack.git && cd wallhack && cargo build --release" /%}
+
+### Cross-compilation
+
+To build for a different target platform, use [cross](https://github.com/cross-rs/cross) — it handles the toolchain setup automatically.
+
+**Linux x64 (musl, fully static)**
+
+{% codeblock code="cross build --release --target x86_64-unknown-linux-musl" /%}
+
+**Windows x64**
+
+{% codeblock code="cross build --release --target x86_64-pc-windows-gnu" /%}

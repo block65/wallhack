@@ -1,0 +1,55 @@
+---
+title: Benchmarks
+description: Throughput and latency benchmarks for QUIC and WebSocket transports
+order: 5
+---
+
+# Benchmarks
+
+Measured with `iperf3` (throughput) and `ping` (latency) over isolated Linux network namespaces connected via `veth` pairs on the same host. This eliminates external network interference and measures tunnel overhead in isolation. Real-world numbers will be lower and vary with RTT, packet loss, and CPU.
+
+Results are from v0.1.2 on Linux x86_64.
+
+## Throughput
+
+### UDP Transport (QUIC)
+
+| Parallel streams | Throughput |
+|-----------------|------------|
+| 1 | 2.4 Gbps |
+| 2 | 2.4 Gbps |
+| 3 | 2.4 Gbps |
+| 4 | 2.4 Gbps |
+| 5 | 2.4 Gbps |
+
+### TCP Transport (WebSockets)
+
+| Parallel streams | Throughput |
+|-----------------|------------|
+| 1 | 2.4 Gbps |
+| 2 | 2.1 Gbps |
+| 3 | 2.3 Gbps |
+| 4 | 2.5 Gbps |
+
+Both transports achieve equivalent throughput on low-loss networks.
+
+### Reverse Tunnel (QUIC)
+
+Reverse tunnels are limited by single-stream QUIC performance in the connecting direction.
+
+| Parallel streams | Throughput |
+|-----------------|------------|
+| 1 | 581 Mbps |
+
+## Latency
+
+Round-trip latency measured with ICMP ping through the full tunnel stack.
+
+| Transport | Min | Avg | Max | Jitter |
+|-----------|-----|-----|-----|--------|
+| UDP (QUIC) | 0.083 ms | 0.164 ms | 0.245 ms | 0.034 ms |
+| TCP (WebSockets) | 0.055 ms | 0.129 ms | 0.202 ms | 0.034 ms |
+
+WebSocket offers ~21% lower average RTT on low-loss networks due to kernel-space TCP optimization. On high-loss or high-jitter links, QUIC's per-stream loss recovery prevents head-of-line blocking.
+
+Zero packet loss was observed for both transports at all tested rates.

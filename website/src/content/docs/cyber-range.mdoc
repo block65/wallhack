@@ -1,20 +1,28 @@
 ---
 title: Cyber Range
 description: Practice network pivoting techniques in a safe, isolated environment
-order: 9
+order: 12
 ---
 
 # Cyber Range
 
-Practice network pivoting techniques in a safe, isolated environment using Docker Compose.
+Practice network pivoting techniques in a safe, isolated environment using Docker Compose. The configuration files are located in the `examples/cyber-range` directory of the [wallhack repository](https://github.com/block65/wallhack).
 
-{% card title="Practice Environment" icon="flask" description="Spin up a multi-network lab environment to practice pivoting techniques without risk" %}
+## Environment Overview
+
+The cyber range includes multiple isolated networks simulating a realistic penetration testing scenario: DMZ, office network, and secret subnets.
 
 ### Docker Compose Setup
 
-The cyber range includes multiple isolated networks simulating a realistic penetration testing scenario: DMZ, internal network, and isolated subnets.
+**Get the files:**
+Clone the repository and navigate to the cyber range example:
 
-**Start the environment**
+```bash
+git clone https://github.com/block65/wallhack.git
+cd wallhack/examples/cyber-range
+```
+
+**Start the environment:**
 
 {% codeblock code="docker-compose up -d" /%}
 
@@ -27,6 +35,8 @@ services:
   dmz-host:
     image: alpine:latest
     container_name: wallhack-dmz
+    volumes:
+      - ../../target/release/wallhack:/usr/local/bin/wallhack
     networks:
       dmz:
         ipv4_address: 10.0.0.10
@@ -70,14 +80,12 @@ networks:
         - subnet: 10.2.0.0/24
 ```
 
-### Practice Scenarios
+## Practice Scenarios
 
-- Single-hop pivot from DMZ host to office network
-- Multi-hop pivot chaining through DMZ and office to reach the secret subnet
-- Test routing configuration and network connectivity
+- **Single-hop pivot:** Practice pivoting from the `dmz-host` (representing a compromised entry point) to the office network.
+- **Multi-hop pivot:** Chain through the DMZ and office networks to reach the secret subnet. This requires manually transferring the binary from the `dmz-host` to the `internal-host` to simulate lateral movement.
+- **Route Configuration:** Test connectivity and verify routing table configurations across hops.
 
 {% callout type="note" %}
-Ensure Docker and Docker Compose are installed. Copy the wallhack binary into each container to practice pivoting techniques.
+The `dmz-host` is pre-configured with the binary via a volume mount to simulate an initial compromise. To practice realistic lateral movement, you must manually transfer the binary to the `internal-host`. The `target` container remains clean, as it is the final objective.
 {% /callout %}
-
-{% /card %}

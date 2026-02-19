@@ -1,106 +1,33 @@
 ---
 title: Transport Modes
-description: Select the transport protocol based on your network environment
+description: Select the transport protocol based on your network environment.
 order: 4
 ---
 
 # Transport Modes
 
-Select the transport protocol based on your network environment. UDP mode offers performance, while TCP mode provides compatibility and stealth.
+## UDP (QUIC)
 
-## UDP Mode (QUIC)
+The default transport. Uses QUIC for native stream multiplexing and built-in TLS 1.3. Append `/udp` to the address, or omit the suffix entirely.
 
-{% card title="UDP Mode (QUIC)" icon="wifi" description="Uses QUIC protocol over UDP for high-performance tunneling with built-in encryption and multiplexing." %}
+UDP is frequently blocked or rate-limited in corporate and cloud environments. If operating through a strict firewall or a proxy, use TCP instead.
 
-`--udp` or append `/udp` to address (default)
+Benchmarks at **~2.4 Gbps**. On high-loss or high-jitter networks, QUIC's per-stream loss recovery avoids head-of-line blocking that TCP transports are subject to.
 
-**Performance**
+{% codeblock code="wallhack entry --listen :443/udp" /%}
 
-| Streams | Throughput |
-|---------|------------|
-| 1 | 3.2 Gbps |
-| 2 | 3.2 Gbps |
-| 3 | 2.9 Gbps |
-| 4 | 2.8 Gbps |
-| 5 | 2.6 Gbps |
+## TCP (WebSockets)
 
-**Use Cases**
+TCP traffic is wrapped in WebSockets to appear as standard HTTPS to inspecting proxies, firewalls, and Deep Packet Inspection (DPI) tools. Use this transport when UDP is blocked or when blending into existing HTTPS traffic is required.
 
-- Direct connections with minimal overhead
-- High-throughput network operations
-- Environments allowing UDP traffic
-- Performance-critical scenarios
+Append `/tcp` to the address.
 
-**Characteristics**
+Benchmarks at **~2.4 Gbps**. On low-loss networks, WebSocket offers ~21% lower average RTT than QUIC due to kernel-space TCP optimization.
 
-- Lower latency than TCP
-- Built-in TLS 1.3 encryption
-- Connection migration support
-- 0-RTT connection resumption
-- Efficient multiplexing
+{% codeblock code="wallhack entry --listen :443/tcp" /%}
 
-{% callout type="note" %}
-**Limitations:** May be blocked by strict firewalls. Not suitable for environments requiring proxy traversal.
-{% /callout %}
+### CDN Fronting
 
-{% /card %}
+With TLS enabled, WebSocket mode can be fronted through a CDN, making tunnel traffic appear as legitimate HTTPS to a known CDN domain. This adds an additional layer of obfuscation and makes the connection significantly harder to attribute or block.
 
-## TCP Mode (WebSockets)
-
-{% card title="TCP Mode (WebSockets)" icon="plug" description="Uses WebSockets over TCP for maximum compatibility and proxy traversal capabilities." %}
-
-`--tcp` or append `/tcp` to address
-
-**Performance**
-
-| Streams | Throughput |
-|---------|------------|
-| 1 | 4.5 Gbps |
-| 2 | 4.6 Gbps |
-| 3 | 4.4 Gbps |
-| 4 | 4.3 Gbps |
-
-**Use Cases**
-
-- HTTP proxy environments
-- Corporate networks with restrictive firewalls
-- CDN fronting scenarios
-- When UDP is blocked or unavailable
-
-**Characteristics**
-
-- HTTP/HTTPS compatible
-- Traverses HTTP proxies
-- Works with CDN fronting
-- TLS encryption support
-- Universal firewall compatibility
-
-**Advantages**
-
-- Can tunnel through corporate proxies
-- Appears as legitimate HTTPS traffic
-- Compatible with CDN services (potential evasion)
-
-{% /card %}
-
-## Examples
-
-UDP mode for maximum performance:
-
-{% codeblock code="wallhack entry --listen :443/udp" title="Entry node using QUIC" /%}
-
-TCP mode for proxy traversal:
-
-{% codeblock code="wallhack entry --listen :443/tcp" title="Entry node using WebSockets" /%}
-
-TCP mode with TLS for CDN fronting:
-
-{% codeblock code="wallhack entry --listen :443/tcp --tls" title="HTTPS mode for stealth" /%}
-
-{% callout type="warning" title="Default Behavior" %}
-If no transport mode is specified, wallhack defaults to UDP mode (QUIC) for optimal performance. Use `--tcp` when operating through restrictive networks or when stealth is a priority.
-{% /callout %}
-
-{% callout type="info" title="CDN Fronting with TCP Mode" %}
-When using TCP mode with TLS, you can potentially front your traffic through CDN services. This makes the tunnel appear as legitimate HTTPS traffic to a popular CDN domain, providing an additional layer of obfuscation and making detection more difficult.
-{% /callout %}
+{% codeblock code="wallhack entry --listen :443/tcp --cert cert.pem --key key.pem" /%}
