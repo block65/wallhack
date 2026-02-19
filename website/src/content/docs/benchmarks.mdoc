@@ -6,7 +6,7 @@ order: 5
 
 # Benchmarks
 
-These benchmarks measure the throughput and latency cost of the tunnel itself — encryption, framing, and multiplexing — and how each transport holds up under packet loss. The goal is to give you enough data to choose the right transport for your environment.
+These benchmarks measure the throughput and latency cost of the tunnel itself — encryption, framing, and multiplexing — and how each transport holds up under packet loss. The goal is to provide enough data to choose the right transport for the environment.
 
 All results use `iperf3` pushing traffic through a full end-to-end tunnel with both nodes running and encryption active. Results are from v0.1.2 on Linux x86_64. To reproduce: `just benchmark` in the `bench/` directory.
 
