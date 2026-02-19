@@ -2,7 +2,7 @@
 
 ![Build](https://github.com/block65/wallhack/actions/workflows/pr.yml/badge.svg)
 
-### Layer 3 tunneling tool for network pivoting in penetration testing scenarios.
+### Layer 3 tunneling over QUIC and WebSockets, built for network pivoting in penetration testing scenarios.
 
 > **wallhack** (plural **wallhacks**)
 > 
