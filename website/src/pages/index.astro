@@ -4,7 +4,7 @@ import DocsLayout from '../layouts/DocsLayout.astro';
 
 const entry = await getEntry('docs', 'index');
 if (!entry) {
-  return Astro.redirect('/getting-started');
+  return Astro.redirect('/download');
 }
 
 const { Content } = await entry.render();
