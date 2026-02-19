@@ -25,6 +25,7 @@
 		"@tailwindcss/vite": "^4.1.18",
 		"astro": "^5.17.2",
 		"astro-icon": "^1.1.5",
+		"astro-pagefind": "^1.8.5",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"shiki": "^3.22.0",

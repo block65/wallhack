@@ -1,0 +1,107 @@
+---
+import { Icon } from "astro-icon/components";
+import Search from "astro-pagefind/components/Search";
+---
+
+<button
+  type="button"
+  id="search-trigger"
+  class="hidden md:flex items-center gap-2 text-sm text-muted-foreground bg-muted hover:bg-muted/80 border border-border rounded-md px-3 py-1.5 transition-colors cursor-pointer"
+  aria-label="Search documentation"
+>
+  <Icon name="lucide:search" class="w-4 h-4 shrink-0" />
+  <span>Search...</span>
+  <kbd class="hidden lg:flex items-center gap-0.5 ml-1 text-[11px] border border-border rounded px-1 py-0.5 font-mono text-muted-foreground/60 leading-none">
+    ⌘K
+  </kbd>
+</button>
+
+<button
+  type="button"
+  id="search-trigger-mobile"
+  class="md:hidden p-2 rounded-md hover:bg-muted transition-colors cursor-pointer"
+  aria-label="Search documentation"
+>
+  <Icon name="lucide:search" class="w-5 h-5 text-foreground" />
+</button>
+
+<dialog id="search-dialog">
+  <Search
+    id="search-widget"
+    className="search-widget"
+    uiOptions={{ showImages: false }}
+  />
+</dialog>
+
+<style is:global>
+  #search-dialog {
+    margin: 8vh auto;
+    width: calc(100% - 2rem);
+    max-width: 40rem;
+    max-height: 80vh;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--background);
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.4);
+    overflow-y: auto;
+  }
+
+  #search-dialog::backdrop {
+    background: rgb(0 0 0 / 0.5);
+    backdrop-filter: blur(4px);
+  }
+
+  .search-widget {
+    --pagefind-ui-scale: 0.9;
+    --pagefind-ui-background: var(--background);
+    --pagefind-ui-text: var(--foreground);
+    --pagefind-ui-border: var(--border);
+    --pagefind-ui-border-width: 1px;
+    --pagefind-ui-primary: var(--primary);
+    --pagefind-ui-font: var(--font-sans);
+  }
+</style>
+
+<script>
+  function init() {
+    const dialog = document.getElementById(
+      "search-dialog",
+    ) as HTMLDialogElement | null;
+    const triggers = [
+      document.getElementById("search-trigger"),
+      document.getElementById("search-trigger-mobile"),
+    ];
+
+    if (!dialog) return;
+
+    function openDialog() {
+      dialog!.showModal();
+      dialog!
+        .querySelector<HTMLInputElement>('input[type="text"]')
+        ?.focus();
+    }
+
+    for (const trigger of triggers) {
+      trigger?.addEventListener("click", openDialog);
+    }
+
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) dialog.close();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        openDialog();
+      }
+    });
+  }
+
+  document.addEventListener("astro:page-load", init);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+</script>
