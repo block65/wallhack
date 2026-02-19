@@ -74,6 +74,25 @@ def create_tun(ns: str, name: str) -> None:
     ns_exec(ns, f"ip link set {name} up")
 
 
+def set_netem(ns: str, dev: str, loss_pct: float, delay_ms: float) -> None:
+    """Apply (or atomically replace) a netem qdisc on an interface.
+
+    Uses 'replace' so it works whether or not a qdisc already exists.
+    """
+    parts = []
+    if delay_ms > 0:
+        parts.append(f"delay {delay_ms}ms")
+    if loss_pct > 0:
+        parts.append(f"loss {loss_pct}%")
+    if parts:
+        ns_exec(ns, f"tc qdisc replace dev {dev} root netem {' '.join(parts)}")
+
+
+def clear_netem(ns: str, dev: str) -> None:
+    """Remove the root qdisc from an interface (no-op if none exists)."""
+    ns_exec(ns, f"tc qdisc del dev {dev} root", check=False)
+
+
 def destroy_namespaces(*names: str) -> None:
     for name in names:
         delete_namespace(name)

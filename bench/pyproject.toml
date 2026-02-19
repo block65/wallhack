@@ -10,5 +10,5 @@ markers = [
     "infra: network namespace infrastructure (no wallhack)",
     "connect: wallhack entry/exit connection on localhost (no netns)",
     "smoketest: basic tunnel connectivity (no iperf3)",
-    "benchmark: performance benchmarks (requires iperf3)",
+    "benchmark: performance benchmarks (requires iperf3 and/or ping)",
 ]

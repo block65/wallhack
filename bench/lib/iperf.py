@@ -79,9 +79,15 @@ def run_iperf3_client(
     if reverse:
         cmd.append("-R")
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 15)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = proc.communicate(timeout=duration + 30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        return IperfResult()
 
-    result = _parse_iperf3_json(proc.stdout)
+    result = _parse_iperf3_json(stdout)
     # Debug: print error from iperf3 if present
     if result.raw.get("error"):
         print(f"\n  iperf3 error: {result.raw['error']}")
