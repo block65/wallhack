@@ -1,6 +1,7 @@
 {
   "release-type": "rust",
   "bootstrap-sha": "bfeef40",
+  "bump-patch-for-minor-pre-major": true,
   "plugins": ["cargo-workspace"],
   "packages": {
     "crates/cli": {}
