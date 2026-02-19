@@ -82,7 +82,7 @@ Use `{% trafficflow flow="..." label="..." /%}` to visualize tunnel topology. Th
 - **CLI Flags:** Use canonical flag names in backticks (`--fast`).
 - **Context:** When introducing a flag, show it in a command example immediately or shortly after.
 - **WebSockets, not WebSocket:** Use the plural form — it's the colloquially accepted term.
-- **Consistency:** Use established terms. Don't switch between "relay," "hop," and "proxy" if they refer to the same component. This applies site-wide — if a term is introduced on one page, use the same term on all pages.
+- **Consistency:** Use established terms. Don't switch between "relay," "hop," and "proxy" if they refer to the same component. Canonical section name for CLI/REST API: **Interfaces** (not "Management"). This applies site-wide — if a term is introduced on one page, use the same term on all pages.
     - Canonical terms for network conditions: **packet loss** (not "lossy networks", not "degraded"). "All networks are lossy" — be specific.
     - Canonical terms for transport choice: **reliable** (low/no packet loss), **high packet loss** (>~1%).
 - **Interface terminology over implementation terminology:** Use the names users encounter at the interface level, not internal implementation names. If the protocol uses `exit_id` internally but the REST API exposes it as `peer_id`, the docs use `peer_id`. Never leak internal identifiers into user-facing documentation.
