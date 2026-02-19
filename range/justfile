@@ -6,8 +6,8 @@ root := justfile_directory() / ".."
 build:
     cd {{ root }} && cross build -q --release --target x86_64-unknown-linux-musl
 
-# Start the cyber range
-up: build
+# Start the cyber range (run `just build` first if the binary is outdated)
+up:
     docker compose up -d --build
 
 # Stop the cyber range
