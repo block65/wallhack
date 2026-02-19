@@ -85,7 +85,8 @@ Use `{% trafficflow flow="..." label="..." /%}` to visualize tunnel topology. Th
 
 ## Code Examples
 
-- **Realism:** Use realistic values (private IPs like `10.0.0.5`, standard ports like `443` or `8080`).
+- **Realism:** Use realistic values (private IPs like `10.0.0.5`, standard ports like `443` or `8080`). Introduce any IPs or networks in the scenario description before they appear in a command.
+- **Binary invocation:** Always use `wallhack` — never `./wallhack`. The binary is assumed to be in the path.
 - **Focus:** Keep examples focused on the feature being discussed. Don't include unrelated flags.
 - **Verification:** Always verify flags against the actual CLI source. Never document a flag that hasn't been implemented yet.
 - **Output:** If a command produces unique or important output, show it in a separate code block or a comment to manage expectations.

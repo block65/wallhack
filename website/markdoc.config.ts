@@ -85,10 +85,10 @@ export default defineMarkdocConfig({
   },
   nodes: {
     fence: {
-      render: component('./src/components/CodeFence.astro'),
+      render: component('./src/components/CodeBlock.astro'),
       attributes: {
-        language: { type: String },
-        content: { type: String },
+        language: { type: String, alias: 'lang' },
+        content: { type: String, alias: 'code' },
       },
     },
     heading: {

