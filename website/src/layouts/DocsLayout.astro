@@ -14,8 +14,8 @@ interface Props {
 const { title, description } = Astro.props;
 const currentPath = Astro.url.pathname;
 const isHome = currentPath === '/';
-const pageTitle = isHome ? 'wallhack — Layer 3 tunneling for network pivoting' : `${title} | wallhack`;
-const metaDescription = description ?? 'A Layer 3 tunneling tool for network pivoting in penetration testing — QUIC and WebSocket transports, zero-config mTLS, single static binary.';
+const pageTitle = isHome ? 'wallhack — Layer 3 tunneling over QUIC and WebSockets' : `${title} | wallhack`;
+const metaDescription = description ?? 'Layer 3 tunneling over QUIC and WebSockets.';
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
 const slug = Astro.url.pathname.replace(/^\/|\/$/g, '') || 'index';
 const ogImage = new URL(`/og/${slug}.png`, Astro.site).href;
