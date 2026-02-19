@@ -13,16 +13,23 @@ This guide ensures a consistent, professional, and high-signal voice across the 
     - ❌ "Establish a TUN interface..." (imperative used to describe system behaviour)
     - ✅ "A TUN interface is established on the entry node..." (describes what happens)
     - ✅ "The TUN interface routes all traffic..." (component as subject)
-- **No Filler:** Avoid marketing-speak and "filler" phrases.
-    - ❌ "Multiple distribution methods to fit your deployment workflow"
-    - ✅ "Choose the distribution method that fits your environment"
+- **No Filler:** Avoid marketing-speak and "filler" phrases. This includes vague operational terms like "standard operation" or "normal mode" — if you can't say concretely what it means, replace it with what it actually does. Avoid subjective superlatives like "most common", "best", or "industry standard" unless they are verifiable facts.
+    - ❌ "The most common deployment scenario."
+    - ✅ "Establish a direct tunnel between two nodes."
 - **Direct & Opinionated:** Clearly state tradeoffs. If a mode is "faster but less reliable," say it exactly like that.
+- **Varied Sentence Starts:** Avoid repeating the same starting word in consecutive sentences (e.g., "A... A... A..."). Combine fragmented thoughts into cohesive prose paragraphs to avoid a "bulleted list" feel in introductory sections.
 - **Write for humans, not systems:** Before publishing any sentence, ask whether a real person would say it out loud. Jargon like "isolated Linux network namespaces connected via virtual ethernet pairs" means nothing to a reader. Translate it to plain English: "both nodes on the same machine with no real network between them."
 - **Context before data:** Never drop numbers or tables on the reader without first explaining what is being measured, why it was measured, and what it means. A page full of tables with no introduction is not documentation.
 - **Subject Clarity:** Ensure "it" or "this" always has a clear antecedent. When describing system behavior, make the feature or component the subject. Never use "wallhack" or "it" (referring to the project) as the subject.
 - **Establish before describing:** Don't introduce a term and immediately describe its behavior. The reader needs to know what something *is* before you tell them what it *does*.
     - ❌ "WebSockets wraps traffic as HTTPS for firewall traversal."
     - ✅ "Two transports are available. WebSockets wraps traffic as HTTPS..."
+- **Features need what, why, then how:** When documenting a configurable behavior or mode, first explain what problem it solves and why it exists, then explain how to use it. Jumping straight to the mechanism (how the probe works) without establishing the context (why a probe is needed at all) leaves the reader unable to judge when to use it.
+- **Explain defaults:** If something is described as "the default," say why. What tradeoff does it represent? "The default transport" means nothing without explaining what makes it the right choice for most cases.
+- **No second-person ownership:** Don't write "your tunnel" or "your architecture" when describing the system. The docs describe behavior objectively.
+    - ❌ "Three node types form the building blocks of your tunnel architecture."
+    - ✅ "Three node types form the building blocks of a tunnel."
+- **Check for contradictions:** Before publishing, verify that statements are consistent within and across pages. If one section calls QUIC "the default" and another calls WebSockets "the recommended default," one of them is wrong.
 - **Use line breaks:** A wall of sentences is hard to read. Break introductory paragraphs into separate thoughts. One idea per paragraph.
 - **Undefined terms:** If you introduce a term, tool, or concept that a reader might not recognise, explain it or link to it. Don't assume they know what netem, yamux, or veth pairs are.
 
@@ -44,6 +51,8 @@ Every page requires frontmatter for SEO and navigation:
 
 - **H1 Start:** Every document must start with a single H1 (`#`) that matches the `title`.
 - **Hierarchy:** Use H2 (`##`) and H3 (`###`) for sub-sections. Avoid going deeper than H3 unless absolutely necessary.
+- **Contextual H1s (SEO):** Every H1 (`#`) must provide enough context for a user arriving directly from a search engine. Include descriptive suffixes like "Example" or "Reference" where appropriate to distinguish the page content from its sidebar label.
+    - ✅ `# Single Hop Example` (even if the sidebar says "Single Hop")
 - **Descriptive headings:** A heading should tell the reader what they'll find in the section — not be a teaser or clever phrase. If the heading could mean anything, it means nothing.
     - ❌ "Beyond the basics", "Beyond SOCKS", "Transports"
     - ✅ "Performance and Reliability", "Transport Modes", "Download"
