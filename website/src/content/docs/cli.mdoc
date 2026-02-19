@@ -25,11 +25,16 @@ Every entry node includes an interactive command-line interface for direct acces
 ## Example Session
 
 ```
-wallhack> stats
-Traffic Statistics:
-  Bytes In:     1.23 MB
-  Bytes Out:    456.78 KB
+wallhack> peers
+Connected peers (1):
+  PEER   ROLE  ADDRESS          LATENCY   UPTIME
+  peer1  exit  10.0.1.5:52341   1.234ms   0:42
 
 wallhack> route add 10.0.0.0/8 via peer1
-Route added: 10.0.0.0/8
+Route added: 10.0.0.0/8 via peer1 dev tun0
+
+wallhack> routes
+Routes (1):
+  DESTINATION  VIA    DEVICE  AGE
+  10.0.0.0/8   peer1  tun0    0:03
 ```
