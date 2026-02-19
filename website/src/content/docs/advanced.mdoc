@@ -1,6 +1,6 @@
 ---
 title: Build & Security
-description: Binary size optimization, build modes, mTLS security, and MCP server integration
+description: Binary size optimization, build modes, mTLS security, and REST API integration
 order: 10
 ---
 
@@ -10,7 +10,7 @@ Choose from different build configurations to balance features against binary si
 
 {% grid cols=2 %}
 {% card title="Full Build" icon="package" %}
-Includes all features: MCP server, REPL, and REST API.
+Includes all features: REPL and REST API.
 ```bash
 cargo build --release
 ```
@@ -168,39 +168,4 @@ Route added: 10.0.0.0/8
 
 {% callout type="note" %}
 The REPL is disabled when stdin is not a terminal. Use the REST API for headless management.
-{% /callout %}
-
-{% separator /%}
-
-# MCP Server Integration
-
-The Model Context Protocol (MCP) enables AI assistants to manage tunnel infrastructure through standardized interfaces.
-
-### Integration Features
-
-- **Protocol Integration:** Exposes functionality through MCP, allowing AI assistants to manage infrastructure programmatically.
-- **Tool Registration:** Registers operations as MCP tools for discovery and invocation by AI models.
-- **Context Sharing:** Shares tunnel status and topology for intelligent decision-making.
-
-### Starting the MCP Server
-
-Enable the MCP server alongside tunnel operations:
-
-{% codeblock code="wallhack entry --listen :443 --mcp-server :9000" title="Entry node with MCP server" /%}
-
-Configure the server in an AI assistant:
-
-```json
-{
-  "mcpServers": {
-    "wallhack": {
-      "url": "http://localhost:9000",
-      "transport": "stdio"
-    }
-  }
-}
-```
-
-{% callout type="note" %}
-MCP server functionality requires a full build.
 {% /callout %}
