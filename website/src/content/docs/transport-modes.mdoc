@@ -6,23 +6,25 @@ order: 4
 
 # Transport Modes
 
+Choosing the right transport depends on your network environment and operational goals.
+
+## Choosing a Transport
+
+If UDP is blocked or rate-limited — common in corporate networks and cloud environments — use **TCP (WebSocket)**. It appears as standard HTTPS traffic and can pass through most HTTP proxies. 
+
+On reliable networks where both are available, **WebSocket** is the recommended default. It offers lower latency and equivalent throughput due to its well-optimized path through the operating system.
+
+Use **UDP (QUIC)** when packet loss is above ~1%. QUIC's per-stream loss recovery prevents a single dropped packet from stalling the entire tunnel, making it more resilient for multiple concurrent connections.
+
 ## UDP (QUIC)
 
-The default transport. Uses QUIC for native stream multiplexing and built-in TLS 1.3. Append `/udp` to the address, or omit the suffix entirely.
-
-UDP is frequently blocked or rate-limited in corporate and cloud environments. If operating through a strict firewall or a proxy, use TCP instead.
-
-Benchmarks at **~2.4 Gbps**. On high-loss or high-jitter networks, QUIC's per-stream loss recovery avoids head-of-line blocking that TCP transports are subject to.
+The default transport. Native stream multiplexing and built-in TLS 1.3. Append `/udp` to the address, or omit the suffix entirely.
 
 {% codeblock code="wallhack entry --listen :443/udp" /%}
 
 ## TCP (WebSockets)
 
-TCP traffic is wrapped in WebSockets to appear as standard HTTPS to inspecting proxies, firewalls, and Deep Packet Inspection (DPI) tools. Use this transport when UDP is blocked or when blending into existing HTTPS traffic is required.
-
-Append `/tcp` to the address.
-
-Benchmarks at **~2.4 Gbps**. On low-loss networks, WebSocket offers ~21% lower average RTT than QUIC due to kernel-space TCP optimization.
+Traffic is wrapped in WebSockets to appear as standard HTTPS to proxies, firewalls, and Deep Packet Inspection (DPI) tools. Append `/tcp` to the address.
 
 {% codeblock code="wallhack entry --listen :443/tcp" /%}
 
