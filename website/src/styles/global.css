@@ -283,7 +283,7 @@ html {
 .astro-code,
 pre.shiki,
 pre[class*="astro-code"] {
-  @apply rounded-lg border border-neutral-700 p-4 text-sm leading-relaxed overflow-x-auto;
+  @apply rounded-lg border border-border p-4 text-sm leading-relaxed overflow-x-auto;
   background-color: #0d1117 !important;
 }
 

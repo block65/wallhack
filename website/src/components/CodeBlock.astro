@@ -22,11 +22,12 @@ const code = codeProp ?? content ?? '';
 const lang = langProp ?? language ?? 'bash';
 ---
 
-<div class="not-prose py-3">
-<div class="group rounded-lg overflow-hidden border border-neutral-700">
+<div class="not-prose">
+<div class="py-3">
+<div class="group rounded-lg overflow-hidden border border-border">
   {title && (
-    <div class="flex items-center px-4 py-2 bg-neutral-800 border-b border-neutral-700">
-      <span class="text-xs font-medium text-neutral-400">{title}</span>
+    <div class="flex items-center px-4 py-2 bg-muted border-b border-border">
+      <span class="text-xs font-medium text-muted-foreground">{title}</span>
     </div>
   )}
   <div class="relative">
@@ -41,6 +42,7 @@ const lang = langProp ?? language ?? 'bash';
       <Icon name="lucide:check" class="check-icon w-4 h-4 text-green-400 hidden" />
     </button>
   </div>
+</div>
 </div>
 </div>
 
