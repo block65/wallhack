@@ -1,5 +1,6 @@
 ---
 import DocsLayout from '../layouts/DocsLayout.astro';
+import CodeBlock from '../components/CodeBlock.astro';
 import spec from '../data/openapi.json';
 
 type Operation = {
@@ -41,16 +42,50 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
     path, method, ...op,
   }))
 );
+
+const startExample = `wallhack entry --listen :443 --api 127.0.0.1:6566`;
+const authExample = `wallhack entry --listen :443 --api 127.0.0.1:6566 --api-user admin --api-pass secret`;
+const curlExample = `# Get stats
+curl -k -u admin:secret https://localhost:6566/stats
+
+# List peers
+curl -k -u admin:secret https://localhost:6566/peers
+
+# Add a route through a peer
+curl -k -u admin:secret -X POST https://localhost:6566/routes \\
+  -H 'Content-Type: application/json' \\
+  -d '{"cidr": "192.168.1.0/24", "peer_id": "bench"}'`;
 ---
 
-<DocsLayout title="API Reference" description="REST API for headless control of wallhack entry nodes.">
-  <h1>API Reference</h1>
+<DocsLayout title="REST API" description="Programmatic HTTP interface for headless management of entry nodes.">
+  <h1>REST API</h1>
 
   <p>
-    Enable with <code>--api &lt;addr&gt;</code>, e.g. <code>--api 127.0.0.1:6566</code>.
-    Secure with <code>--api-user</code> and <code>--api-pass</code> — without credentials the API is unauthenticated.
-    All endpoints are served over HTTPS with a self-signed certificate unless <code>--cert</code> and <code>--key</code> are provided.
+    An optional HTTP API provides headless management of entry nodes. It uses the same TLS certificate as the tunnel
+    and supports Basic authentication.
   </p>
+
+  <h2>Enabling the API</h2>
+
+  <p>Pass <code>--api &lt;addr&gt;</code> when starting an entry node:</p>
+
+  <CodeBlock code={startExample} />
+
+  <p>Add <code>--api-user</code> and <code>--api-pass</code> to require authentication:</p>
+
+  <CodeBlock code={authExample} />
+
+  <p>
+    The API is served over HTTPS. wallhack auto-generates a self-signed certificate unless <code>--cert</code> and
+    <code>--key</code> are provided. Pass <code>-k</code> to curl to skip certificate verification when using
+    the self-signed cert.
+  </p>
+
+  <h2>Example Usage</h2>
+
+  <CodeBlock code={curlExample} lang="bash" />
+
+  <h2>Endpoints</h2>
 
   {endpoints.map(({ path, method, summary, description, parameters, requestBody, responses }) => {
     const pathParams = (parameters ?? []).filter(p => p.in === 'path');
