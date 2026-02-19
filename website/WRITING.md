@@ -5,10 +5,14 @@ This guide ensures a consistent, professional, and high-signal voice across the 
 ## Voice & Tone
 
 - **Technical but Accessible:** Write for someone with a solid networking background. Don't over-explain IP routing or SOCKS, but don't assume deep expertise in QUIC internals.
-- **Avoid "wallhack" as a Subject:** Do not refer to the project in the third person.
+- **Technically precise:** Don't use analogies or metaphors that are technically wrong, even if they sound intuitive. The audience will notice.
+    - ❌ "Tools behave as if they're on the target network." (you have routed *access*, not presence)
+    - ✅ "Traffic routes to the target network transparently."
+- **Avoid "wallhack" as a Subject:** Do not use the product name as the subject of a sentence. Make the feature or component the subject instead. Imperative ("Establish a TUN interface...") is only appropriate for user instructions — not for describing what the system does.
     - ❌ "wallhack creates a TUN interface..."
-    - ✅ "Establish a TUN interface..." (Imperative)
-    - ✅ "The TUN interface provides..." (Descriptive)
+    - ❌ "Establish a TUN interface..." (imperative used to describe system behaviour)
+    - ✅ "A TUN interface is established on the entry node..." (describes what happens)
+    - ✅ "The TUN interface routes all traffic..." (component as subject)
 - **No Filler:** Avoid marketing-speak and "filler" phrases.
     - ❌ "Multiple distribution methods to fit your deployment workflow"
     - ✅ "Choose the distribution method that fits your environment"
@@ -35,6 +39,9 @@ Every page requires frontmatter for SEO and navigation:
 
 - **H1 Start:** Every document must start with a single H1 (`#`) that matches the `title`.
 - **Hierarchy:** Use H2 (`##`) and H3 (`###`) for sub-sections. Avoid going deeper than H3 unless absolutely necessary.
+- **Descriptive headings:** A heading should tell the reader what they'll find in the section — not be a teaser or clever phrase. If the heading could mean anything, it means nothing.
+    - ❌ "Beyond the basics", "Beyond SOCKS", "Transports"
+    - ✅ "Performance and Reliability", "Transport Modes", "Download"
 - **No Self-Links:** Don't start a section by repeating its title.
     - ❌ `## Scan Mode` followed by "Scan mode is..."
     - ✅ `## Scan Mode` followed by "Use this mode to identify..."
@@ -65,6 +72,7 @@ Use `{% trafficflow flow="..." label="..." /%}` to visualize tunnel topology. Th
 
 - **CLI Flags:** Use canonical flag names in backticks (`--fast`).
 - **Context:** When introducing a flag, show it in a command example immediately or shortly after.
+- **WebSockets, not WebSocket:** Use the plural form — it's the colloquially accepted term.
 - **Consistency:** Use established terms. Don't switch between "relay," "hop," and "proxy" if they refer to the same component. This applies site-wide — if a term is introduced on one page, use the same term on all pages.
     - Canonical terms for network conditions: **packet loss** (not "lossy networks", not "degraded"). "All networks are lossy" — be specific.
     - Canonical terms for transport choice: **reliable** (low/no packet loss), **high packet loss** (>~1%).

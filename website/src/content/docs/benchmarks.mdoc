@@ -1,6 +1,6 @@
 ---
 title: Benchmarks
-description: Throughput and latency benchmarks for QUIC and WebSocket transports, including performance under packet loss.
+description: Throughput and latency benchmarks for QUIC and WebSockets transports, including performance under packet loss.
 order: 5
 ---
 
@@ -10,7 +10,7 @@ We use `iperf3` to push traffic through a real tunnel end to end — both the en
 
 Results are from v0.1.2 on Linux x86_64. To run them yourself: `just benchmark` in the `bench/` directory.
 
-## Loopback (lossless)
+## Loopback
 
 The entry and exit nodes are on the same machine with no real network between them. This isolates the cost of the tunnel itself — encryption, framing, and multiplexing — from any network conditions.
 
@@ -19,7 +19,7 @@ The entry and exit nodes are on the same machine with no real network between th
 | Transport | 1 stream | 4 streams | Reverse |
 |-----------|----------|-----------|---------|
 | UDP (QUIC) | 2.4 Gbps | 2.4 Gbps | 581 Mbps |
-| TCP (WebSocket) | 2.4 Gbps | 2.5 Gbps | — |
+| TCP (WebSockets) | 2.4 Gbps | 2.5 Gbps | — |
 
 Both transports are equivalent when there is no packet loss.
 
@@ -28,11 +28,11 @@ Both transports are equivalent when there is no packet loss.
 | Transport | Avg RTT | Jitter |
 |-----------|---------|--------|
 | UDP (QUIC) | 0.164 ms | 0.034 ms |
-| TCP (WebSocket) | 0.129 ms | 0.034 ms |
+| TCP (WebSockets) | 0.129 ms | 0.034 ms |
 
-WebSocket is 21% lower latency. QUIC runs TLS and stream framing in userspace, adding overhead that doesn't pay off without packet loss.
+WebSockets is 21% lower latency. QUIC runs TLS and stream framing in userspace, adding overhead that doesn't pay off without packet loss.
 
-## Synthetic packet loss (lossy)
+## Synthetic packet loss
 
 The same loopback setup with [netem](https://wiki.linuxfoundation.org/networking/netem) (the Linux network emulation tool) injecting packet loss and added delay on the tunnel link, simulating packet loss and latency on the tunnel link.
 
@@ -41,6 +41,6 @@ The same loopback setup with [netem](https://wiki.linuxfoundation.org/networking
 | Transport | 0.5% loss / +10ms RTT | 2.0% loss / +50ms RTT |
 |-----------|----------------------|----------------------|
 | UDP (QUIC) | 58 Mbps | 17 Mbps |
-| TCP (WebSocket) | 89 Mbps | 7.7 Mbps |
+| TCP (WebSockets) | 89 Mbps | 7.7 Mbps |
 
-At low loss WebSocket still leads. At 2% loss QUIC pulls ahead — each connection gets an independent stream, so a dropped packet stalls only that stream rather than everything sharing the same TCP flow.
+At low loss WebSockets still leads. At 2% loss QUIC pulls ahead — each connection gets an independent stream, so a dropped packet stalls only that stream rather than everything sharing the same TCP flow.

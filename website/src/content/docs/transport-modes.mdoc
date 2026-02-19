@@ -10,9 +10,9 @@ Choosing the right transport depends on your network environment and operational
 
 ## Choosing a Transport
 
-If UDP is blocked or rate-limited — common in corporate networks and cloud environments — use **TCP (WebSocket)**. It appears as standard HTTPS traffic and can pass through most HTTP proxies. 
+If UDP is blocked or rate-limited — common in corporate networks and cloud environments — use **TCP (WebSockets)**. It appears as standard HTTPS traffic and can pass through most HTTP proxies. 
 
-On reliable networks where both are available, **WebSocket** is the recommended default. It offers lower latency and equivalent throughput due to its well-optimized path through the operating system.
+On reliable networks where both are available, **WebSockets** is the recommended default. It offers lower latency and equivalent throughput due to its well-optimized path through the operating system.
 
 Use **UDP (QUIC)** when packet loss is above ~1%. QUIC's per-stream loss recovery prevents a single dropped packet from stalling the entire tunnel, making it more resilient for multiple concurrent connections.
 
@@ -30,6 +30,6 @@ Traffic is wrapped in WebSockets to appear as standard HTTPS to proxies, firewal
 
 ### CDN Fronting
 
-With TLS enabled, WebSocket mode can be fronted through a CDN, making tunnel traffic appear as legitimate HTTPS to a known CDN domain. This adds an additional layer of obfuscation and makes the connection significantly harder to attribute or block.
+With TLS enabled, WebSockets can be fronted through a CDN, making tunnel traffic appear as legitimate HTTPS to a known CDN domain. This adds an additional layer of obfuscation and makes the connection significantly harder to attribute or block.
 
 {% codeblock code="wallhack entry --listen :443/tcp --cert cert.pem --key key.pem" /%}

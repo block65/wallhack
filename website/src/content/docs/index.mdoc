@@ -12,13 +12,15 @@ order: 1
 
 A Layer 3 tunneling tool built for network pivoting in penetration testing scenarios.
 
-It establishes a full TUN interface on the entry node, routing all traffic transparently — TCP, UDP, ICMP, any protocol — without proxy chains or SOCKS configuration. Tools behave as if they're on the target network.
+A single 4 MB binary with no dependencies provides throughput and operational control via a built-in REPL and REST API on every entry node.
 
-Built for throughput and operational use. Runs as a single 4 MB binary with no dependencies. REPL and REST API on every entry node for live management.
+A full TUN interface on the entry node routes all traffic to the target network transparently — TCP, UDP, ICMP, any protocol — without proxy chains or SOCKS configuration.
 
 ## Performance and Reliability
 
-Two transports are available: **UDP (QUIC)** and **TCP (WebSocket)**. Both sustain multi-gigabit throughput. WebSocket has lower latency on reliable paths; QUIC holds up better under packet loss with multiple concurrent connections.
+Two transports are available: **UDP (QUIC)** and **TCP (WebSockets)**. Both sustain multi-gigabit throughput.
+
+WebSockets has lower latency on reliable paths; QUIC holds up better under packet loss with multiple concurrent connections.
 
 {% grid %}
 {% card title="UDP (QUIC)" icon="wifi" %}
@@ -27,7 +29,7 @@ Two transports are available: **UDP (QUIC)** and **TCP (WebSocket)**. Both susta
 - **Reverse:** 581 Mbps
 - **4 streams @ 2% loss:** 17 Mbps
 {% /card %}
-{% card title="TCP (WebSocket)" icon="plug" %}
+{% card title="TCP (WebSockets)" icon="plug" %}
 - **Single stream:** 2.4 Gbps
 - **4 streams:** 2.5 Gbps
 - **Latency:** ~21% lower RTT
@@ -36,8 +38,10 @@ Two transports are available: **UDP (QUIC)** and **TCP (WebSocket)**. Both susta
 {% /grid %}
 
 {% callout type="note" %}
-Measured with both nodes on the same machine with no real network between them. See [Benchmarks](/benchmarks) for full results including performance on degraded networks.
+Measured with both nodes on the same machine with no real network between them. See [Benchmarks](/benchmarks) for full results including performance under packet loss.
 {% /callout %}
+
+[Transport Modes →](/transport-modes)
 
 ## Management
 
@@ -47,7 +51,9 @@ Every entry node includes a built-in REPL for real-time tunnel management — in
 
 ## Binary Size
 
-Distributed as a single static binary with no runtime dependencies. The slim build strips out the REST API and REPL for constrained environments.
+Distributed as a single static binary with no runtime dependencies.
+
+The slim build strips out the REST API and REPL for constrained environments.
 
 | Target | Default | Slim |
 |--------|---------|------|

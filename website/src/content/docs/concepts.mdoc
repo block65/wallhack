@@ -10,19 +10,19 @@ Three node types form the building blocks of your tunnel architecture. You only 
 
 ### Entry
 
-Your machine. Creates a [TUN interface](https://en.wikipedia.org/wiki/TUN/TAP) (a virtual network device) and routes traffic into the tunnel chain.
+The entry node runs on your local machine. A [TUN interface](https://en.wikipedia.org/wiki/TUN/TAP) (a virtual network device) is established to route traffic into the tunnel chain.
 
 {% codeblock code="wallhack entry --listen :PORT" /%}
 
 ### Relay *(optional)*
 
-An intermediate host that forwards traffic deeper into the network. It connects to a previous hop and listens for a subsequent hop.
+An intermediate host forwards traffic deeper into the network. Relays connect to a previous hop and listen for a subsequent hop.
 
 {% codeblock code="wallhack relay --connect HOST:PORT --listen :PORT" /%}
 
 ### Exit
 
-The far end of the tunnel. Unwraps packets and delivers them to the target network.
+The far end of the tunnel chain. Packets are unwrapped and delivered to the target network.
 
 {% codeblock code="wallhack exit --connect HOST:PORT" /%}
 
