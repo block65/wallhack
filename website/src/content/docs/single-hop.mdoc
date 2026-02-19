@@ -8,15 +8,17 @@ order: 7
 
 In this example, an entry node runs on the attacker machine (`10.0.0.5`) and a compromised host (`10.0.1.5`) connects back to it. Once established, traffic to `192.168.1.0/24` routes through the compromised host.
 
+{% trafficflow flow="10.0.0.5 (entry) -> 10.0.1.5 (compromised) -> 192.168.1.0/24 (target)" label="Traffic Flow:" /%}
+
 {% steps %}
-{% step title="Attacker" number=1 %}
-An [entry node](/concepts) listening for incoming connections.
+{% step title="Attacker (10.0.0.5)" number=1 %}
+An [entry node](/concepts) listening for incoming connections on UDP/443. Port 443 is used here as it is commonly permitted through egress firewalls. The default transport is QUIC, which uses UDP.
 
 {% codeblock code="wallhack entry --listen :443" /%}
 {% /step %}
 
-{% step title="Compromised Host" number=2 %}
-An [exit node](/concepts) connecting back to the attacker.
+{% step title="Compromised Host (10.0.1.5)" number=2 %}
+An [exit node](/concepts) connecting back to the entry node on UDP/443.
 
 {% codeblock code="wallhack exit --connect 10.0.0.5:443" /%}
 {% /step %}
@@ -29,5 +31,3 @@ ip route add 192.168.1.0/24 dev tun0
 ```
 {% /step %}
 {% /steps %}
-
-{% trafficflow flow="10.0.0.5 (entry) -> 10.0.1.5 (compromised) -> 192.168.1.0/24 (target)" label="Traffic Flow:" /%}
