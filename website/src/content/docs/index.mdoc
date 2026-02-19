@@ -12,8 +12,6 @@ By establishing a full dual-stack TUN interface on the [entry node](/concepts), 
 
 QUIC can egress over any open outbound UDP port; WebSockets can traverse HTTP proxies and deep packet inspection, appearing as HTTPS traffic on port 443.
 
-Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/rest-api) for live tunnel management. The entire tool is distributed as a single static binary with no dependencies.
-
 ## Key Features
 
 {% featurelist title="Core Capabilities" items=[
@@ -34,6 +32,10 @@ Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/re
 On unreliable networks, at 2% packet loss, WebSockets drops to 7.7 Mbps. QUIC's per-stream loss recovery keeps it at **17 Mbps**.
 
 See [Benchmarks](/benchmarks) for full results.
+
+## Interfaces
+
+Every [entry node](/concepts) includes a built-in [CLI](/cli) and [REST API](/rest-api) for live tunnel management.
 
 ## Binary Size
 
