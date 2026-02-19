@@ -25,7 +25,6 @@ For persistent deployments or infrastructure where you want to maintain your own
 
 - Prevents man-in-the-middle attacks on tunnel connections.
 - Protects sensitive traffic from eavesdropping.
-- Complies with zero-trust security models.
 
 {% separator /%}
 
@@ -66,5 +65,5 @@ Pass the certificates to the entry and exit nodes using the `--cert`, `--key`, a
 {% codeblock code="wallhack exit --connect ENTRY:443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Exit node with mTLS" /%}
 
 {% callout type="note" %}
-**Best Practice:** Use a unique certificate for each node and rotate them regularly. Private keys should never be transferred over the tunnel or stored on insecure media.
+Rotate certificates regularly and use unique certificates for each node to maintain infrastructure integrity.
 {% /callout %}

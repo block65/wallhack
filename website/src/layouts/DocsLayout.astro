@@ -38,15 +38,15 @@ const currentPath = Astro.url.pathname;
       })();
     </script>
   </head>
-  <body class="min-h-screen bg-background text-foreground">
+  <body class="min-h-screen bg-background text-foreground flex flex-col">
     <Header />
 
-    <div class="mx-auto max-w-screen-2xl flex px-4 sm:px-6 lg:px-8">
+    <div class="mx-auto max-w-screen-2xl flex flex-1 px-4 sm:px-6 lg:px-8 w-full">
       <Sidebar currentPath={currentPath} />
 
-      <main class="flex-1 min-w-0">
-        <div class="max-w-4xl mx-auto py-8 md:py-12">
-          <article class="prose">
+      <main class="flex-1 min-w-0 flex flex-col">
+        <div class="max-w-4xl mx-auto py-8 md:py-12 flex-1 flex flex-col w-full">
+          <article class="prose flex-1">
             <slot />
           </article>
           <Footer />

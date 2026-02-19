@@ -6,19 +6,15 @@ order: 6
 
 # Operation Modes
 
-Standard operation supports most workloads out of the box. For port scanning, choose between default accuracy or high-throughput performance.
+When a TCP SYN arrives at the entry node's TUN interface, the destination port's reachability on the target network isn't yet known. The entry node has to decide what to do before completing the handshake.
+
+By default, the exit node is probed first. If the port is closed, the exit responds and a RST is sent back — preserving correct TCP semantics. Tools like nmap see `closed` for closed ports, not `filtered`.
+
+The tradeoff is one round-trip per connection. For interactive sessions this is negligible. For high-rate scanning where throughput matters more than per-port accuracy, use `--fast` to skip the probe entirely.
 
 ## Default
 
-Use the default mode for interactive sessions — SSH, RDP, database connections — and general traffic. No flags required.
-
-{% codeblock code="wallhack entry --listen :443" /%}
-
-## Port Scanning
-
-### Default — accurate
-
-Before completing each TCP handshake, the exit node is probed to check port reachability. If a port is closed, a proper RST is sent back — so nmap correctly reports `closed`. No special configuration needed, nmap just works.
+Before completing each TCP handshake, the exit node is probed to check port reachability. Closed ports return RSTs, so tools like nmap work correctly without any special configuration.
 
 {% codeblock code="wallhack entry --listen :443" /%}
 
@@ -30,9 +26,9 @@ PORT     STATE  SERVICE
 443/tcp  open   https
 ```
 
-### Fast — less accurate
+## Fast (`--fast`)
 
-Skips the probe, removing the per-connection round-trip overhead for significantly higher throughput. The tradeoff: without the probe, RSTs can't be sent for closed ports — so nmap will report them as `filtered` rather than `closed`. Precise port state analysis is no longer reliable; better suited to masscan-style tools where throughput matters more than accuracy.
+Skips the probe, removing the per-connection round-trip overhead. The tradeoff: without the probe, RSTs can't be sent for closed ports — nmap will report them as `filtered` rather than `closed`. Better suited to masscan-style tools where throughput matters more than accuracy.
 
 {% codeblock code="wallhack entry --listen :443 --fast" /%}
 

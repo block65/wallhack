@@ -84,6 +84,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-surface-sunken: #0d1117;
 
   --radius-sm: calc(var(--radius) * 0.5);
   --radius-md: var(--radius);
@@ -305,7 +306,7 @@ html {
 pre.shiki,
 pre[class*="astro-code"] {
 	@apply p-4 text-sm leading-relaxed overflow-x-auto;
-	background-color: #0d1117 !important;
+	background-color: var(--color-surface-sunken) !important;
 }
 
 .astro-code code,

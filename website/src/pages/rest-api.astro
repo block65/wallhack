@@ -66,7 +66,7 @@ curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
   <h1>REST API</h1>
 
   <p>
-    An optional HTTP API provides headless management of entry nodes. It uses the same TLS certificate as the tunnel
+    The REST API provides programmatic control of entry nodes. It uses the same TLS certificate as the tunnel
     and supports Basic authentication.
   </p>
 
@@ -77,22 +77,20 @@ curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
   <CodeBlock code={startExample} />
 
   <p>
-    Basic authentication is always required. A random secret is generated at startup and printed to stdout alongside
-    the username:
+    Basic authentication is required. A random secret is generated at startup and printed to stdout:
   </p>
 
   <CodeBlock code={startupOutput} />
 
   <p>
-    To set fixed credentials, pass <code>--api-user</code> and <code>--api-secret</code>:
+    To set fixed credentials, use <code>--api-user</code> and <code>--api-secret</code>:
   </p>
 
   <CodeBlock code={customCredsExample} />
 
   <p>
-    The API is served over HTTPS using the same TLS certificate as the tunnel. A self-signed certificate is
-    auto-generated unless <code>--cert</code> and <code>--key</code> are provided. Pass <code>-k</code> to
-    curl to accept the self-signed certificate.
+    The API is served over HTTPS. A self-signed certificate is auto-generated unless <code>--cert</code> 
+    and <code>--key</code> are provided.
   </p>
 
   <h2>Example Usage</h2>
@@ -124,25 +122,25 @@ curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
           <span class={`font-mono text-xs font-bold uppercase px-2 py-0.5 rounded ${methodBadge[method] ?? ''}`}>
             {method}
           </span>
-          <code class="font-mono text-sm text-neutral-200">{path}</code>
+          <code class="font-mono text-sm text-foreground">{path}</code>
         </div>
 
-        <div class="px-4 py-3 space-y-4 bg-[#0d1117]">
+        <div class="px-4 py-3 space-y-4">
           <div>
-            <p class="font-semibold text-sm text-neutral-100">{summary}</p>
-            {description && <p class="text-sm text-neutral-400 mt-1">{description}</p>}
+            <p class="font-semibold text-sm text-foreground">{summary}</p>
+            {description && <p class="text-sm text-muted-foreground mt-1">{description}</p>}
           </div>
 
           {pathParams.length > 0 && (
             <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-2">Parameters</p>
+              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Parameters</p>
               <table class="w-full text-sm">
                 <tbody>
                   {pathParams.map(p => (
-                    <tr class="border-b border-neutral-800">
-                      <td class="py-1.5 pr-4 w-36"><code class="font-mono text-sm text-neutral-200">{p.name}</code></td>
-                      <td class="py-1.5 pr-4 text-neutral-400 text-sm w-28">{p.schema.type}</td>
-                      <td class="py-1.5 text-neutral-400 text-sm">{p.description}</td>
+                    <tr class="border-b border-border">
+                      <td class="py-1.5 pr-4 w-36"><code class="font-mono text-xs">{p.name}</code></td>
+                      <td class="py-1.5 pr-4 text-muted-foreground text-xs w-28">{p.schema.type}</td>
+                      <td class="py-1.5 text-muted-foreground text-xs">{p.description}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -152,14 +150,14 @@ curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
 
           {reqFields.length > 0 && (
             <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-2">Body</p>
+              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Body</p>
               <table class="w-full text-sm">
                 <tbody>
                   {reqFields.map(f => (
-                    <tr class="border-b border-neutral-800">
-                      <td class="py-1.5 pr-4 w-36"><code class="font-mono text-sm text-neutral-200">{f.name}</code></td>
-                      <td class="py-1.5 pr-4 text-neutral-400 text-sm w-28">{f.type}</td>
-                      <td class="py-1.5 text-neutral-400 text-sm">{f.description}</td>
+                    <tr class="border-b border-border">
+                      <td class="py-1.5 pr-4 w-36"><code class="font-mono text-xs">{f.name}</code></td>
+                      <td class="py-1.5 pr-4 text-muted-foreground text-xs w-28">{f.type}</td>
+                      <td class="py-1.5 text-muted-foreground text-xs">{f.description}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -169,14 +167,14 @@ curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
 
           {fields.length > 0 && (
             <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-2">Response</p>
+              <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Response</p>
               <table class="w-full text-sm">
                 <tbody>
                   {fields.map(f => (
-                    <tr class="border-b border-neutral-800">
-                      <td class="py-1.5 pr-4 w-36"><code class="font-mono text-sm text-neutral-200">{f.name}</code></td>
-                      <td class="py-1.5 pr-4 text-neutral-400 text-sm w-28">{f.type}</td>
-                      <td class="py-1.5 text-neutral-400 text-sm">{f.description}</td>
+                    <tr class="border-b border-border">
+                      <td class="py-1.5 pr-4 w-36"><code class="font-mono text-xs">{f.name}</code></td>
+                      <td class="py-1.5 pr-4 text-muted-foreground text-xs w-28">{f.type}</td>
+                      <td class="py-1.5 text-muted-foreground text-xs">{f.description}</td>
                     </tr>
                   ))}
                 </tbody>

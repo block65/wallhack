@@ -4,9 +4,9 @@ description: Establish a direct tunnel between an entry node and a single compro
 order: 7
 ---
 
-# Single Hop Example
+# Single Hop
 
-The most common deployment. A compromised host (`10.0.1.5`) connects back to your machine (`10.0.0.5`). Once the tunnel is up, you route traffic to the networks the compromised host can reach — in this example, `192.168.1.0/24`.
+The most common deployment scenario. A compromised host (`10.0.1.5`) connects back to your machine (`10.0.0.5`). Once the tunnel is established, traffic is routed to the networks the compromised host can reach — in this example, `192.168.1.0/24`.
 
 {% steps %}
 {% step title="Attacker" number=1 %}

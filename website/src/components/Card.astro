@@ -39,18 +39,12 @@ const iconMap = {
 const iconName = icon ? (iconMap[icon] ?? icon) : undefined;
 ---
 
-<div class="border border-border rounded-lg overflow-hidden">
+<div class="border border-border rounded-lg overflow-hidden bg-surface-sunken">
   <div class="p-4 pb-3">
-    {
-      iconName && (
-        <div class="mb-2">
-          <Icon name={iconName} class="w-6 h-6 text-primary" />
-        </div>
-      )
-    }
-    <h3 class="text-base font-semibold text-foreground mb-2 font-sans">
-      {title}
-    </h3>
+    <div class="flex items-baseline gap-2 mb-2">
+      {iconName && <Icon name={iconName} class="w-4 h-4 text-primary shrink-0 translate-y-px" />}
+      <h3 class="text-base font-semibold text-card-foreground font-sans leading-snug">{title}</h3>
+    </div>
     {
       description && (
         <p class="text-sm text-muted-foreground leading-relaxed">
