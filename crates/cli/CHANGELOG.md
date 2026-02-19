@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/block65/wallhack/compare/cli-v0.1.2...cli-v0.2.0) (2026-02-19)
+
+
+### Features
+
+* **cli:** auto-generate REST API secret and require auth by default ([9402dba](https://github.com/block65/wallhack/commit/9402dba3db9b65a0209fc65bb981b66e15602f16))
+
 ## [0.1.2](https://github.com/block65/wallhack/compare/cli-v0.1.1...cli-v0.1.2) (2026-02-18)
 
 
