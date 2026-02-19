@@ -4,35 +4,15 @@ description: Authenticate and secure tunnel connections using X.509 certificates
 order: 11
 ---
 
-# Mutual TLS
+# Mutual TLS Example
 
-Mutual TLS (mTLS) authenticates and secures tunnel connections. Both endpoints verify each other's identity using X.509 certificates to establish a cryptographically secure tunnel.
+By default, tunnel connections are encrypted and authenticated using ephemeral self-signed certificates generated at startup. No configuration is required.
 
-## Zero Config
+For persistent deployments — or where you need to control the root of trust and rotate certificates independently — you can supply your own certificates. This example walks through generating a CA, issuing node certificates, and passing them to entry and exit nodes.
 
-Tunnel traffic is encrypted and authenticated by default using ephemeral, self-signed certificates. This ensures out-of-the-box protection against eavesdropping and unauthorized access without manual certificate management. 
+## Generating Certificates
 
-For persistent deployments or infrastructure where you want to maintain your own Root of Trust, you can provide your own certificates.
-
-### Key Security Features
-
-- **Mutual Authentication:** Both client and server authenticate each other, preventing unauthorized access.
-- **End-to-End Encryption:** All traffic is encrypted using TLS 1.3 to ensure confidentiality and integrity across the entire tunnel chain.
-- **Certificate Validation:** Strict validation ensures only authorized nodes can join the infrastructure.
-- **Perfect Forward Secrecy:** Ephemeral session keys prevent retroactive decryption of intercepted traffic.
-
-### Security Benefits
-
-- Prevents man-in-the-middle attacks on tunnel connections.
-- Protects sensitive traffic from eavesdropping.
-
-{% separator /%}
-
-# Certificate Management
-
-## Generation
-
-Generate a self-signed CA certificate to act as the root of trust:
+Generate a self-signed CA to act as the root of trust:
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
@@ -40,7 +20,7 @@ openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
   -subj "/CN=wallhack-ca"
 ```
 
-Generate node certificates signed by that CA:
+Generate a node certificate signed by that CA:
 
 ```bash
 openssl req -newkey rsa:4096 -nodes \
@@ -52,18 +32,14 @@ openssl x509 -req -in node-req.pem -days 365 \
   -out node-cert.pem
 ```
 
-## Deployment
+## Starting the Tunnel
 
-Pass the certificates to the entry and exit nodes using the `--cert`, `--key`, and `--ca` flags.
+Pass the certificate, key, and CA to both nodes using `--cert`, `--key`, and `--ca`. Each node presents its certificate and verifies the other against the shared CA.
 
-**Entry node requiring client certificates:**
+{% codeblock code="wallhack entry --listen :443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Entry node" /%}
 
-{% codeblock code="wallhack entry --listen :443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Entry node with mTLS" /%}
+{% codeblock code="wallhack exit --connect ENTRY:443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Exit node" /%}
 
-**Exit node presenting a client certificate:**
-
-{% codeblock code="wallhack exit --connect ENTRY:443 --cert node-cert.pem --key node-key.pem --ca ca-cert.pem" title="Exit node with mTLS" /%}
-
-{% callout type="note" %}
-Rotate certificates regularly and use unique certificates for each node to maintain infrastructure integrity.
+{% callout type="tip" %}
+Issue unique certificates per node rather than sharing one. This lets you revoke a single node without regenerating the entire chain.
 {% /callout %}

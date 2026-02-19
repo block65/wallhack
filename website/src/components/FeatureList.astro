@@ -17,7 +17,7 @@ const { title, items = [], icon = 'border' } = Astro.props;
   <ul class="space-y-1.5 list-content">
     {items.map((item) => (
       <li>
-        {icon === 'check' && <Icon name="lucide:check" class="w-4 h-4 text-primary mt-0.5 shrink-0" />}
+        {icon === 'check' && <Icon name="lucide:check" class="w-4 h-4 text-primary shrink-0" />}
         {icon === 'bullet' && <span class="text-primary mt-1">•</span>}
         <span>{item}</span>
       </li>
@@ -39,6 +39,6 @@ const { title, items = [], icon = 'border' } = Astro.props;
   
   [data-icon="check"] .list-content :global(li),
   [data-icon="bullet"] .list-content :global(li) {
-    @apply flex items-start gap-2;
+    @apply flex items-center gap-2;
   }
 </style>
