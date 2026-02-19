@@ -30,14 +30,6 @@ export default defineMarkdocConfig({
 				title: { type: String },
 			},
 		},
-		card: {
-			render: component("./src/components/Card.astro"),
-			attributes: {
-				title: { type: String, required: true },
-				icon: { type: String },
-				description: { type: String },
-			},
-		},
 		badge: {
 			render: component("./src/components/Badge.astro"),
 			attributes: {
@@ -57,12 +49,6 @@ export default defineMarkdocConfig({
 			attributes: {
 				title: { type: String, required: true },
 				number: { type: Number },
-			},
-		},
-		grid: {
-			render: component("./src/components/Grid.astro"),
-			attributes: {
-				cols: { type: Number, default: 2 },
 			},
 		},
 		trafficflow: {

@@ -16,7 +16,7 @@ The tradeoff is one round-trip per connection. For interactive sessions this is 
 
 Before completing each TCP handshake, the exit node is probed to check port reachability. Closed ports return RSTs, so tools like nmap work correctly without any special configuration.
 
-{% codeblock code="wallhack entry --listen :443" /%}
+{% codeblock code="wallhack" /%}
 
 ```
 $ nmap 10.65.65.65
@@ -30,7 +30,7 @@ PORT     STATE  SERVICE
 
 Skips the probe, removing the per-connection round-trip overhead. The tradeoff: without the probe, RSTs can't be sent for closed ports, so nmap will report them as `filtered` rather than `closed`. Better suited to masscan-style tools where throughput matters more than accuracy.
 
-{% codeblock code="wallhack entry --listen :443 --fast" /%}
+{% codeblock code="wallhack --fast" /%}
 
 ```
 $ nmap 10.65.65.65

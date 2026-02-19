@@ -13,14 +13,14 @@ Every entry node includes an interactive command-line interface for direct acces
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `ping` | `p` | Show version and uptime |
-| `stats` | `s` | Display traffic statistics |
-| `peers` | - | List connected peers |
-| `sessions` | `t`, `tuns` | List active exit node sessions |
-| `route add <cidr> [via] <peer_id>` | - | Add a network route via a peer |
-| `route del <cidr>` | `route rm` | Remove a network route |
-| `disconnect <id>` | `kick`, `kill` | Disconnect a peer |
-| `help` | `?` | Show available commands |
-| `quit` | `q`, `exit` | Exit the application |
+| `stats` | `s` | Show traffic statistics |
+| `peers` | - | List connected peers and sessions |
+| `route add <cidr> via <peer_id>` | - | Add a route |
+| `route del <cidr>` | - | Remove a route |
+| `route list` | `routes`, `ip route` | List all routes |
+| `disconnect <peer_id>` | - | Disconnect a peer |
+| `help` | `?` | Show this help message |
+| `quit` | `q` | Exit wallhack |
 
 ## Example Session
 

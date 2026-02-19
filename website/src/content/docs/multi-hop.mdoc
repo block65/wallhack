@@ -14,41 +14,38 @@ The binary reached the DMZ host via initial access — a web shell, exposed serv
 
 {% steps %}
 {% step title="Attacker (192.168.1.5)" number=1 %}
-An [entry node](/concepts) listening for the first hop. The default transport is QUIC (UDP).
+With no arguments, `wallhack` starts an [entry node](/concepts) on the default port (6565/udp, QUIC).
 
-{% codeblock code="wallhack entry --listen :4444" /%}
+{% codeblock code="wallhack" /%}
 {% /step %}
 
 {% step title="DMZ Host (10.0.1.10)" number=2 %}
 A [relay node](/concepts) connecting to the entry node and listening for the next hop on an arbitrary internal port.
 
-{% codeblock code="wallhack relay --connect 192.168.1.5:4444 --listen :6565" /%}
+{% codeblock code="wallhack relay --connect 192.168.1.5 --listen :6565" /%}
 {% /step %}
 
 {% step title="Internal Host (10.10.1.5)" number=3 %}
 An [exit node](/concepts) connecting back to the relay. `--exit-id` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL. It can be any identifier you choose.
 
-{% codeblock code="wallhack exit --connect 10.0.1.10:6565 --exit-id peer1" /%}
+{% codeblock code="wallhack exit --connect 10.0.1.10 --exit-id peer1" /%}
 
 If `--exit-id` is omitted, a random identifier is generated — run `peers` in the REPL to discover it.
 {% /step %}
 
 {% step title="Configure Routes" number=4 %}
-Add routes for the networks accessible through the exit node. Use the wallhack REPL **or** the system `ip` tool — pick one.
+Add routes for the networks reachable through the exit node.
 
-{% grid cols=2 %}
-{% card title="wallhack REPL" icon="repl" description="Run on the entry node. The REPL also configures the OS route automatically." %}
+Using the entry node REPL (also configures the OS route automatically):
 ```
 wallhack> route add 10.20.0.0/24 via peer1
 wallhack> route add 10.30.0.0/24 via peer1
 ```
-{% /card %}
-{% card title="System ip tool" icon="terminal" description="Run on the attacker machine." %}
+
+Or directly with the system `ip` tool on the attacker machine:
 ```bash
 ip route add 10.20.0.0/24 dev tun0
 ip route add 10.30.0.0/24 dev tun0
 ```
-{% /card %}
-{% /grid %}
 {% /step %}
 {% /steps %}

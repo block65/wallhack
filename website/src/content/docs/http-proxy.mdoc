@@ -31,20 +31,17 @@ If `--exit-id` is omitted, a random identifier is generated — run `peers` in t
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
-Add routes for the networks accessible through the compromised host. Use the wallhack REPL **or** the system `ip` tool — pick one.
+Add routes for the networks reachable through the compromised host.
 
-{% grid cols=2 %}
-{% card title="wallhack REPL" icon="repl" description="Run on the entry node. The REPL also configures the OS route automatically." %}
+Using the entry node REPL (also configures the OS route automatically):
 ```
 wallhack> route add 10.10.0.0/24 via peer1
 ```
-{% /card %}
-{% card title="System ip tool" icon="terminal" description="Run on the attacker machine." %}
+
+Or directly with the system `ip` tool on the attacker machine:
 ```bash
 ip route add 10.10.0.0/24 dev tun0
 ```
-{% /card %}
-{% /grid %}
 {% /step %}
 {% /steps %}
 
