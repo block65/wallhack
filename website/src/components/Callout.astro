@@ -4,14 +4,14 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const calloutVariants = cva(
-  'p-4 rounded-lg border my-4',
+  'border-l-4 pl-4 py-1 my-3',
   {
     variants: {
       type: {
-        info: 'bg-primary/5 border-primary/20',
-        warning: 'bg-accent/10 border-accent/30',
-        note: 'bg-muted border-border',
-        tip: 'bg-green-500/10 border-green-500/30',
+        info: 'border-primary/50',
+        warning: 'border-accent/70',
+        note: 'border-muted-foreground/40',
+        tip: 'border-green-500/60',
       },
     },
     defaultVariants: {
