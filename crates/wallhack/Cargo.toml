@@ -111,6 +111,7 @@ test-log = { version = "0.2", features = ["trace"] }
 [dev-dependencies]
 bytes = "1.11.1"
 protobuf = { path = "../protobuf" }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 tempfile = "3"
 test-log = { version = "0.2", features = ["trace"] }
 tokio-test = "0.4"
