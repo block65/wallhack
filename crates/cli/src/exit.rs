@@ -74,7 +74,6 @@ enum ExitReplCommand {
 struct SecurityConfig {
 	psk: Option<String>,
 	accept_fingerprint: Option<String>,
-	insecure: bool,
 }
 
 /// Action returned from exit loop functions to trigger mode transitions.
@@ -126,7 +125,6 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	let security = SecurityConfig {
 		psk: global.resolve_psk(),
 		accept_fingerprint: cmd.accept_fingerprint.clone(),
-		insecure: cmd.insecure,
 	};
 
 	// Parse initial transport config
@@ -142,7 +140,10 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	loop {
 		let result = match (&connect_spec, &listen_spec) {
 			(Some(c), Some(l)) => {
-				crate::info!("Exit node with relay capability as {name}");
+				crate::route_info!(
+					printer.as_ref(),
+					"Exit node with relay capability as {name}"
+				);
 				run_relay_capability_mode(
 					global,
 					&name,
@@ -155,7 +156,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(Some(c), None) => {
-				crate::info!("Exit node starting as {name}");
+				crate::route_info!(printer.as_ref(), "Exit node starting as {name}");
 				run_connect_mode(
 					global,
 					&name,
@@ -168,7 +169,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(None, Some(l)) => {
-				crate::info!("Exit node listening as {name}");
+				crate::route_info!(printer.as_ref(), "Exit node listening as {name}");
 				run_listen_mode(global, l, &metrics, &mut repl_rx, printer.as_ref()).await
 			}
 			(None, None) => run_idle_mode(&metrics, &mut repl_rx, printer.as_ref()).await,
@@ -216,7 +217,7 @@ async fn run_connect_mode(
 	printer: Option<&Printer>,
 	security: &SecurityConfig,
 ) -> Result<ExitAction> {
-	crate::info!("Resolving {}", spec.addr);
+	crate::route_info!(printer, "Resolving {}", spec.addr);
 
 	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
 	let dns_server = global
@@ -226,7 +227,7 @@ async fn run_connect_mode(
 		.transpose()?;
 
 	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
-	crate::verbose!("Resolved as {endpoint:?}");
+	crate::route_info!(printer, "Resolved as {endpoint:?}");
 
 	match spec.protocol {
 		Protocol::Udp => {
@@ -262,7 +263,7 @@ async fn run_relay_capability_mode(
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
 ) -> Result<ExitAction> {
-	crate::info!("Resolving peer to connect to: {}", connect_spec.addr);
+	crate::route_info!(printer, "Resolving {}", connect_spec.addr);
 	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
 	let dns_server = global
 		.dns
@@ -271,10 +272,10 @@ async fn run_relay_capability_mode(
 		.transpose()?;
 
 	let peer_addr = crate::dns::resolve(resolvable, dns_server).await?;
-	crate::info!("Connecting to peer: {peer_addr}");
+	crate::route_info!(printer, "Connecting to peer: {peer_addr}");
 
 	let listen_addr = parse_listen_addr(&listen_spec.addr)?;
-	crate::info!("Listening for peer connections on: {listen_addr}");
+	crate::route_info!(printer, "Listening for peer connections on: {listen_addr}");
 
 	match connect_spec.protocol {
 		Protocol::Udp => {
@@ -326,10 +327,7 @@ async fn run_listen_mode(
 
 	let server_config = build_server_config(global, addr);
 
-	crate::info!("Exit node listening on {addr}");
-	if let Some(p) = printer {
-		p.print(format!("Listening on {addr}"));
-	}
+	crate::route_info!(printer, "Listening on {addr}");
 
 	match spec.protocol {
 		Protocol::Udp => {
@@ -372,10 +370,7 @@ where
 			result = server.accept(NodeRole::Exit) => {
 				match result {
 					Ok(Some(accept_result)) => {
-						crate::info!("Accepted connection from {}", accept_result.peer_addr());
-						if let Some(p) = printer {
-							p.print(format!("Peer connected: {}", accept_result.peer_addr()));
-						}
+						crate::route_info!(printer, "Peer connected: {}", accept_result.peer_addr());
 						let transport = accept_result.transport();
 						let adapter = SyscallExitAdapter::new();
 						let _reaper = adapter.start_reaper(
@@ -540,11 +535,7 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	printer: Option<&Printer>,
 	peer_addr: &str,
 ) -> Result<Option<ExitAction>> {
-	crate::info!("Connected to {}", connect_result.peer_addr());
-
-	if let Some(p) = printer {
-		p.print(format!("Connected to {peer_addr}"));
-	}
+	crate::route_info!(printer, "Connected to {peer_addr}");
 
 	let connected_at = Instant::now();
 
@@ -582,7 +573,7 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 				return Ok(None);
 			}
 			() = &mut disconnect_fut => {
-				crate::info!("Connection tasks died - transport disconnected");
+				tracing::debug!("Connection tasks died - transport disconnected");
 				let msg = "Transport disconnected, reconnecting...";
 				if let Some(p) = printer { p.print(msg); } else { crate::info!("{msg}"); }
 				return Ok(None);
@@ -839,12 +830,6 @@ async fn run_quic_exit(
 		security.accept_fingerprint.clone(),
 	);
 
-	if !security.insecure && security.psk.is_none() && security.accept_fingerprint.is_none() {
-		crate::warn!(
-			"Connecting without authentication or certificate verification. Use --psk <SECRET> or --accept-fingerprint <HASH> for security."
-		);
-	}
-
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
 	let peer_addr = endpoint.to_string();
@@ -925,12 +910,6 @@ async fn run_ws_exit(
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
 	};
-
-	if !security.insecure && security.psk.is_none() && security.accept_fingerprint.is_none() {
-		crate::warn!(
-			"Connecting without authentication or certificate verification. Use --psk <SECRET> or --accept-fingerprint <HASH> for security."
-		);
-	}
 
 	let client_config = WsClientConfig {
 		base: ClientConfig {
@@ -1061,7 +1040,7 @@ async fn run_quic_relay_capability(
 	let mut client = client::quic::QuicClient::try_new(client_config)?;
 	let connect_result = client.connect(NodeRole::Exit).await?;
 
-	crate::info!("Connected to peer {peer_addr}");
+	crate::route_info!(printer, "Connected to peer {peer_addr}");
 
 	let (relay_instr, relay_resp) = connect_result.channels().clone();
 
@@ -1076,16 +1055,11 @@ async fn run_quic_relay_capability(
 	let server_config = build_server_config(global, listen_addr);
 	let mut server = wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
 
-	crate::info!(
+	crate::route_info!(
+		printer,
 		"Relay capability active: connected to {peer_addr}, listening on :{}",
 		listen_addr.port()
 	);
-	if let Some(p) = printer {
-		p.print(format!(
-			"Relay capability active (connected to {peer_addr}, listening on :{})",
-			listen_addr.port()
-		));
-	}
 
 	let peer_addr_str = peer_addr.to_string();
 	let listen_port = listen_addr.port();
@@ -1098,10 +1072,7 @@ async fn run_quic_relay_capability(
 			result = server.accept(NodeRole::Exit) => {
 				match result {
 					Ok(Some(accept_result)) => {
-						crate::info!("Peer connected: {}", accept_result.peer_addr());
-						if let Some(p) = printer {
-							p.print(format!("Peer connected: {}", accept_result.peer_addr()));
-						}
+						crate::route_info!(printer, "Peer connected: {}", accept_result.peer_addr());
 						bridge_peer(accept_result, &relay_instr, &relay_resp);
 					}
 					Ok(None) => {
@@ -1211,7 +1182,7 @@ async fn run_ws_relay_capability(
 	let mut client = WsClient::new(client_config)?;
 	let connect_result = client.connect(NodeRole::Exit).await?;
 
-	crate::info!("Connected to peer {peer_addr}");
+	crate::route_info!(printer, "Connected to peer {peer_addr}");
 
 	let (relay_instr, relay_resp) = connect_result.channels().clone();
 
@@ -1226,16 +1197,11 @@ async fn run_ws_relay_capability(
 	let server_config = build_server_config(global, listen_addr);
 	let mut server = wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
 
-	crate::info!(
+	crate::route_info!(
+		printer,
 		"Relay capability active: connected to {peer_addr}, listening on :{}",
 		listen_addr.port()
 	);
-	if let Some(p) = printer {
-		p.print(format!(
-			"Relay capability active (connected to {peer_addr}, listening on :{})",
-			listen_addr.port()
-		));
-	}
 
 	let peer_addr_str = peer_addr.to_string();
 	let listen_port = listen_addr.port();
@@ -1248,10 +1214,7 @@ async fn run_ws_relay_capability(
 			result = server.accept(NodeRole::Exit) => {
 				match result {
 					Ok(Some(accept_result)) => {
-						crate::info!("Peer connected: {}", accept_result.peer_addr());
-						if let Some(p) = printer {
-							p.print(format!("Peer connected: {}", accept_result.peer_addr()));
-						}
+						crate::route_info!(printer, "Peer connected: {}", accept_result.peer_addr());
 						bridge_peer(accept_result, &relay_instr, &relay_resp);
 					}
 					Ok(None) => {
@@ -1329,7 +1292,7 @@ fn bridge_peer<T: wallhack::transport::Transport>(
 	relay_instr: &tokio::sync::broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
 	relay_resp: &tokio::sync::broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) {
-	crate::info!("Bridging peer connection: {}", accept_result.peer_addr());
+	tracing::debug!("Bridging peer connection: {}", accept_result.peer_addr());
 
 	let ((peer_instr, peer_resp), control_tx) = accept_result.channels();
 
