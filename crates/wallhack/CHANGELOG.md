@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.1](https://github.com/block65/wallhack/compare/wallhack-v0.1.0...wallhack-v0.1.1) (2026-02-20)
+
+
+### Features
+
+* HTTP CONNECT and SOCKS5 proxy support for WebSockets transport ([ce2f8cf](https://github.com/block65/wallhack/commit/ce2f8cf3ecab8c2e38ecd5e7f8482fd80faf4708))
+* **server:** enforce mTLS when CA roots are configured ([30b6595](https://github.com/block65/wallhack/commit/30b6595e70cac91294ac451cfbe48929fafa7a11))
+
+
+### Bug Fixes
+
+* **api:** propagate route added_at timestamp to REST API ([0a2c5de](https://github.com/block65/wallhack/commit/0a2c5dea7c45fc4a6e11e13cbb4a239f6edbccd2))
+* **ci:** restore slim variant with proper feature isolation and fix r… ([e8f0f3b](https://github.com/block65/wallhack/commit/e8f0f3b43d2fe9e7fab24d3ea2d3a9c3c3f8c5a2))
+* **ci:** restore slim variant with proper feature isolation and fix release upload race ([7a04c81](https://github.com/block65/wallhack/commit/7a04c81787aca98c03a62b3211c2e61ddf1f4eee))
+* **server:** move test module to end of tls.rs ([eeebd7b](https://github.com/block65/wallhack/commit/eeebd7b21bb2292dc0b816dd51a3f1659ca1517c))
+
 ## 0.1.0 (2026-02-20)
 
 
