@@ -157,3 +157,19 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 
 - [ ] search for "allow(clippy" calls and make sure that they are legit and are not shortcuts for ignoring errors that should be dealt with properly, or in an alternate manner. eg #[allow(clippy::cast_possible_truncation)].  If they are legit, then they should be commented as such.
 - [ ] when adding a route, the peer name should be optional if only 1 peer is connected, and it should default to that single
+- [x] default port for `--connect` and `--listen` when no port is provided, so `--connect attacker` works without requiring `attacker:port`
+- [x] error display when address parsing fails is duplicated and noisy — shown twice, once as a bullet and once as `Error:`. Show once, cleanly.
+
+
+```
+/ # wallhack exit --connect attacker
+[+] Starting as exit node
+Type 'help' for commands, 'quit' to exit.
+
+[+] Exit node starting (peer: 3ec93cff)
+[+] Resolving attacker
+- Invalid address: Address must be in <hostname_or_ip>:<port> format. Got: attacker
+Error: Invalid address: Address must be in <hostname_or_ip>:<port> format. Got: attacker
+Node idle. Use 'connect <addr>' or 'listen <addr>' to start.
+wallhack>
+```
