@@ -8,6 +8,14 @@
       between smoltcp writes and the poll loop.
 - [ ] Buffer pooling for UDP packets and TUN reads
 - [ ] Reduce global lock contention in netstack
+- [ ] `arc-swap` for route table and peer registry — both are read-heavy,
+      write-rare; `arc-swap` gives wait-free reads on the data path vs the
+      current `parking_lot::Mutex`
+- [ ] Bounded broadcast channels with tail drop — replace the hardcoded 65536
+      capacity on `instructions`/`responses` channels with a bounded `mpsc` +
+      explicit drop on full. Packet loss is semantically correct (IP expects it);
+      unbounded buffering causes OOM under backpressure. Expose drop counter via
+      peer stats.
 
 ## Dropper
 
@@ -20,7 +28,6 @@
 ## Security
 
 - [ ] Certificate pinning
-- [ ] Node authentication/authorization
 - [ ] Encrypted config storage
 
 ## REST API
@@ -33,10 +40,6 @@
 
 ## Transports
 
-- [ ] Unified transport pipes: after smoltcp, TCP and UDP should use the same
-      protobuf format and same pipes. Two parallel UDP paths exist (bi-stream and
-      orchestrator/broadcast) causing bugs. Unify so the only difference is at the
-      wire/TUN/smoltcp layer.
 - [ ] DNS over tunnel — intercept DNS queries at the TUN interface on the exit
       node and route them back through the tunnel for resolution on the entry
       side, preventing DNS leaks on the target network that would otherwise be
@@ -86,6 +89,37 @@
 
 - [ ] Drop glibc release builds in favour of musl static only. Add
       `aarch64-unknown-linux-musl`. Consider armv7 for older 32-bit targets.
+
+## Code Quality & Architecture
+
+- [ ] Newtype wrappers for domain primitives — `PeerId`, `PeerName`, `Psk` are raw
+      `String`; port numbers are raw `u16`. Introduce newtypes (`struct Psk(String)`
+      with `ZeroizeOnDrop`, `struct PeerId(String)`) so the compiler prevents mixing,
+      reduces ambiguous clone noise, and documents intent at the type level.
+- [ ] `TryFrom<ProtoNodeRole>` error type — `type Error = String` in
+      `crates/wallhack/src/types.rs`. Replace with a proper `NodeRoleError` enum;
+      raw `String` errors opt out of the type system and make `?` chains harder to
+      reason about.
+- [ ] `Metrics` field visibility — All six `AtomicU64` fields in
+      `crates/wallhack/src/control/metrics.rs` are `pub`. Make them private; the
+      existing `inc_*`/`dec_*` methods are the correct API surface. Direct callers
+      should not be able to `store(0)` or `fetch_add(arbitrary)`.
+- [ ] `run_control_loop` parameter object — Seven parameters (four of which are
+      `Option<&Tx>`) in `crates/wallhack/src/transport/bridge.rs`. Group the channel
+      handles into a `ControlLoopHandles` struct to enforce all-or-nothing wiring,
+      improve call-site readability, and remove the `Option`-juggling inside the loop.
+- [ ] `ControlLoopExit::Disconnect` reason — `Disconnect(String)` carries a raw
+      reason string. Replace with a `DisconnectReason` enum so exhaustive match catches
+      new variants and callers can react structurally rather than parsing strings.
+- [ ] `ConnectionManager` decomposition — `crates/wallhack/src/entry/manager.rs`
+      handles TCP accept, UDP forwarding, SYN proxy dispatch, UDP session GC, and exit
+      response handling in one `select!` loop. Extract each concern into a focused
+      type or async fn with a clean input/output contract.
+- [ ] Deduplicate orchestrator session patterns — TCP and UDP `get-or-create` logic in
+      `crates/wallhack/src/exit/orchestrator.rs` are near-identical structs apart from
+      the protocol label. Extract a generic `get_or_create_session` helper.
+- [ ] `ExitNodeResponse` construction boilerplate — The `ExitNodeResponse { pair: Some(pair), response: Some(…) }` struct literal is repeated throughout the exit
+      orchestrator. Add a constructor or builder method to centralise the pair-wrapping.
 
 ## Misc
 
