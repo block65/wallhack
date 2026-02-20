@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/block65/wallhack/compare/cli-v0.2.0...cli-v0.2.1) (2026-02-20)
+
+
+### Features
+
+* **cli:** default to port 6565 when no port given for --connect and --listen ([3343d10](https://github.com/block65/wallhack/commit/3343d1094b9eaadb7c815496333d4ee134df5b2b))
+
 ## [0.2.0](https://github.com/block65/wallhack/compare/cli-v0.1.2...cli-v0.2.0) (2026-02-19)
 
 
