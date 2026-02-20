@@ -4,6 +4,7 @@ Before starting any work, read the following standards from the `standards/` sub
 
 - **Git & Workflow:** `./standards/workflow/git.md`
 - **Rust Standards:** `./standards/lang/rust.md`
+- **PR Workflow (TRIPLE):** `./standards/workflow/triple.md`
 
 ## Crate structure
 
