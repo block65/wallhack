@@ -156,8 +156,8 @@ pub async fn run_control_loop<S: BiStream>(
 				match msg.message {
 					Some(control_message::Message::Hello(hello)) => {
 						tracing::info!(
-							"Control: received Hello id={} version={}",
-							hello.exit_id, hello.version,
+							"Control: received Hello name={} version={}",
+							hello.name, hello.version,
 						);
 						if let Some(tx) = hello_tx.take() {
 							let _ = tx.send(hello);

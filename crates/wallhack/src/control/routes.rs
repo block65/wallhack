@@ -11,8 +11,8 @@ use crate::Cidr;
 pub struct RouteEntry {
 	/// The destination network.
 	pub cidr: Cidr,
-	/// Peer responsible for this route.
-	pub peer_id: String,
+	/// Name of the peer responsible for this route.
+	pub peer: String,
 	/// When this route was added.
 	pub added_at: Instant,
 }
@@ -50,10 +50,10 @@ impl RouteTable {
 	}
 
 	/// Add a route. Returns the previous entry if one existed for this CIDR.
-	pub fn add(&self, cidr: Cidr, peer_id: String) -> Option<RouteEntry> {
+	pub fn add(&self, cidr: Cidr, peer: String) -> Option<RouteEntry> {
 		let entry = RouteEntry {
 			cidr,
-			peer_id,
+			peer,
 			added_at: Instant::now(),
 		};
 		let mut old_entry = None;
@@ -77,13 +77,13 @@ impl RouteTable {
 	}
 
 	/// Remove all routes pointing at a specific peer. Returns removed entries.
-	pub fn remove_by_peer(&self, peer_id: &str) -> Vec<RouteEntry> {
+	pub fn remove_by_peer(&self, peer: &str) -> Vec<RouteEntry> {
 		let mut removed = Vec::new();
 		self.routes.rcu(|old| {
 			let mut new = (**old).clone();
 			let to_remove: Vec<Cidr> = new
 				.iter()
-				.filter(|(_, entry)| entry.peer_id == peer_id)
+				.filter(|(_, entry)| entry.peer == peer)
 				.map(|(cidr, _)| *cidr)
 				.collect();
 			removed = to_remove
@@ -125,7 +125,7 @@ mod tests {
 		assert!(table.add(cidr, "peer-1".into()).is_none());
 
 		let entry = table.get(&cidr).unwrap();
-		assert_eq!(entry.peer_id, "peer-1");
+		assert_eq!(entry.peer, "peer-1");
 		assert_eq!(entry.cidr, cidr);
 	}
 
@@ -136,8 +136,8 @@ mod tests {
 
 		assert!(table.add(cidr, "peer-1".into()).is_none());
 		let old = table.add(cidr, "peer-2".into()).unwrap();
-		assert_eq!(old.peer_id, "peer-1");
-		assert_eq!(table.get(&cidr).unwrap().peer_id, "peer-2");
+		assert_eq!(old.peer, "peer-1");
+		assert_eq!(table.get(&cidr).unwrap().peer, "peer-2");
 	}
 
 	#[test]
@@ -149,7 +149,7 @@ mod tests {
 		assert_eq!(table.count(), 1);
 
 		let removed = table.remove(&cidr).unwrap();
-		assert_eq!(removed.peer_id, "peer-1");
+		assert_eq!(removed.peer, "peer-1");
 		assert_eq!(table.count(), 0);
 		assert!(table.get(&cidr).is_none());
 	}

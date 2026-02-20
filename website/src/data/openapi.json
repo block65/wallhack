@@ -77,11 +77,17 @@
 			},
 			"PeerResponse": {
 				"type": "object",
-				"required": ["id", "addr", "role", "connected_at", "bytes_transferred"],
+				"required": [
+					"name",
+					"addr",
+					"role",
+					"connected_at",
+					"bytes_transferred"
+				],
 				"properties": {
-					"id": {
+					"name": {
 						"type": "string",
-						"description": "Unique identifier for the peer."
+						"description": "Name of the peer (user-provided via --name, or auto-generated)."
 					},
 					"addr": {
 						"type": "string",
@@ -120,29 +126,29 @@
 			},
 			"RouteAddRequest": {
 				"type": "object",
-				"required": ["cidr", "peer_id"],
+				"required": ["cidr", "peer"],
 				"properties": {
 					"cidr": {
 						"type": "string",
 						"description": "Target network in CIDR notation (e.g., 10.0.0.0/24)."
 					},
-					"peer_id": {
+					"peer": {
 						"type": "string",
-						"description": "ID of the peer through which the network should be routed."
+						"description": "Name of the peer through which the network should be routed."
 					}
 				}
 			},
 			"RouteResponse": {
 				"type": "object",
-				"required": ["cidr", "peer_id", "added_at_secs"],
+				"required": ["cidr", "peer", "added_at_secs"],
 				"properties": {
 					"cidr": {
 						"type": "string",
 						"description": "Network range routed through the tunnel."
 					},
-					"peer_id": {
+					"peer": {
 						"type": "string",
-						"description": "ID of the peer responsible for this route."
+						"description": "Name of the peer responsible for this route."
 					},
 					"added_at_secs": {
 						"type": "integer",
@@ -273,7 +279,7 @@
 				}
 			}
 		},
-		"/peers/{id}": {
+		"/peers/{name}": {
 			"delete": {
 				"summary": "Disconnect peer",
 				"description": "Terminates the connection with a specific peer.",
@@ -281,11 +287,11 @@
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
-						"name": "id",
+						"name": "name",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string" },
-						"description": "Identifier of the peer to disconnect."
+						"description": "Name of the peer to disconnect."
 					}
 				],
 				"responses": {
@@ -297,7 +303,7 @@
 							}
 						}
 					},
-					"400": { "description": "Malformed peer ID." },
+					"400": { "description": "Malformed peer name." },
 					"401": { "description": "Unauthorized." },
 					"404": { "description": "Specified peer not found." }
 				}
@@ -343,7 +349,9 @@
 							}
 						}
 					},
-					"400": { "description": "Invalid network specification or peer ID." },
+					"400": {
+						"description": "Invalid network specification or peer name."
+					},
 					"401": { "description": "Unauthorized." }
 				}
 			}

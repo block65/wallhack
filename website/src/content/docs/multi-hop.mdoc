@@ -26,11 +26,11 @@ A [relay node](/concepts) connecting to the entry node and listening for the nex
 {% /step %}
 
 {% step title="Internal Host (10.10.1.5)" number=3 %}
-An [exit node](/concepts) connecting back to the relay. `--exit-id` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL. It can be any identifier you choose.
+An [exit node](/concepts) connecting back to the relay. `--name` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL. It can be anything you choose.
 
-{% codeblock code="wallhack exit --connect 10.0.1.10 --exit-id peer1" /%}
+{% codeblock code="wallhack exit --connect 10.0.1.10 --name peer1" /%}
 
-If `--exit-id` is omitted, a random identifier is generated — run `peers` in the REPL to discover it.
+If `--name` is omitted, a random name is generated — run `peers` in the REPL to discover it.
 {% /step %}
 
 {% step title="Configure Routes" number=4 %}

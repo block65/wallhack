@@ -1,20 +1,25 @@
-import { readFile } from "node:fs/promises";
 import { getCollection } from "astro:content";
-import type { APIContext, InferGetStaticPropsType } from "astro";
+import { readFile } from "node:fs/promises";
 import { Resvg } from "@resvg/resvg-js";
+import type { APIContext, InferGetStaticPropsType } from "astro";
 import satori from "satori";
+import { SITE_NAME } from "../../consts.ts";
 
- function load(specifier: string) {
+function load(specifier: string) {
 	if (!import.meta.resolve) {
-		throw new Error("import.meta.resolve is not available")
-	};
-	return Promise.resolve(import.meta.resolve(specifier)).then((url) => readFile(new URL(url)));
+		throw new Error("import.meta.resolve is not available");
+	}
+	return Promise.resolve(import.meta.resolve(specifier)).then((url) =>
+		readFile(new URL(url)),
+	);
 }
 
 const [interRegular, interBold, dmSerif] = await Promise.all([
 	load("@fontsource/inter/files/inter-latin-400-normal.woff"),
 	load("@fontsource/inter/files/inter-latin-700-normal.woff"),
-	load("@fontsource/dm-serif-display/files/dm-serif-display-latin-400-normal.woff")		,
+	load(
+		"@fontsource/dm-serif-display/files/dm-serif-display-latin-400-normal.woff",
+	),
 ]);
 
 export async function getStaticPaths() {
@@ -28,7 +33,8 @@ export async function getStaticPaths() {
 			params: { slug: "rest-api" },
 			props: {
 				title: "REST API",
-				description: "Programmatic HTTP interface for headless management of entry nodes.",
+				description:
+					"Programmatic HTTP interface for headless management of entry nodes.",
 			},
 		},
 	];
@@ -36,8 +42,11 @@ export async function getStaticPaths() {
 
 type Props = InferGetStaticPropsType<typeof getStaticPaths>;
 
-export async function GET({ props }: APIContext<Props>) {
-	const { title, description } = props;
+export async function GET({ props, params }: APIContext<Props>) {
+	// Use the brand name as the OG title for the home page — "Overview" is
+	// correct for SEO/meta but not meaningful as an image headline.
+	const title = params.slug === "index" ? SITE_NAME : props.title;
+	const { description } = props;
 
 	// 1200x630 (1.91:1) is the universal OG image size.
 	// WhatsApp crops to a centre square (~630x630), so keep all important
@@ -88,24 +97,24 @@ export async function GET({ props }: APIContext<Props>) {
 					// Description
 					...(description
 						? [
-							{
-								type: "div",
-								props: {
-									style: {
-										fontFamily: "Inter",
-										fontWeight: 400,
-										fontSize: 24,
-										color: "#8890a0",
-										marginTop: 24,
-										lineHeight: 1.4,
-										textAlign: "center",
-										maxWidth: "700px",
-										textWrap: "balance",
+								{
+									type: "div",
+									props: {
+										style: {
+											fontFamily: "Inter",
+											fontWeight: 400,
+											fontSize: 24,
+											color: "#8890a0",
+											marginTop: 24,
+											lineHeight: 1.4,
+											textAlign: "center",
+											maxWidth: "700px",
+											textWrap: "balance",
+										},
+										children: description,
 									},
-									children: description,
 								},
-							},
-						]
+							]
 						: []),
 					// Domain
 					{
@@ -137,7 +146,7 @@ export async function GET({ props }: APIContext<Props>) {
 					style: "normal",
 				},
 			],
-		}
+		},
 	);
 
 	const png = new Uint8Array(new Resvg(svg).render().asPng());

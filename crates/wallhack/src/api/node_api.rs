@@ -47,8 +47,8 @@ impl std::fmt::Display for PeerStatus {
 /// Information about a directly connected peer.
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-	/// Unique identifier for the peer.
-	pub id: String,
+	/// Name of the peer (user-provided or auto-generated).
+	pub name: String,
 	/// Remote address of the peer.
 	pub addr: String,
 	/// Whether this peer has relay capability.
@@ -68,8 +68,8 @@ pub struct PeerInfo {
 pub struct RouteEntry {
 	/// Destination network.
 	pub cidr: Cidr,
-	/// Peer responsible for this route.
-	pub peer_id: String,
+	/// Name of the peer responsible for this route.
+	pub peer: String,
 }
 
 /// Traffic and connection metrics.
@@ -172,7 +172,7 @@ pub trait NodeApi: Send + Sync {
 	///
 	/// Only supported on entry nodes. Returns error for exit/relay nodes.
 	/// Peer must be directly connected.
-	fn add_route(&self, cidr: Cidr, peer_id: String) -> Result<()>;
+	fn add_route(&self, cidr: Cidr, peer: String) -> Result<()>;
 
 	/// Remove a route by CIDR.
 	///
@@ -182,5 +182,5 @@ pub trait NodeApi: Send + Sync {
 	/// Disconnect a specific peer.
 	///
 	/// Only supported on entry nodes. Returns error for exit/relay nodes.
-	fn disconnect_peer(&self, peer_id: String) -> Result<()>;
+	fn disconnect_peer(&self, peer: String) -> Result<()>;
 }

@@ -203,8 +203,8 @@ impl Server for WsServer {
 			Ok(Ok(msg)) => match msg.message {
 				Some(control_message::Message::Hello(hello)) => {
 					tracing::info!(
-						"Received Hello: id={}, version={}",
-						hello.exit_id,
+						"Received Hello: name={}, version={}",
+						hello.name,
 						hello.version,
 					);
 					Some(hello)

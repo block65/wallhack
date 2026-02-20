@@ -107,18 +107,18 @@ pub fn validate_host(host: &str) -> Result<(), ValidationError> {
 	Err(ValidationError::InvalidHost)
 }
 
-/// Validates a peer ID.
+/// Validates a peer name.
 ///
-/// Peer IDs must be:
+/// Peer names must be:
 /// - Non-empty
 /// - At most 128 characters
 /// - Alphanumeric, hyphens, underscores, colons, and periods only
-///   (to support IP:port format and UUIDs)
+///   (to support IP:port format and auto-generated names)
 ///
 /// # Errors
 ///
-/// Returns error if the peer ID is invalid.
-pub fn validate_peer_id(id: &str) -> Result<(), ValidationError> {
+/// Returns error if the peer name is invalid.
+pub fn validate_peer_name(id: &str) -> Result<(), ValidationError> {
 	if id.is_empty() {
 		return Err(ValidationError::Empty);
 	}
@@ -215,30 +215,30 @@ mod tests {
 	}
 
 	#[test]
-	fn test_valid_peer_ids() {
-		assert!(validate_peer_id("abc123").is_ok());
-		assert!(validate_peer_id("192.168.1.1:8080").is_ok());
-		assert!(validate_peer_id("[::1]:8080").is_ok());
-		assert!(validate_peer_id("peer-1_test").is_ok());
+	fn test_valid_peer_names() {
+		assert!(validate_peer_name("abc123").is_ok());
+		assert!(validate_peer_name("192.168.1.1:8080").is_ok());
+		assert!(validate_peer_name("[::1]:8080").is_ok());
+		assert!(validate_peer_name("peer-1_test").is_ok());
 	}
 
 	#[test]
-	fn test_invalid_peer_ids() {
-		assert_eq!(validate_peer_id(""), Err(ValidationError::Empty));
+	fn test_invalid_peer_names() {
+		assert_eq!(validate_peer_name(""), Err(ValidationError::Empty));
 		assert_eq!(
-			validate_peer_id("a; rm -rf /"),
+			validate_peer_name("a; rm -rf /"),
 			Err(ValidationError::InvalidCharacters)
 		);
 		assert_eq!(
-			validate_peer_id("$(whoami)"),
+			validate_peer_name("$(whoami)"),
 			Err(ValidationError::InvalidCharacters)
 		);
 		assert_eq!(
-			validate_peer_id("peer\nid"),
+			validate_peer_name("peer\nid"),
 			Err(ValidationError::InvalidCharacters)
 		);
 		assert_eq!(
-			validate_peer_id(&"a".repeat(200)),
+			validate_peer_name(&"a".repeat(200)),
 			Err(ValidationError::TooLong {
 				max: 128,
 				actual: 200

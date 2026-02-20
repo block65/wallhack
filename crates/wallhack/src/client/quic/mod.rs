@@ -59,7 +59,7 @@ pub struct QuicClient {
 	addr: std::net::SocketAddr,
 	hostname: String,
 	endpoint: quinn::Endpoint,
-	exit_id: Option<String>,
+	name: Option<String>,
 	psk: Option<String>,
 }
 
@@ -95,7 +95,7 @@ impl Client for QuicClient {
 			addr: args.addr,
 			hostname,
 			endpoint,
-			exit_id: args.exit_id,
+			name: args.name,
 			psk: args.psk,
 		})
 	}
@@ -128,11 +128,11 @@ impl Client for QuicClient {
 		let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
 
 		// If exit node, send Hello via the control stream
-		if let Some(ref exit_id) = self.exit_id {
-			tracing::debug!("Queuing ExitNodeHello with id: {}", exit_id);
+		if let Some(ref name) = self.name {
+			tracing::debug!("Queuing ExitNodeHello with name: {}", name);
 			let hello = ControlMessage {
 				message: Some(control_message::Message::Hello(ExitNodeHello {
-					exit_id: exit_id.clone(),
+					name: name.clone(),
 					version: env!("CARGO_PKG_VERSION").to_string(),
 					auth_token: self.psk.clone().unwrap_or_default(),
 				})),
