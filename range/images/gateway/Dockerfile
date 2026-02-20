@@ -7,7 +7,7 @@ RUN apk add --no-cache openssh socat netcat-openbsd curl iptables && \
   echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
   echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
 
-COPY target/x86_64-unknown-linux-musl/release/wallhack /usr/bin/wallhack
+COPY target/musl/x86_64-unknown-linux-musl/release/wallhack /usr/bin/wallhack
 COPY range/assets/ssh_keys/etc/ssh/ssh_host_* /etc/ssh/
 
 CMD ["/usr/sbin/sshd", "-D"]

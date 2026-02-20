@@ -4,7 +4,7 @@ root := justfile_directory() / ".."
 
 # Build wallhack for musl
 build:
-    cd {{ root }} && cross build -q --release --target x86_64-unknown-linux-musl
+    cd {{ root }} && CARGO_TARGET_DIR=target/musl cross build -q --release --target x86_64-unknown-linux-musl
 
 # Start the cyber range (run `just build` first if the binary is outdated)
 up:
