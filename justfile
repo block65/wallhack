@@ -24,15 +24,15 @@ test:
 
 # Install website dependencies (pnpm, frozen lockfile)
 website-deps:
-    cd {{website}} && pnpm install --frozen-lockfile --silent
+    cd "{{website}}" && pnpm install --frozen-lockfile --silent
 
 # Website lint (biome)
 website-lint: website-deps
-    cd {{website}} && pnpm check
+    cd "{{website}}" && pnpm check
 
 # Website build (astro)
 website-build: website-deps
-    cd {{website}} && pnpm build
+    cd "{{website}}" && pnpm build
 
 # Delete local branches that have been merged and deleted on origin
 clean-branches:
