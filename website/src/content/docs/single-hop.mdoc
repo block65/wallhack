@@ -20,11 +20,9 @@ With no arguments, `wallhack` starts an [entry node](/concepts) on the default p
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back to the entry node on the default port. `--name` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL.
+An [exit node](/concepts) connecting back to the entry node on the default port.
 
-{% codeblock code="wallhack exit --connect 192.168.1.5 --name peer1" /%}
-
-If `--name` is omitted, a random name is generated — run `peers` in the REPL to discover it.
+{% codeblock code="wallhack exit --connect 192.168.1.5" /%}
 
 {% /step %}
 
@@ -33,7 +31,7 @@ Add routes for the networks reachable through the compromised host.
 
 Using the entry node REPL (also configures the OS route automatically):
 ```
-wallhack> route add 10.10.0.0/24 via peer1
+wallhack> route add 10.10.0.0/24
 ```
 
 Or directly with the system `ip` tool on the attacker machine:
