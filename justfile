@@ -45,7 +45,7 @@ open-pr:
     set -euo pipefail
     test -f TASK.md || { echo "TASK.md not found. Create it first (see TRIPLE.md)."; exit 1; }
     title=$(awk '/^# /{sub(/^# /, ""); print; exit}' TASK.md)
-    gh pr create --title "$title" --body-file TASK.md
+    gh pr create --title "$title" --body-file TASK.md --
 
 # TRIPLE: Merge the PR for the current branch (rebase merge)
 do-merge:
