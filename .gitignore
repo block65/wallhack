@@ -25,3 +25,12 @@ range/demo.gif
 
 *.log
 TASK.md
+
+# AI agent instruction files (local per-user)
+CLAUDE.md
+GEMINI.md
+.github/copilot-instructions.md
+
+# AI-generated analysis/proposal docs (local only)
+docs/*AUDIT*.md
+docs/*PROPOSAL*.md
