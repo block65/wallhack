@@ -181,7 +181,7 @@ fn bridge_downstream<T: wallhack::transport::Transport>(
 	upstream_instr: &broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
 	upstream_resp: &broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) {
-	crate::info!("Downstream connected: {}", accept_result.client_ident());
+	crate::info!("Downstream connected: {}", accept_result.peer_addr());
 
 	let ((downstream_instr, downstream_resp), control_tx) = accept_result.channels();
 

@@ -44,7 +44,7 @@ impl ConnectionTasks {
 
 pub struct ConnectResult<T: transport::Transport + ?Sized> {
 	channels: Channels,
-	peer_ident: String,
+	peer_addr: String,
 	tasks: ConnectionTasks,
 	transport: std::sync::Arc<T>,
 	/// Channel for injecting messages into the control stream.
@@ -56,13 +56,13 @@ impl<T: transport::Transport + ?Sized> ConnectResult<T> {
 	pub fn new(
 		transport: std::sync::Arc<T>,
 		channels: Channels,
-		peer_ident: String,
+		peer_addr: String,
 		tasks: ConnectionTasks,
 		control_tx: mpsc::Sender<ControlMessage>,
 	) -> Self {
 		Self {
 			channels,
-			peer_ident,
+			peer_addr,
 			tasks,
 			transport,
 			control_tx,
@@ -80,8 +80,8 @@ impl<T: transport::Transport + ?Sized> ConnectResult<T> {
 	}
 
 	#[must_use]
-	pub fn client_ident(&self) -> &str {
-		&self.peer_ident
+	pub fn peer_addr(&self) -> &str {
+		&self.peer_addr
 	}
 
 	#[must_use]

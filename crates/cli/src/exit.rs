@@ -373,9 +373,9 @@ where
 			result = server.accept(NodeRole::Exit) => {
 				match result {
 					Ok(Some(accept_result)) => {
-						crate::info!("Accepted connection from {}", accept_result.client_ident());
+						crate::info!("Accepted connection from {}", accept_result.peer_addr());
 						if let Some(p) = printer {
-							p.print(format!("Peer connected: {}", accept_result.client_ident()));
+							p.print(format!("Peer connected: {}", accept_result.peer_addr()));
 						}
 						let transport = accept_result.transport();
 						let adapter = SyscallExitAdapter::new();
@@ -541,7 +541,7 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 	printer: Option<&Printer>,
 	peer_addr: &str,
 ) -> Result<Option<ExitAction>> {
-	crate::info!("Connected to {}", connect_result.client_ident());
+	crate::info!("Connected to {}", connect_result.peer_addr());
 
 	if let Some(p) = printer {
 		p.print(format!("Connected to {peer_addr}"));
@@ -1097,9 +1097,9 @@ async fn run_quic_relay_capability(
 			result = server.accept(NodeRole::Exit) => {
 				match result {
 					Ok(Some(accept_result)) => {
-						crate::info!("Peer connected: {}", accept_result.client_ident());
+						crate::info!("Peer connected: {}", accept_result.peer_addr());
 						if let Some(p) = printer {
-							p.print(format!("Peer connected: {}", accept_result.client_ident()));
+							p.print(format!("Peer connected: {}", accept_result.peer_addr()));
 						}
 						bridge_peer(accept_result, &relay_instr, &relay_resp);
 					}
@@ -1247,9 +1247,9 @@ async fn run_ws_relay_capability(
 			result = server.accept(NodeRole::Exit) => {
 				match result {
 					Ok(Some(accept_result)) => {
-						crate::info!("Peer connected: {}", accept_result.client_ident());
+						crate::info!("Peer connected: {}", accept_result.peer_addr());
 						if let Some(p) = printer {
-							p.print(format!("Peer connected: {}", accept_result.client_ident()));
+							p.print(format!("Peer connected: {}", accept_result.peer_addr()));
 						}
 						bridge_peer(accept_result, &relay_instr, &relay_resp);
 					}
@@ -1328,7 +1328,7 @@ fn bridge_peer<T: wallhack::transport::Transport>(
 	relay_instr: &tokio::sync::broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
 	relay_resp: &tokio::sync::broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) {
-	crate::info!("Bridging peer connection: {}", accept_result.client_ident());
+	crate::info!("Bridging peer connection: {}", accept_result.peer_addr());
 
 	let ((peer_instr, peer_resp), control_tx) = accept_result.channels();
 
