@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.2.4](https://github.com/block65/wallhack/compare/cli-v0.2.3...cli-v0.2.4) (2026-02-20)
+
 ## [0.2.3](https://github.com/block65/wallhack/compare/cli-v0.2.2...cli-v0.2.3) (2026-02-20)
 
 
