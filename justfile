@@ -9,9 +9,10 @@ check: fmt-check lint cargo-build test website-lint website-build
 fmt-check:
     cargo fmt --all -- --check
 
-# cargo clippy (all features)
+# cargo clippy matching CI: slim and default, all targets
 lint:
-    cargo clippy --all-features -- -D warnings
+    cargo clippy --all-targets --no-default-features --features slim -- -D warnings
+    cargo clippy --all-targets -- -D warnings
 
 # Build slim and default profiles
 cargo-build:
