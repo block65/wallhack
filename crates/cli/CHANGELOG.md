@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/block65/wallhack/compare/cli-v0.2.2...cli-v0.2.3) (2026-02-20)
+
+
+### Features
+
+* **cli:** omit peer in route add when exactly one peer is connected ([aa1aced](https://github.com/block65/wallhack/commit/aa1acede97446093659a48c5fc4a0bdcc296adcc))
+
 ## [0.2.2](https://github.com/block65/wallhack/compare/cli-v0.2.1...cli-v0.2.2) (2026-02-20)
 
 
