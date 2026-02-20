@@ -35,7 +35,7 @@ Use the `tracing` crate. Log levels are controlled via CLI flags — not `RUST_L
 
 Make decisions based on proof, not theory.
 
-## Pre-PR checklist
+## Quality checks
 
 Run `just check` from the repo root before opening a PR. It covers:
 - `cargo fmt --check`
