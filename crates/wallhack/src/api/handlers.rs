@@ -289,7 +289,7 @@ pub async fn list_routes(State(state): State<ApiState>) -> Json<RoutesResponse> 
 			.map(|route| RouteResponse {
 				cidr: route.cidr.to_string(),
 				peer: route.peer,
-				added_at_secs: 0, // Not available in current NodeApi
+				added_at_secs: route.added_at.elapsed().as_secs(),
 			})
 			.collect(),
 	})

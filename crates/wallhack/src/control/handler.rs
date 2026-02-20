@@ -269,6 +269,7 @@ impl crate::api::node_api::NodeApi for Handler {
 			.map(|r| crate::api::node_api::RouteEntry {
 				cidr: r.cidr,
 				peer: r.peer,
+				added_at: r.added_at,
 			})
 			.collect())
 	}

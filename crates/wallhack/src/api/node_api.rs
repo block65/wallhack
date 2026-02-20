@@ -70,6 +70,8 @@ pub struct RouteEntry {
 	pub cidr: Cidr,
 	/// Name of the peer responsible for this route.
 	pub peer: String,
+	/// When the route was added.
+	pub added_at: std::time::Instant,
 }
 
 /// Traffic and connection metrics.
