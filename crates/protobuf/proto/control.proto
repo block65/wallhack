@@ -57,7 +57,7 @@ message PeersResponse {
 }
 
 message PeerInfo {
-  string id = 1;
+  string name = 1;
   string addr = 2;
   NodeRole role = 3;
   uint64 connected_at = 4;

@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from lib.constants import EXIT_ID_WS, PROCESS_STARTUP_DELAY, WALLHACK_LISTEN_PORT_WS
+from lib.constants import PEER_NAME_WS, PROCESS_STARTUP_DELAY, WALLHACK_LISTEN_PORT_WS
 
 # Separate port from the WebSocket topology port to avoid TIME_WAIT conflicts
 # when both proxy tests run in the same pytest session.
@@ -177,7 +177,7 @@ def test_exit_connects_via_http_proxy(wallhack_bin: str) -> None:
         [
             "exit",
             "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT_WS}/tcp",
-            "-i", EXIT_ID_WS,
+            "--name", PEER_NAME_WS,
             "-v",
         ],
         wallhack_bin,
@@ -318,7 +318,7 @@ def test_exit_connects_via_socks5_proxy(wallhack_bin: str) -> None:
         [
             "exit",
             "-c", f"127.0.0.1:{_SOCKS_ENTRY_PORT}/tcp",
-            "-i", EXIT_ID_WS,
+            "--name", PEER_NAME_WS,
             "-v",
         ],
         wallhack_bin,

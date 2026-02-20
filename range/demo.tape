@@ -48,7 +48,7 @@ Sleep 400ms
 Type "# [gateway-perimeter  10.99.1.10]  —  exit node"
 Enter
 Sleep 400ms
-Type "docker exec -it wallhack-range-gateway-perimeter-1 wallhack exit --connect 10.99.1.100:4444 --exit-id peer1"
+Type "docker exec -it wallhack-range-gateway-perimeter-1 wallhack exit --connect 10.99.1.100:4444 --name peer1"
 Enter
 Sleep 6s
 

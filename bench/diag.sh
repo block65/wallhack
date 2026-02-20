@@ -26,8 +26,8 @@ PREFIX=24
 
 # Ports and names
 WALLHACK_PORT=6565
-EXIT_ID="bench"
-TUN_NAME="tun-${EXIT_ID}"
+PEER_NAME="bench"
+TUN_NAME="tun-${PEER_NAME}"
 ECHO_PORT=9999
 
 WALLHACK_BIN="${1:-./target/release/wallhack}"
@@ -140,7 +140,7 @@ ENTRY_PID=$!
 sleep 1
 
 echo "[5/8] Starting wallhack EXIT node..."
-RUST_LOG=warn,wallhack=trace ip netns exec "$NS_EXIT" "$WALLHACK_BIN" exit -c "${IP_ENTRY_EXIT_SIDE}:${WALLHACK_PORT}" -i "$EXIT_ID" --debug </dev/null 2>&1 \
+RUST_LOG=warn,wallhack=trace ip netns exec "$NS_EXIT" "$WALLHACK_BIN" exit -c "${IP_ENTRY_EXIT_SIDE}:${WALLHACK_PORT}" --name "$PEER_NAME" --debug </dev/null 2>&1 \
     | sed -u 's/\x1b\[[0-9;]*m//g' > "${LOG_DIR}/diag-exit.log" &
 EXIT_PID=$!
 

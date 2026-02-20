@@ -86,7 +86,7 @@ pub fn format_duration(d: std::time::Duration) -> String {
 
 /// A row in the peers table, used by both entry and exit nodes.
 pub struct PeerRow {
-	pub id: String,
+	pub name: String,
 	pub role: String,
 	pub addr: String,
 	pub latency: String,
@@ -115,7 +115,7 @@ pub fn print_peer_table(printer: &Printer, rows: &[PeerRow]) {
 			let _ = writeln!(
 				tw,
 				"  {}\t{}\t{}\t{}\t{}\t{}",
-				r.id,
+				r.name,
 				r.role,
 				r.addr,
 				r.latency,
@@ -129,7 +129,7 @@ pub fn print_peer_table(printer: &Printer, rows: &[PeerRow]) {
 			let _ = writeln!(
 				tw,
 				"  {}\t{}\t{}\t{}\t{}",
-				r.id, r.role, r.addr, r.latency, r.uptime,
+				r.name, r.role, r.addr, r.latency, r.uptime,
 			);
 		}
 	}

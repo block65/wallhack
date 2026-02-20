@@ -52,19 +52,19 @@ impl SessionManager {
 	/// Gets or creates a TUN adapter for the given exit node.
 	///
 	/// If the exit node has connected before, returns a clone of their existing
-	/// TUN. Otherwise creates a new TUN with stable naming (`tun-{exit_id}`).
-	fn get_or_create(&self, exit_id: &str) -> std::string::String {
+	/// TUN. Otherwise creates a new TUN with stable naming (`tun-{name}`).
+	fn get_or_create(&self, name: &str) -> std::string::String {
 		let mut sessions = self.sessions.lock();
 
-		if let Some(name) = sessions.get(exit_id) {
-			tracing::info!("Reusing existing TUN for exit node {}", exit_id);
+		if let Some(name) = sessions.get(name) {
+			tracing::info!("Reusing existing TUN for exit node {}", name);
 			return name.clone();
 		}
 
 		// Create new TUN with stable name
-		let tun_name = format!("tun-{exit_id}");
-		tracing::info!("Creating new TUN {} for exit node {}", tun_name, exit_id);
-		sessions.insert(exit_id.to_string(), tun_name.clone());
+		let tun_name = format!("tun-{name}");
+		tracing::info!("Creating new TUN {} for exit node {}", tun_name, name);
+		sessions.insert(name.to_string(), tun_name.clone());
 		tun_name
 	}
 
@@ -75,8 +75,8 @@ impl SessionManager {
 	}
 
 	/// Look up the TUN device name for a peer.
-	fn get_tun_for_peer(&self, peer_id: &str) -> Option<String> {
-		self.sessions.lock().get(peer_id).cloned()
+	fn get_tun_for_peer(&self, peer: &str) -> Option<String> {
+		self.sessions.lock().get(peer).cloned()
 	}
 }
 
@@ -433,7 +433,7 @@ where
 						let conn_peers = Arc::clone(&peers);
 						let conn_routes = Arc::clone(&routes);
 						let peer_addr = accept_result.client_ident().to_string();
-						let peer_id = accept_result
+						let peer = accept_result
 							.exit_hello()
 							.map_or_else(|| peer_addr.clone(), |h| h.name.clone());
 
@@ -441,10 +441,10 @@ where
 						printer.print(format!("Connection #{conn_id} from {peer_addr}"));
 
 						// Register peer in the registry
-						conn_peers.register(peer_id.clone(), peer_addr, NodeRole::Exit);
+						conn_peers.register(peer.clone(), peer_addr, NodeRole::Exit);
 
 						// Create ping channel for this peer
-						let mut ping_rx = conn_peers.register_ping_channel(&peer_id);
+						let mut ping_rx = conn_peers.register_ping_channel(&peer);
 						let transport = accept_result.transport();
 
 						// Spawn handler for this connection (each exit node gets its own TUN)
@@ -454,17 +454,17 @@ where
 							let _permit = permit;
 							let result = handle_connection(conn_metrics, accept_result, conn_sessions.clone(), &mut ping_rx, &transport, &conn_peers, conn_psk, fast_mode).await;
 							// Unregister peer when connection closes
-							conn_peers.unregister(&peer_id);
+							conn_peers.unregister(&peer);
 							// Clean up routes for this peer
-							let removed_routes = conn_routes.remove_by_peer(&peer_id);
+							let removed_routes = conn_routes.remove_by_peer(&peer);
 							for entry in &removed_routes {
-								if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_id) {
+								if let Some(tun) = conn_sessions.get_tun_for_peer(&peer) {
 									let _ = remove_os_route(&entry.cidr.to_string(), &tun);
 								}
 							}
 							if !removed_routes.is_empty() {
 								conn_printer.print(format!(
-									"Removed {} route(s) for disconnected peer {peer_id}",
+									"Removed {} route(s) for disconnected peer {peer}",
 									removed_routes.len()
 								));
 							}
@@ -503,9 +503,9 @@ where
 					}
 					Some(ReplCommand::Ping) => {
 						print_ping(&printer);
-						let peer_ids = peers.peer_ids();
-						if !peer_ids.is_empty() {
-							for id in &peer_ids {
+						let peer_names = peers.peer_names();
+						if !peer_names.is_empty() {
+							for id in &peer_names {
 								match peers.ping_peer(id).await {
 									Ok(ms) => printer.print(format!("  {id}: {ms:.3}ms")),
 									Err(e) => printer.print(format!("  {id}: ping failed ({e})")),
@@ -519,8 +519,8 @@ where
 					Some(ReplCommand::Peers) => {
 						print_peers(&peers, &sessions, &printer);
 					}
-					Some(ReplCommand::RouteAdd(cidr, peer_id)) => {
-						handle_route_add(&cidr, &peer_id, &routes, &sessions, &printer);
+					Some(ReplCommand::RouteAdd(cidr, peer)) => {
+						handle_route_add(&cidr, &peer, &routes, &sessions, &printer);
 					}
 					Some(ReplCommand::RouteRemove(cidr)) => {
 						handle_route_remove(&cidr, &routes, &sessions, &printer);
@@ -528,8 +528,8 @@ where
 					Some(ReplCommand::RouteList) => {
 						handle_route_list(&routes, &sessions, &printer);
 					}
-					Some(ReplCommand::Disconnect(peer_id)) => {
-						handle_disconnect(&peer_id, &peers, &printer);
+					Some(ReplCommand::Disconnect(peer)) => {
+						handle_disconnect(&peer, &peers, &printer);
 					}
 					Some(ReplCommand::Help) => {
 						print_help(&printer);
@@ -690,8 +690,8 @@ fn parse_repl_command(line: &str) -> ReplCommand {
 		},
 		"routes" => ReplCommand::RouteList,
 		"disconnect" | "kick" | "kill" => {
-			if let Some(peer_id) = arg {
-				ReplCommand::Disconnect(peer_id)
+			if let Some(peer) = arg {
+				ReplCommand::Disconnect(peer)
 			} else {
 				ReplCommand::Unknown("disconnect <peer>".to_string())
 			}
@@ -711,11 +711,11 @@ fn parse_route_subcommand(
 			let cidr = parts.next();
 			// Skip optional "via" keyword
 			let next = parts.next();
-			let peer_id = match next {
+			let peer = match next {
 				Some("via") => parts.next(),
 				other => other,
 			};
-			match (cidr, peer_id) {
+			match (cidr, peer) {
 				(Some(c), Some(p)) => ReplCommand::RouteAdd(c.to_string(), p.to_string()),
 				_ => ReplCommand::Unknown("route add <cidr> [via] <peer>".to_string()),
 			}
@@ -769,12 +769,12 @@ fn print_peers(peers: &Arc<Registry>, sessions: &SessionManager, printer: &Print
 				.latency_ms
 				.map_or_else(|| "N/A".to_string(), |ms| format!("{ms:.3}ms"));
 			PeerRow {
-				id: peer.id.clone(),
+				name: peer.name.clone(),
 				role: peer.role.to_string(),
 				addr: peer.addr.clone(),
 				latency,
 				uptime: format_duration(peer.connected_at.elapsed()),
-				device: sessions.get_tun_for_peer(&peer.id),
+				device: sessions.get_tun_for_peer(&peer.name),
 			}
 		})
 		.collect();
@@ -783,7 +783,7 @@ fn print_peers(peers: &Arc<Registry>, sessions: &SessionManager, printer: &Print
 
 fn handle_route_add(
 	cidr: &str,
-	peer_id: &str,
+	peer: &str,
 	routes: &SharedRouteTable,
 	sessions: &SessionManager,
 	printer: &Printer,
@@ -796,21 +796,21 @@ fn handle_route_add(
 		}
 	};
 
-	let Some(tun_name) = sessions.get_tun_for_peer(peer_id) else {
-		printer.print(format!("No TUN session found for peer '{peer_id}'"));
+	let Some(tun_name) = sessions.get_tun_for_peer(peer) else {
+		printer.print(format!("No TUN session found for peer '{peer}'"));
 		return;
 	};
 
 	// Apply OS route first so we can rollback on failure
 	if let Err(reason) = apply_os_route(cidr, &tun_name) {
 		printer.print(format!(
-			"Failed to add route {cidr} via peer {peer_id}: {reason}"
+			"Failed to add route {cidr} via peer {peer}: {reason}"
 		));
 		return;
 	}
 
-	routes.add(parsed, peer_id.to_string());
-	printer.print(format!("Route added: {cidr} via {peer_id} dev {tun_name}"));
+	routes.add(parsed, peer.to_string());
+	printer.print(format!("Route added: {cidr} via {peer} dev {tun_name}"));
 }
 
 fn handle_route_remove(
@@ -876,11 +876,11 @@ fn handle_route_list(routes: &SharedRouteTable, sessions: &SessionManager, print
 	}
 }
 
-fn handle_disconnect(peer_id: &str, peers: &Arc<Registry>, printer: &Printer) {
-	if peers.unregister(peer_id).is_some() {
-		printer.print(format!("Disconnected peer: {peer_id}"));
+fn handle_disconnect(peer: &str, peers: &Arc<Registry>, printer: &Printer) {
+	if peers.unregister(peer).is_some() {
+		printer.print(format!("Disconnected peer: {peer}"));
 	} else {
-		printer.print(format!("Peer not found: {peer_id}"));
+		printer.print(format!("Peer not found: {peer}"));
 	}
 }
 
@@ -956,7 +956,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	fast_mode: bool,
 ) -> Result<String> {
 	// Get ExitNodeHello directly from accept result (already read during accept)
-	let exit_id = if let Some(hello) = accept_result.take_exit_hello() {
+	let peer = if let Some(hello) = accept_result.take_exit_hello() {
 		// Validate PSK if configured
 		if let Some(ref expected_psk) = server_psk {
 			let token_bytes = hello.auth_token.as_bytes();
@@ -1021,7 +1021,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	});
 
 	// Get or create TUN adapter via session manager
-	let name = if let Some(ref id) = exit_id {
+	let name = if let Some(ref id) = peer {
 		sessions.get_or_create(id)
 	} else {
 		SessionManager::create_anonymous()
@@ -1044,7 +1044,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 			Some(result_tx) = ping_rx.recv() => {
 				match send_ping(&control_tx).await {
 					Ok(ms) => {
-						if let Some(ref id) = exit_id {
+						if let Some(ref id) = peer {
 							peers.update_latency(id, ms);
 						}
 						let _ = result_tx.send(ms);

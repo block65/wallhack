@@ -4,8 +4,8 @@
 
 use std::net::IpAddr;
 
-/// Maximum length for peer IDs.
-const MAX_PEER_ID_LEN: usize = 128;
+/// Maximum length for peer names.
+const MAX_PEER_NAME_LEN: usize = 128;
 
 /// Maximum length for CIDR strings.
 const MAX_CIDR_LEN: usize = 64;
@@ -123,9 +123,9 @@ pub fn validate_peer_name(id: &str) -> Result<(), ValidationError> {
 		return Err(ValidationError::Empty);
 	}
 
-	if id.len() > MAX_PEER_ID_LEN {
+	if id.len() > MAX_PEER_NAME_LEN {
 		return Err(ValidationError::TooLong {
-			max: MAX_PEER_ID_LEN,
+			max: MAX_PEER_NAME_LEN,
 			actual: id.len(),
 		});
 	}

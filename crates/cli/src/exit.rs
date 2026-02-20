@@ -121,7 +121,7 @@ fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer
 pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
-	let exit_id = cmd.name();
+	let name = cmd.name();
 	let metrics = Arc::new(Metrics::default());
 	let security = SecurityConfig {
 		psk: global.resolve_psk(),
@@ -142,10 +142,10 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	loop {
 		let result = match (&connect_spec, &listen_spec) {
 			(Some(c), Some(l)) => {
-				crate::info!("Exit node with relay capability (peer: {exit_id})");
+				crate::info!("Exit node with relay capability (peer: {name})");
 				run_relay_capability_mode(
 					global,
-					&exit_id,
+					&name,
 					c,
 					l,
 					&metrics,
@@ -155,10 +155,10 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(Some(c), None) => {
-				crate::info!("Exit node starting (peer: {exit_id})");
+				crate::info!("Exit node starting (peer: {name})");
 				run_connect_mode(
 					global,
-					&exit_id,
+					&name,
 					c,
 					&metrics,
 					&mut repl_rx,
@@ -168,7 +168,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(None, Some(l)) => {
-				crate::info!("Exit node listening (peer: {exit_id})");
+				crate::info!("Exit node listening (peer: {name})");
 				run_listen_mode(global, l, &metrics, &mut repl_rx, printer.as_ref()).await
 			}
 			(None, None) => run_idle_mode(&metrics, &mut repl_rx, printer.as_ref()).await,
@@ -210,7 +210,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 /// Run in connect-only mode (standard exit).
 async fn run_connect_mode(
 	global: &WallhackCli,
-	exit_id: &str,
+	name: &str,
 	spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
@@ -233,10 +233,7 @@ async fn run_connect_mode(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_exit(
-					global, endpoint, exit_id, metrics, repl_rx, printer, security,
-				)
-				.await
+				run_quic_exit(global, endpoint, name, metrics, repl_rx, printer, security).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -246,10 +243,7 @@ async fn run_connect_mode(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_exit(
-					global, endpoint, exit_id, metrics, repl_rx, printer, security,
-				)
-				.await
+				run_ws_exit(global, endpoint, name, metrics, repl_rx, printer, security).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -262,7 +256,7 @@ async fn run_connect_mode(
 /// Run with relay capability (both connect and listen).
 async fn run_relay_capability_mode(
 	global: &WallhackCli,
-	_exit_id: &str,
+	_name: &str,
 	connect_spec: &crate::cli::AddressSpec,
 	listen_spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
@@ -832,7 +826,7 @@ fn handle_connecting_repl_cmd(
 async fn run_quic_exit(
 	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-	exit_id: &str,
+	name: &str,
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
@@ -841,7 +835,7 @@ async fn run_quic_exit(
 	let client_config = build_quic_client_config(
 		global,
 		endpoint,
-		exit_id.to_string(),
+		name.to_string(),
 		security.psk.clone(),
 		security.accept_fingerprint.clone(),
 	);
@@ -921,7 +915,7 @@ async fn run_quic_exit(
 async fn run_ws_exit(
 	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-	exit_id: &str,
+	name: &str,
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
@@ -942,7 +936,7 @@ async fn run_ws_exit(
 			addr: endpoint,
 			hostname: global.hostname.clone(),
 			mtls: None,
-			name: Some(exit_id.to_string()),
+			name: Some(name.to_string()),
 			psk: security.psk.clone(),
 			accept_fingerprint: security.accept_fingerprint.clone(),
 			..Default::default()
@@ -1021,7 +1015,7 @@ async fn run_ws_exit(
 fn build_quic_client_config(
 	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-	exit_id: String,
+	name: String,
 	psk: Option<String>,
 	accept_fingerprint: Option<String>,
 ) -> ClientConfig {
@@ -1038,7 +1032,7 @@ fn build_quic_client_config(
 		addr: endpoint,
 		hostname: global.hostname.clone(),
 		mtls,
-		name: Some(exit_id),
+		name: Some(name),
 		psk,
 		accept_fingerprint,
 		..Default::default()
@@ -1446,7 +1440,7 @@ fn parse_exit_repl_command(line: &str) -> ExitReplCommand {
 /// Build a peer row for a connected exit node peer.
 fn exit_peer_row(role: &str, addr: &str, uptime: &str) -> PeerRow {
 	PeerRow {
-		id: "-".to_string(),
+		name: "-".to_string(),
 		role: role.to_string(),
 		addr: addr.to_string(),
 		latency: "N/A".to_string(),
