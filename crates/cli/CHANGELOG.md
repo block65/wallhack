@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/block65/wallhack/compare/cli-v0.2.1...cli-v0.2.2) (2026-02-20)
+
+
+### Bug Fixes
+
+* **cli:** clarify exit node startup messages ([fe833f3](https://github.com/block65/wallhack/commit/fe833f3d6445dc7bd41e6bec91ad395644de2df9))
+* **cli:** eliminate duplicate error/info output in interactive mode ([34b3217](https://github.com/block65/wallhack/commit/34b32172103e69031ed65fd560519ecdf276f102))
+
 ## [0.2.1](https://github.com/block65/wallhack/compare/cli-v0.2.0...cli-v0.2.1) (2026-02-20)
 
 
