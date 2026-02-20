@@ -37,6 +37,7 @@ website-build: website-deps
 # TRIPLE: Open a PR using TASK.md for title and body
 open-pr:
     #!/usr/bin/env bash
+    set -euo pipefail
     test -f TASK.md || { echo "TASK.md not found. Create it first (see TRIPLE.md)."; exit 1; }
     title=$(awk '/^# /{sub(/^# /, ""); print; exit}' TASK.md)
     gh pr create --title "$title" --body-file TASK.md
@@ -44,9 +45,11 @@ open-pr:
 # TRIPLE: Merge the PR for the current branch (rebase merge)
 do-merge:
     #!/usr/bin/env bash
+    set -euo pipefail
     branch=$(git rev-parse --abbrev-ref HEAD)
     local=$(git rev-parse HEAD)
     remote=$(git rev-parse "origin/$branch" 2>/dev/null) || { echo "No remote tracking branch found. Push first."; exit 1; }
     [ "$local" = "$remote" ] || { echo "Local and remote are out of sync. Push first."; exit 1; }
-    pr=$(gh pr view --json number --jq '.number')
+    pr=$(gh pr view --json number --jq '.number') || { echo "No open PR found for this branch."; exit 1; }
+    [ -n "$pr" ] || { echo "Could not determine PR number."; exit 1; }
     gh pr merge "$pr" --rebase --delete-branch
