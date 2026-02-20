@@ -447,23 +447,107 @@ impl AddressSpec {
 	/// - `hostname:port/tcp` → TCP
 	/// - `:port` → listen on all interfaces, UDP
 	/// - `:port/tcp` → listen on all interfaces, TCP
+	/// - `hostname` → UDP, default port (6565)
 	#[must_use]
 	pub fn parse(s: &str) -> Self {
 		if let Some(addr) = s.strip_suffix("/tcp") {
 			Self {
-				addr: addr.to_string(),
+				addr: Self::with_default_port(addr),
 				protocol: Protocol::Tcp,
 			}
 		} else if let Some(addr) = s.strip_suffix("/udp") {
 			Self {
-				addr: addr.to_string(),
+				addr: Self::with_default_port(addr),
 				protocol: Protocol::Udp,
 			}
 		} else {
 			Self {
-				addr: s.to_string(),
+				addr: Self::with_default_port(s),
 				protocol: Protocol::Udp,
 			}
 		}
+	}
+
+	/// Append the default port if `addr` has no port specified.
+	///
+	/// Handles bracketed IPv6 (`[::1]`, `[::1]:port`) separately from
+	/// hostnames and IPv4 (`host`, `host:port`, `:port`).
+	fn with_default_port(addr: &str) -> String {
+		let has_port = if addr.starts_with('[') {
+			// Bracketed IPv6: port is present only when `]:` follows the closing bracket.
+			addr.contains("]:")
+		} else {
+			// Hostname or IPv4: any `:` means a port is already specified.
+			addr.contains(':')
+		};
+
+		if has_port {
+			addr.to_string()
+		} else {
+			format!("{}:{}", addr, wallhack::server::config::DEFAULT_LISTEN_PORT)
+		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{AddressSpec, Protocol};
+
+	#[test]
+	fn address_spec_with_port_unchanged() {
+		let spec = AddressSpec::parse("attacker:443");
+		assert_eq!(spec.addr, "attacker:443");
+		assert_eq!(spec.protocol, Protocol::Udp);
+	}
+
+	#[test]
+	fn address_spec_no_port_gets_default() {
+		let spec = AddressSpec::parse("attacker");
+		assert_eq!(
+			spec.addr,
+			format!("attacker:{}", wallhack::server::config::DEFAULT_LISTEN_PORT)
+		);
+		assert_eq!(spec.protocol, Protocol::Udp);
+	}
+
+	#[test]
+	fn address_spec_listen_shorthand_unchanged() {
+		let spec = AddressSpec::parse(":6565");
+		assert_eq!(spec.addr, ":6565");
+		assert_eq!(spec.protocol, Protocol::Udp);
+	}
+
+	#[test]
+	fn address_spec_tcp_suffix_with_port() {
+		let spec = AddressSpec::parse("host:443/tcp");
+		assert_eq!(spec.addr, "host:443");
+		assert_eq!(spec.protocol, Protocol::Tcp);
+	}
+
+	#[test]
+	fn address_spec_tcp_suffix_no_port_gets_default() {
+		let spec = AddressSpec::parse("host/tcp");
+		assert_eq!(
+			spec.addr,
+			format!("host:{}", wallhack::server::config::DEFAULT_LISTEN_PORT)
+		);
+		assert_eq!(spec.protocol, Protocol::Tcp);
+	}
+
+	#[test]
+	fn address_spec_bracketed_ipv6_no_port_gets_default() {
+		let spec = AddressSpec::parse("[::1]");
+		assert_eq!(
+			spec.addr,
+			format!("[::1]:{}", wallhack::server::config::DEFAULT_LISTEN_PORT)
+		);
+		assert_eq!(spec.protocol, Protocol::Udp);
+	}
+
+	#[test]
+	fn address_spec_bracketed_ipv6_with_port_unchanged() {
+		let spec = AddressSpec::parse("[::1]:443");
+		assert_eq!(spec.addr, "[::1]:443");
+		assert_eq!(spec.protocol, Protocol::Udp);
 	}
 }
