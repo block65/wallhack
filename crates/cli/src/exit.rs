@@ -142,7 +142,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	loop {
 		let result = match (&connect_spec, &listen_spec) {
 			(Some(c), Some(l)) => {
-				crate::info!("Exit node with relay capability (peer: {name})");
+				crate::info!("Exit node with relay capability as {name}");
 				run_relay_capability_mode(
 					global,
 					&name,
@@ -155,7 +155,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(Some(c), None) => {
-				crate::info!("Exit node starting (peer: {name})");
+				crate::info!("Exit node starting as {name}");
 				run_connect_mode(
 					global,
 					&name,
@@ -168,7 +168,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(None, Some(l)) => {
-				crate::info!("Exit node listening (peer: {name})");
+				crate::info!("Exit node listening as {name}");
 				run_listen_mode(global, l, &metrics, &mut repl_rx, printer.as_ref()).await
 			}
 			(None, None) => run_idle_mode(&metrics, &mut repl_rx, printer.as_ref()).await,
