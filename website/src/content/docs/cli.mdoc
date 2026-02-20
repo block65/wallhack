@@ -31,10 +31,10 @@ Connected peers (1):
   peer1  exit  10.0.1.5:52341   1.234ms   0:42
 
 wallhack> route add 10.0.0.0/8 via peer1
-Route added: 10.0.0.0/8 via peer1 dev tun0
+Route added: 10.0.0.0/8 via peer1 dev tun-peer1
 
 wallhack> routes
 Routes (1):
-  DESTINATION  VIA    DEVICE  AGE
-  10.0.0.0/8   peer1  tun0    0:03
+  DESTINATION  VIA    DEVICE    AGE
+  10.0.0.0/8   peer1  tun-peer1  0:03
 ```
