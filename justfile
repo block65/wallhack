@@ -33,3 +33,16 @@ website-lint: website-deps
 # Website build (astro)
 website-build: website-deps
     cd {{website}} && pnpm build
+
+# TRIPLE: Open a PR using TASK.md for title and body
+open-pr:
+    #!/usr/bin/env bash
+    test -f TASK.md || { echo "TASK.md not found. Create it first (see TRIPLE.md)."; exit 1; }
+    title=$(awk '/^# /{sub(/^# /, ""); print; exit}' TASK.md)
+    gh pr create --title "$title" --body-file TASK.md
+
+# TRIPLE: Merge the PR for the current branch (rebase merge)
+do-merge:
+    #!/usr/bin/env bash
+    pr=$(gh pr view --json number --jq '.number')
+    gh pr merge "$pr" --rebase --delete-branch
