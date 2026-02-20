@@ -17,8 +17,8 @@ pub type PingRequest = oneshot::Sender<f64>;
 /// Information about a connected peer.
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-	/// Unique identifier for the peer.
-	pub id: String,
+	/// Name of the peer (user-provided or auto-generated).
+	pub name: String,
 	/// Remote address of the peer.
 	pub addr: String,
 	/// What type of node this peer is.
@@ -73,7 +73,7 @@ impl Registry {
 	/// Register a new peer.
 	pub fn register(&self, id: String, addr: String, role: NodeRole) {
 		let info = PeerInfo {
-			id: id.clone(),
+			name: id.clone(),
 			addr,
 			role,
 			has_relay_capability: false,
@@ -200,9 +200,9 @@ impl Registry {
 		self.peers.load().len()
 	}
 
-	/// Get IDs of all peers (for iteration without holding lock)
+	/// Get names of all peers (for iteration without holding lock)
 	#[must_use]
-	pub fn peer_ids(&self) -> Vec<String> {
+	pub fn peer_names(&self) -> Vec<String> {
 		self.peers.load().keys().cloned().collect()
 	}
 

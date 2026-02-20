@@ -11,7 +11,7 @@ import time
 import pytest
 
 from lib.constants import (
-    EXIT_ID,
+    PEER_NAME,
     PROCESS_STARTUP_DELAY,
     TUN_NAME,
     WALLHACK_LISTEN_PORT,
@@ -73,7 +73,7 @@ def test_exit_connects(wallhack_bin: str) -> None:
     time.sleep(PROCESS_STARTUP_DELAY)
 
     exit_proc = _start_wallhack(
-        ["exit", "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "-i", EXIT_ID, "-v"],
+        ["exit", "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "--name", PEER_NAME, "-v"],
         wallhack_bin,
     )
     time.sleep(PROCESS_STARTUP_DELAY * 2)
@@ -92,7 +92,7 @@ def test_tun_created(wallhack_bin: str) -> None:
     time.sleep(PROCESS_STARTUP_DELAY)
 
     exit_proc = _start_wallhack(
-        ["exit", "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "-i", EXIT_ID, "-v"],
+        ["exit", "-c", f"127.0.0.1:{WALLHACK_LISTEN_PORT}", "--name", PEER_NAME, "-v"],
         wallhack_bin,
     )
 

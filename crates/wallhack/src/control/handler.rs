@@ -116,7 +116,7 @@ impl Handler {
 			.map(|p| {
 				let connected_at = p.connected_at.elapsed();
 				PeerInfo {
-					id: p.id,
+					name: p.name,
 					addr: p.addr,
 					role: ProtoNodeRole::from(p.role).into(),
 					connected_at: connected_at.as_secs(),
@@ -246,7 +246,7 @@ impl crate::api::node_api::NodeApi for Handler {
 			.list()
 			.into_iter()
 			.map(|p| crate::api::node_api::PeerInfo {
-				name: p.id,
+				name: p.name,
 				addr: p.addr,
 				capability: if p.has_relay_capability {
 					crate::api::node_api::NodeCapability::Relay

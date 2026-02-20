@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from lib.constants import (
-    EXIT_ID,
-    EXIT_ID_WS,
+    PEER_NAME,
+    PEER_NAME_WS,
     ECHO_PORT,
     IP_CLIENT,
     IP_ENTRY_CLIENT_SIDE,
@@ -235,7 +235,7 @@ def topology(netns_topology: None, wallhack_bin: str, memory_limit: str | None) 
                 "--debug",
                 "exit",
                 "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT}",
-                "-i", EXIT_ID,
+                "--name", PEER_NAME,
             ],
             binary=wallhack_bin,
             memory_limit=memory_limit,
@@ -295,7 +295,7 @@ def topology_websocket(netns_topology: None, wallhack_bin: str, memory_limit: st
                 "--debug",
                 "exit",
                 "-c", f"{IP_ENTRY_EXIT_SIDE}:{WALLHACK_LISTEN_PORT_WS}/tcp",
-                "-i", EXIT_ID_WS,
+                "--name", PEER_NAME_WS,
             ],
             binary=wallhack_bin,
             memory_limit=memory_limit,

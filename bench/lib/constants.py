@@ -44,13 +44,13 @@ PREFIX_LEN = 24
 
 # Wallhack settings
 WALLHACK_LISTEN_PORT = 6565
-EXIT_ID = "bench"
-TUN_NAME = f"tun-{EXIT_ID}"
+PEER_NAME = "bench"
+TUN_NAME = f"tun-{PEER_NAME}"
 
-# WebSocket topology uses separate port/id to avoid conflicts with QUIC topology
+# WebSocket topology uses separate port/name to avoid conflicts with QUIC topology
 WALLHACK_LISTEN_PORT_WS = 6566
-EXIT_ID_WS = "benchws"
-TUN_NAME_WS = f"tun-{EXIT_ID_WS}"
+PEER_NAME_WS = "benchws"
+TUN_NAME_WS = f"tun-{PEER_NAME_WS}"
 
 # Echo server
 ECHO_PORT = 9999
