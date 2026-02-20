@@ -109,10 +109,10 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
       effectively the same thing. Merge into a single `peers` view with the TUN
       device as an optional column.
 - [x] **Deprioritize TUN name**: the TUN device is an implementation detail.
-      Show peer ID prominently; show TUN name only as a secondary detail (useful
+      Show peer name prominently; show TUN name only as a secondary detail (useful
       for correlating with `ip link` in bash).
 - [x] **Route command syntax**: model after `ip route`, not legacy `route`. e.g.
-      `route add 10.0.0.0/24 via <peer_id>` instead of positional args. "via"
+      `route add 10.0.0.0/24 via <peer>` instead of positional args. "via"
       optional but understood.
 - [x] **Consider `ip` command**: alias `ip route` to `route`. Future potential
       for `ip link` (interface discovery) once exit nodes can report interfaces.
@@ -122,9 +122,9 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
 - [x] Connection IDs for entry node error correlation
 - [x] Deduplicate errors (show only once)
 - [x] Non-retryable errors (fingerprint mismatch, auth failures)
-- [x] Show peer ID in peers list; normalize IPv4-mapped IPv6 addresses
+- [x] Show peer name in peers list; normalize IPv4-mapped IPv6 addresses
 - [x] Human-readable uptime in peer list
-- [x] Deduplicate peers list (use exit_id as peer ID)
+- [x] Deduplicate peers list (use name as peer name)
 - [x] Ping precision (3 decimal places)
 - [x] Correlate sessions to peers (show peer address in session listing)
 - [x] Ping on exit nodes
@@ -153,6 +153,7 @@ See [docs/specs/PHASE4.md](docs/specs/PHASE4.md) for full spec.
       processes.
 
 
-## Correctness
+## Randoms
 
 - [ ] search for "allow(clippy" calls and make sure that they are legit and are not shortcuts for ignoring errors that should be dealt with properly, or in an alternate manner. eg #[allow(clippy::cast_possible_truncation)].  If they are legit, then they should be commented as such.
+- [ ] when adding a route, the peer name should be optional if only 1 peer is connected, and it should default to that single

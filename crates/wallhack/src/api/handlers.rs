@@ -128,9 +128,9 @@ pub async fn peers(State(state): State<ApiState>) -> Json<PeersResponse> {
 
 pub async fn disconnect_peer(
 	State(state): State<ApiState>,
-	Path(peer): Path<String>,
+	Path(name): Path<String>,
 ) -> (StatusCode, Json<SuccessResponse>) {
-	if let Err(e) = validation::validate_peer_name(&peer) {
+	if let Err(e) = validation::validate_peer_name(&name) {
 		tracing::warn!("Invalid peer name in disconnect request: {e}");
 		return (
 			StatusCode::BAD_REQUEST,
@@ -141,7 +141,7 @@ pub async fn disconnect_peer(
 		);
 	}
 
-	match state.node_api.disconnect_peer(peer) {
+	match state.node_api.disconnect_peer(name) {
 		Ok(()) => (
 			StatusCode::OK,
 			Json(SuccessResponse {
