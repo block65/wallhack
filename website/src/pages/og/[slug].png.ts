@@ -39,105 +39,86 @@ type Props = InferGetStaticPropsType<typeof getStaticPaths>;
 export async function GET({ props }: APIContext<Props>) {
 	const { title, description } = props;
 
+	// 1200x630 (1.91:1) is the universal OG image size.
+	// WhatsApp crops to a centre square (~630x630), so keep all important
+	// content centred — avoid placing anything important near the left/right edges.
 	const svg = await satori(
 		{
 			type: "div",
 			props: {
 				style: {
 					display: "flex",
+					flexDirection: "column",
+					justifyContent: "center",
+					alignItems: "center",
 					width: "100%",
 					height: "100%",
 					background: "#0f1117",
+					padding: "80px",
 				},
 				children: [
-					// Left accent bar
+					// Brand
 					{
 						type: "div",
 						props: {
 							style: {
-								width: "8px",
-								height: "100%",
-								background: "#7c8fff",
-								flexShrink: 0,
+								fontFamily: "DM Serif Display",
+								fontSize: 36,
+								color: "#7c8fff",
+								marginBottom: 40,
 							},
+							children: "wallhack",
 						},
 					},
-					// Main content
+					// Title
 					{
 						type: "div",
 						props: {
 							style: {
-								display: "flex",
-								flexDirection: "column",
-								flex: 1,
-								padding: "64px",
+								fontFamily: "Inter",
+								fontWeight: 700,
+								fontSize: 56,
+								color: "#f0f0f5",
+								lineHeight: 1.1,
+								textAlign: "center",
 							},
-							children: [
-								// Brand
-								{
-									type: "div",
-									props: {
-										style: {
-											fontFamily: "DM Serif Display",
-											fontSize: 34,
-											color: "#7c8fff",
-										},
-										children: "wallhack",
+							children: title,
+						},
+					},
+					// Description
+					...(description
+						? [
+							{
+								type: "div",
+								props: {
+									style: {
+										fontFamily: "Inter",
+										fontWeight: 400,
+										fontSize: 24,
+										color: "#8890a0",
+										marginTop: 24,
+										lineHeight: 1.4,
+										textAlign: "center",
+										maxWidth: "700px",
+										textWrap: "balance",
 									},
+									children: description,
 								},
-								// Spacer
-								{
-									type: "div",
-									props: { style: { flex: 1 } },
-								},
-								// Title
-								{
-									type: "div",
-									props: {
-										style: {
-											fontFamily: "Inter",
-											fontWeight: 700,
-											fontSize: 58,
-											color: "#f0f0f5",
-											lineHeight: 1.1,
-										},
-										children: title,
-									},
-								},
-								// Description
-								...(description
-									? [
-										{
-											type: "div",
-											props: {
-												style: {
-													fontFamily: "Inter",
-													fontWeight: 400,
-													fontSize: 24,
-													color: "#8890a0",
-													marginTop: 20,
-													lineHeight: 1.4,
-												},
-												children: description,
-											},
-										},
-									]
-									: []),
-								// Domain
-								{
-									type: "div",
-									props: {
-										style: {
-											fontFamily: "Inter",
-											fontWeight: 400,
-											fontSize: 18,
-											color: "#45495a",
-											marginTop: 48,
-										},
-										children: "wallhack.net",
-									},
-								},
-							],
+							},
+						]
+						: []),
+					// Domain
+					{
+						type: "div",
+						props: {
+							style: {
+								fontFamily: "Inter",
+								fontWeight: 400,
+								fontSize: 18,
+								color: "#45495a",
+								marginTop: 48,
+							},
+							children: "wallhack.net",
 						},
 					},
 				],
