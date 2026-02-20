@@ -52,4 +52,4 @@ do-merge:
     [ "$local" = "$remote" ] || { echo "Local and remote are out of sync. Push first."; exit 1; }
     pr=$(gh pr view --json number --jq '.number') || { echo "No open PR found for this branch."; exit 1; }
     [ -n "$pr" ] || { echo "Could not determine PR number."; exit 1; }
-    gh pr merge "$pr" --rebase --delete-branch
+    gh pr merge "$pr" --auto --rebase --delete-branch
