@@ -36,6 +36,6 @@ wallhack> route add 10.10.0.0/24
 
 With only one peer connected, the peer is inferred automatically. Use `route add <cidr> via <peer>` when multiple peers are connected.
 
-The REPL also applies the OS route. To configure it manually with `ip route`, run `peers` first to find the TUN device name (`tun-<peer>`).
+To configure the OS route manually with `ip route` instead, run `peers` first to find the TUN device name (`tun-<peer>`).
 {% /step %}
 {% /steps %}
