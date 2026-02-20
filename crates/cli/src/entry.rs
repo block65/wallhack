@@ -350,7 +350,7 @@ async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static
 	metrics: &Arc<Metrics>,
 	fast_mode: bool,
 ) -> Result<()> {
-	crate::info!("Connected to {}", connect_result.client_ident());
+	crate::info!("Connected to {}", connect_result.peer_addr());
 
 	let name = SessionManager::create_anonymous();
 	let actor = create_tun_with_retry(name.clone()).await?;
@@ -421,8 +421,8 @@ where
 					Ok(Some(accept_result)) => {
 						// Enforce max peers limit
 						let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() else {
-							crate::info!("Max peers reached, rejecting connection from {}", accept_result.client_ident());
-							printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.client_ident()));
+							crate::info!("Max peers reached, rejecting connection from {}", accept_result.peer_addr());
+							printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.peer_addr()));
 							continue;
 						};
 
@@ -432,7 +432,7 @@ where
 						let conn_sessions = sessions.clone();
 						let conn_peers = Arc::clone(&peers);
 						let conn_routes = Arc::clone(&routes);
-						let peer_addr = accept_result.client_ident().to_string();
+						let peer_addr = accept_result.peer_addr().to_string();
 						let peer = accept_result
 							.exit_hello()
 							.map_or_else(|| peer_addr.clone(), |h| h.name.clone());

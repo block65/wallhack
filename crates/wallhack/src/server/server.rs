@@ -23,7 +23,7 @@ pub type Channels = (
 /// Result of accepting a connection on the server.
 pub struct AcceptResult<T: Transport> {
 	channels: Channels,
-	peer_ident: String,
+	peer_addr: String,
 	metrics: SharedMetrics,
 	/// The already-received `ExitNodeHello` (extracted from the control stream).
 	exit_hello: Option<ExitNodeHello>,
@@ -38,13 +38,13 @@ impl<T: Transport> AcceptResult<T> {
 	pub fn new(
 		transport: std::sync::Arc<T>,
 		channels: Channels,
-		peer_ident: String,
+		peer_addr: String,
 		metrics: SharedMetrics,
 		control_tx: mpsc::Sender<ControlMessage>,
 	) -> Self {
 		Self {
 			channels,
-			peer_ident,
+			peer_addr,
 			metrics,
 			exit_hello: None,
 			transport,
@@ -57,14 +57,14 @@ impl<T: Transport> AcceptResult<T> {
 	pub fn with_exit_hello(
 		transport: std::sync::Arc<T>,
 		channels: Channels,
-		peer_ident: String,
+		peer_addr: String,
 		metrics: SharedMetrics,
 		exit_hello: Option<ExitNodeHello>,
 		control_tx: mpsc::Sender<ControlMessage>,
 	) -> Self {
 		Self {
 			channels,
-			peer_ident,
+			peer_addr,
 			metrics,
 			exit_hello,
 			transport,
@@ -84,8 +84,8 @@ impl<T: Transport> AcceptResult<T> {
 
 	/// Returns a reference to the peer identifier.
 	#[must_use]
-	pub fn client_ident(&self) -> &str {
-		&self.peer_ident
+	pub fn peer_addr(&self) -> &str {
+		&self.peer_addr
 	}
 
 	/// Returns a clone of the shared metrics.
