@@ -21,12 +21,12 @@ mkdir -p "$RESULTS_DIR"
 cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
-# Updated: 2026-02-18, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
+# Updated: 2026-02-20, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
 # Set ~2% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
     # glibc x86_64 (~2% headroom)
     ["default-glibc"]=6480000      # current: 6352672
-    ["slim-glibc"]=4920000         # current: ~4823000 (4.6M in CI)
+    ["slim-glibc"]=5033165         # current: 4958496 (4.73M, feat/server-mtls); limit: 4.80M
     # musl x86_64 (~2% headroom, estimated — update after first musl build)
     ["default-musl"]=6480000       # estimated ~6.3MB (not yet measured)
     ["slim-musl"]=5000000          # estimated ~4.9MB (not yet measured)
@@ -85,8 +85,8 @@ log "Date: $(date)"
 log "Commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 log "Mode: $MODE${NO_BUILD:+ (no-build)}"
 log ""
-printf "%-16s %-30s %10s %10s %s\n" "VARIANT" "TARGET" "SIZE" "LIMIT" "STATUS" | tee -a "$RESULT_FILE"
-printf "%-16s %-30s %10s %10s %s\n" "-------" "------" "----" "-----" "------" | tee -a "$RESULT_FILE"
+printf "%-16s %-30s %10s %12s %10s %s\n" "VARIANT" "TARGET" "SIZE" "BYTES" "LIMIT" "STATUS" | tee -a "$RESULT_FILE"
+printf "%-16s %-30s %10s %12s %10s %s\n" "-------" "------" "----" "-----" "-----" "------" | tee -a "$RESULT_FILE"
 
 for build in "${BUILDS[@]}"; do
     IFS='|' read -r label target features <<< "$build"
@@ -113,8 +113,8 @@ for build in "${BUILDS[@]}"; do
     size=$(stat --format='%s' "$binary" 2>/dev/null || stat -f'%z' "$binary")
     threshold=${THRESHOLDS[$label]:-0}
 
-    size_mb=$(awk "BEGIN {printf \"%.1fM\", $size/1048576}")
-    limit_mb=$(awk "BEGIN {printf \"%.1fM\", $threshold/1048576}")
+    size_mb=$(awk "BEGIN {printf \"%.2fM\", $size/1048576}")
+    limit_mb=$(awk "BEGIN {printf \"%.2fM\", $threshold/1048576}")
 
     if [ "$threshold" -gt 0 ] && [ "$size" -gt "$threshold" ]; then
         status="FAIL (+$(awk "BEGIN {printf \"%.0f\", ($size-$threshold)/$threshold*100}")%)"
@@ -124,7 +124,7 @@ for build in "${BUILDS[@]}"; do
         PASS_COUNT=$((PASS_COUNT + 1))
     fi
 
-    log "$(printf '%-16s %-30s %10s %10s %s' "$label" "$target" "$size_mb" "$limit_mb" "$status")"
+    log "$(printf '%-16s %-30s %10s %12s %10s %s' "$label" "$target" "$size_mb" "$size" "$limit_mb" "$status")"
 done
 
 log ""
