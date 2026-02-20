@@ -44,5 +44,9 @@ open-pr:
 # TRIPLE: Merge the PR for the current branch (rebase merge)
 do-merge:
     #!/usr/bin/env bash
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    local=$(git rev-parse HEAD)
+    remote=$(git rev-parse "origin/$branch" 2>/dev/null) || { echo "No remote tracking branch found. Push first."; exit 1; }
+    [ "$local" = "$remote" ] || { echo "Local and remote are out of sync. Push first."; exit 1; }
     pr=$(gh pr view --json number --jq '.number')
     gh pr merge "$pr" --rebase --delete-branch
