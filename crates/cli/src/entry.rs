@@ -286,11 +286,10 @@ async fn run_entry_connect(
 						}
 						Err(e) => {
 							if crate::repl_common::is_nonretryable_error(&e) {
-								println!("Connection failed (not retrying): {e}");
-								return Err(e.into());
+								return Err(e).context("connection failed, not retrying");
 							}
 							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
-							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
 							tokio::time::sleep(retry_delay).await;
 							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 						}
@@ -327,11 +326,10 @@ async fn run_entry_connect(
 						}
 						Err(e) => {
 							if crate::repl_common::is_nonretryable_error(&e) {
-								println!("Connection failed (not retrying): {e}");
-								return Err(e.into());
+								return Err(e).context("connection failed, not retrying");
 							}
 							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
-							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
 							tokio::time::sleep(retry_delay).await;
 							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 						}
@@ -395,14 +393,14 @@ where
 	// Only spawn REPL if stdin is a terminal (skip in headless/Docker mode)
 	let interactive = std::io::stdin().is_terminal();
 	let mut repl_rx = if interactive {
-		println!("Type 'help' for commands, 'quit' to exit.\n");
+		crate::info!("Type 'help' for commands, 'quit' to exit.");
 		let repl_metrics = Arc::clone(&metrics);
 		std::thread::spawn(move || {
 			run_repl_input(&repl_tx, repl_metrics, print_rx);
 		});
 		Some(repl_rx)
 	} else {
-		println!("Running in headless mode (no REPL).\n");
+		crate::info!("Running in headless mode (no REPL).");
 		// Drop the sender so REPL doesn't block
 		drop(repl_tx);
 		drop(print_rx);
@@ -583,7 +581,7 @@ fn run_repl_input(
 	let mut rl = match rustyline::DefaultEditor::new() {
 		Ok(rl) => rl,
 		Err(e) => {
-			eprintln!("Failed to initialize readline: {e}");
+			crate::error!("Failed to initialize readline: {e}");
 			let _ = tx.blocking_send(ReplCommand::Quit);
 			return;
 		}

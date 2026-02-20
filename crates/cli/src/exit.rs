@@ -96,7 +96,7 @@ fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer
 		let (print_tx, print_rx) = mpsc::unbounded_channel::<String>();
 		let printer = Printer::new(print_tx);
 
-		println!("Type 'help' for commands, 'quit' to exit.\n");
+		crate::info!("Type 'help' for commands, 'quit' to exit.");
 
 		std::thread::spawn(move || {
 			run_exit_repl_input(&tx, print_rx);
@@ -104,7 +104,7 @@ fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer
 
 		(Some(rx), Some(printer))
 	} else {
-		println!("Running in headless mode (no REPL).\n");
+		crate::info!("Running in headless mode (no REPL).");
 		(None, None)
 	}
 }
@@ -574,7 +574,7 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 					Ok(()) => { tracing::debug!("Connection closed cleanly"); "Connection closed, reconnecting...".into() }
 					Err(e) => { tracing::debug!("Orchestrator error: {}", e); format!("Connection error: {e}, reconnecting...") }
 				};
-				if let Some(p) = printer { p.print(msg); } else { println!("{msg}"); }
+				if let Some(p) = printer { p.print(msg); } else { crate::info!("{msg}"); }
 				return Ok(None);
 			}
 			result = &mut stream_fut => {
@@ -584,7 +584,7 @@ async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
 			() = &mut disconnect_fut => {
 				crate::info!("Connection tasks died - transport disconnected");
 				let msg = "Transport disconnected, reconnecting...";
-				if let Some(p) = printer { p.print(msg); } else { println!("{msg}"); }
+				if let Some(p) = printer { p.print(msg); } else { crate::info!("{msg}"); }
 				return Ok(None);
 			}
 			cmd = async {
@@ -840,8 +840,9 @@ async fn run_quic_exit(
 	);
 
 	if !security.insecure && security.psk.is_none() && security.accept_fingerprint.is_none() {
-		eprintln!("WARNING: Connecting without authentication or certificate verification.");
-		eprintln!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
+		crate::warn!(
+			"Connecting without authentication or certificate verification. Use --psk <SECRET> or --accept-fingerprint <HASH> for security."
+		);
 	}
 
 	let mut retry_delay = INITIAL_RETRY_DELAY;
@@ -868,7 +869,7 @@ async fn run_quic_exit(
 						if let Some(p) = printer {
 							p.print(msg);
 						} else {
-							println!("{msg}");
+							crate::info!("{msg}");
 						}
 						tokio::time::sleep(retry_delay).await;
 						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -879,7 +880,7 @@ async fn run_quic_exit(
 							if let Some(p) = printer {
 								p.print(msg);
 							} else {
-								println!("{msg}");
+								crate::warn!("{msg}");
 							}
 							return Ok(ExitAction::StopConnect);
 						}
@@ -887,7 +888,7 @@ async fn run_quic_exit(
 						if let Some(p) = printer {
 							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
 						} else {
-							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
 						}
 						tokio::time::sleep(retry_delay).await;
 						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -926,8 +927,9 @@ async fn run_ws_exit(
 	};
 
 	if !security.insecure && security.psk.is_none() && security.accept_fingerprint.is_none() {
-		eprintln!("WARNING: Connecting without authentication or certificate verification.");
-		eprintln!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
+		crate::warn!(
+			"Connecting without authentication or certificate verification. Use --psk <SECRET> or --accept-fingerprint <HASH> for security."
+		);
 	}
 
 	let client_config = WsClientConfig {
@@ -968,7 +970,7 @@ async fn run_ws_exit(
 						if let Some(p) = printer {
 							p.print(msg);
 						} else {
-							println!("{msg}");
+							crate::info!("{msg}");
 						}
 						tokio::time::sleep(retry_delay).await;
 						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -979,7 +981,7 @@ async fn run_ws_exit(
 							if let Some(p) = printer {
 								p.print(msg);
 							} else {
-								println!("{msg}");
+								crate::warn!("{msg}");
 							}
 							return Ok(ExitAction::StopConnect);
 						}
@@ -987,7 +989,7 @@ async fn run_ws_exit(
 						if let Some(p) = printer {
 							p.print(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
 						} else {
-							println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
 						}
 						tokio::time::sleep(retry_delay).await;
 						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -1548,7 +1550,7 @@ fn run_exit_repl_input(
 	let mut rl = match rustyline::DefaultEditor::new() {
 		Ok(rl) => rl,
 		Err(e) => {
-			eprintln!("Failed to initialize readline: {e}");
+			crate::error!("Failed to initialize readline: {e}");
 			let _ = tx.blocking_send(ExitReplCommand::Quit);
 			return;
 		}
