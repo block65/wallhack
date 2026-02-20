@@ -42,40 +42,47 @@ impl Output {
 	pub fn print(&self, message: &StatusMessage) {
 		match self.format {
 			OutputFormat::Plain => {
-				let level_text = match message.level {
-					Level::Info => {
-						format!(
-							"{style}{:6}{style:#}",
-							message.level,
-							style = self.styles.get_literal(),
-						)
-					}
-					Level::Verbose => format!(
-						"{:5}",
-						format!(
-							"{style}{:6}{style:#}",
-							message.level,
-							style = self.styles.get_literal(),
-						)
-					),
-					Level::Error => format!(
-						"{style}{:6}{style:#}",
-						message.level,
-						style = self.styles.get_error(),
-					),
-					Level::Warn => format!(
-						"{style}{:6}{style:#}",
-						message.level,
-						style = self.styles.get_warning(),
-					),
-				};
-				eprintln!("{} {}", level_text, message.message);
+				eprintln!("{} {}", self.format_level(message.level), message.message);
 			}
 			OutputFormat::Json => {
 				// let json_output = serde_json::to_string(&message)
 				// 	.expect("Failed to serialize status message to JSON");
 				println!("{{ json_output }}");
 			}
+		}
+	}
+
+	/// Format a message as a plain-text string without printing it.
+	#[must_use]
+	pub fn format_message(&self, message: &StatusMessage) -> String {
+		format!("{} {}", self.format_level(message.level), message.message)
+	}
+
+	fn format_level(&self, level: Level) -> String {
+		match level {
+			Level::Info => format!(
+				"{style}{:6}{style:#}",
+				level,
+				style = self.styles.get_literal(),
+			),
+			Level::Verbose => format!(
+				"{:5}",
+				format!(
+					"{style}{:6}{style:#}",
+					level,
+					style = self.styles.get_literal(),
+				)
+			),
+			Level::Error => format!(
+				"{style}{:6}{style:#}",
+				level,
+				style = self.styles.get_error(),
+			),
+			Level::Warn => format!(
+				"{style}{:6}{style:#}",
+				level,
+				style = self.styles.get_warning(),
+			),
 		}
 	}
 }
@@ -91,7 +98,7 @@ pub enum Level {
 	#[display("[!]")]
 	Warn,
 
-	#[display("-")]
+	#[display("[-]")]
 	Error,
 }
 

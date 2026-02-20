@@ -421,8 +421,7 @@ where
 					Ok(Some(accept_result)) => {
 						// Enforce max peers limit
 						let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() else {
-							crate::info!("Max peers reached, rejecting connection from {}", accept_result.peer_addr());
-							printer.print(format!("Rejected connection from {} (max peers reached)", accept_result.peer_addr()));
+							printer.info(format!("Rejected connection from {} (max peers reached)", accept_result.peer_addr()));
 							continue;
 						};
 
@@ -437,8 +436,7 @@ where
 							.exit_hello()
 							.map_or_else(|| peer_addr.clone(), |h| h.name.clone());
 
-						crate::info!("Connection #{conn_id} from {peer_addr}");
-						printer.print(format!("Connection #{conn_id} from {peer_addr}"));
+						printer.info(format!("Connection #{conn_id} from {peer_addr}"));
 
 						// Register peer in the registry
 						conn_peers.register(peer.clone(), peer_addr, NodeRole::Exit);
@@ -480,11 +478,11 @@ where
 						});
 					}
 					Ok(None) => {
-						crate::info!("Server closed");
+						printer.info("Server closed");
 						break;
 					}
 					Err(e) => {
-						crate::error!("Accept error: {}", e);
+						printer.error(format!("Accept error: {e}"));
 					}
 				}
 			}
