@@ -43,6 +43,30 @@ impl Printer {
 	pub fn print(&self, msg: impl Into<String>) {
 		let _ = self.tx.send(msg.into());
 	}
+
+	/// Print an error message using the standard output formatting (readline-safe).
+	pub fn error(&self, msg: impl Into<String>) {
+		self.print_level(crate::output::Level::Error, msg);
+	}
+
+	/// Print a warning message using the standard output formatting (readline-safe).
+	pub fn warn(&self, msg: impl Into<String>) {
+		self.print_level(crate::output::Level::Warn, msg);
+	}
+
+	/// Print an info message using the standard output formatting (readline-safe).
+	pub fn info(&self, msg: impl Into<String>) {
+		self.print_level(crate::output::Level::Info, msg);
+	}
+
+	fn print_level(&self, level: crate::output::Level, msg: impl Into<String>) {
+		let message = msg.into();
+		let formatted = match crate::output::OUTPUT_CONFIG.read() {
+			Ok(config) => config.format_message(&crate::output::StatusMessage { level, message }),
+			Err(_) => format!("{level} {message}"),
+		};
+		let _ = self.tx.send(formatted);
+	}
 }
 
 /// Check if stdin is a terminal and REPL should be interactive.

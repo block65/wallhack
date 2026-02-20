@@ -177,11 +177,10 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 		let action = match result {
 			Ok(action) => action,
 			Err(e) => {
-				crate::error!("{e}");
 				if let Some(p) = printer.as_ref() {
-					p.print(format!("Error: {e}"));
+					p.error(e.to_string());
 				} else {
-					eprintln!("Error: {e}");
+					crate::error!("{e}");
 				}
 				// Reset to idle so the user can try again
 				connect_spec = None;
