@@ -4,6 +4,7 @@
   "bump-patch-for-minor-pre-major": true,
   "plugins": ["cargo-workspace"],
   "packages": {
-    "crates/cli": {}
+    "crates/cli": {},
+    "crates/wallhack": {}
   }
 }
