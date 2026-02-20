@@ -34,6 +34,11 @@ website-lint: website-deps
 website-build: website-deps
     cd {{website}} && pnpm build
 
+# Delete local branches that have been merged and deleted on origin
+clean-branches:
+    git fetch -p
+    git branch -vv | awk '/: gone]/{print $1}' | xargs -r git branch -d
+
 # TRIPLE: Open a PR using TASK.md for title and body
 open-pr:
     #!/usr/bin/env bash
