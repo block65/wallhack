@@ -145,10 +145,6 @@ pub struct ExitCommand {
 	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
 	#[argh(option)]
 	pub accept_fingerprint: Option<String>,
-
-	/// suppress security warnings when connecting without auth
-	#[argh(switch)]
-	pub insecure: bool,
 }
 
 /// Relay node: forwards traffic between peers.
@@ -166,10 +162,6 @@ pub struct RelayCommand {
 	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
 	#[argh(option)]
 	pub accept_fingerprint: Option<String>,
-
-	/// suppress security warnings when connecting without auth
-	#[argh(switch)]
-	pub insecure: bool,
 }
 
 // ============================================================================

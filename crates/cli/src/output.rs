@@ -194,3 +194,29 @@ macro_rules! warn {
 		}
 	})
 }
+
+/// Route an info message through the printer when interactive, or the output
+/// system when headless. `$printer` must be `Option<&Printer>`.
+#[macro_export]
+macro_rules! route_info {
+	($printer:expr, $($arg:tt)*) => {
+		if let Some(__p) = $printer {
+			__p.info(format!($($arg)*));
+		} else {
+			$crate::info!($($arg)*);
+		}
+	};
+}
+
+/// Route a warn message through the printer when interactive, or the output
+/// system when headless. `$printer` must be `Option<&Printer>`.
+#[macro_export]
+macro_rules! route_warn {
+	($printer:expr, $($arg:tt)*) => {
+		if let Some(__p) = $printer {
+			__p.warn(format!($($arg)*));
+		} else {
+			$crate::warn!($($arg)*);
+		}
+	};
+}

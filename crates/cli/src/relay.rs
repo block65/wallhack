@@ -70,13 +70,7 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 		connect_spec.protocol
 	);
 
-	// Print warning if no auth configured
 	let psk = global.resolve_psk();
-	if psk.is_none() && cmd.accept_fingerprint.is_none() && !cmd.insecure {
-		crate::warn!(
-			"Connecting without authentication or certificate verification. Use --psk <SECRET> or --accept-fingerprint <HASH> for security."
-		);
-	}
 
 	match connect_spec.protocol {
 		Protocol::Udp => {
