@@ -138,9 +138,9 @@ pub struct ExitCommand {
 	#[argh(option, short = 'c')]
 	pub connect: Option<String>,
 
-	/// stable identifier for TUN naming; random if omitted
-	#[argh(option, short = 'i')]
-	pub exit_id: Option<String>,
+	/// name for this peer; used for TUN naming and identification (random if omitted)
+	#[argh(option, short = 'n')]
+	pub name: Option<String>,
 
 	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
 	#[argh(option)]
@@ -243,10 +243,10 @@ impl ExitCommand {
 		}
 	}
 
-	/// Returns the exit node ID, generating a random one if not specified.
+	/// Returns the peer name, generating a random one if not specified.
 	#[must_use]
-	pub fn exit_id(&self) -> String {
-		self.exit_id.clone().unwrap_or_else(|| {
+	pub fn name(&self) -> String {
+		self.name.clone().unwrap_or_else(|| {
 			use rand::Rng;
 			let mut rng = rand::rng();
 			let id: u32 = rng.random();

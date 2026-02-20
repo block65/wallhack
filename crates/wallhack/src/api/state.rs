@@ -19,15 +19,15 @@ use super::{auth::Auth, node_api::NodeApi};
 #[serde(tag = "type", content = "data")]
 pub enum Event {
 	PeerConnected {
-		peer_id: String,
+		peer: String,
 		addr: String,
 	},
 	PeerDisconnected {
-		peer_id: String,
+		peer: String,
 		reason: String,
 	},
 	PeerLatency {
-		peer_id: String,
+		peer: String,
 		latency_ms: f64,
 	},
 	Error {

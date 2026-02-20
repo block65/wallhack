@@ -121,7 +121,7 @@ fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer
 pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
-	let exit_id = cmd.exit_id();
+	let exit_id = cmd.name();
 	let metrics = Arc::new(Metrics::default());
 	let security = SecurityConfig {
 		psk: global.resolve_psk(),
@@ -142,7 +142,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 	loop {
 		let result = match (&connect_spec, &listen_spec) {
 			(Some(c), Some(l)) => {
-				crate::info!("Exit node with relay capability (exit_id: {exit_id})");
+				crate::info!("Exit node with relay capability (peer: {exit_id})");
 				run_relay_capability_mode(
 					global,
 					&exit_id,
@@ -155,7 +155,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(Some(c), None) => {
-				crate::info!("Exit node starting with exit_id: {exit_id}");
+				crate::info!("Exit node starting (peer: {exit_id})");
 				run_connect_mode(
 					global,
 					&exit_id,
@@ -168,7 +168,7 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 				.await
 			}
 			(None, Some(l)) => {
-				crate::info!("Exit node listening (exit_id: {exit_id})");
+				crate::info!("Exit node listening (peer: {exit_id})");
 				run_listen_mode(global, l, &metrics, &mut repl_rx, printer.as_ref()).await
 			}
 			(None, None) => run_idle_mode(&metrics, &mut repl_rx, printer.as_ref()).await,
@@ -942,7 +942,7 @@ async fn run_ws_exit(
 			addr: endpoint,
 			hostname: global.hostname.clone(),
 			mtls: None,
-			exit_id: Some(exit_id.to_string()),
+			name: Some(exit_id.to_string()),
 			psk: security.psk.clone(),
 			accept_fingerprint: security.accept_fingerprint.clone(),
 			..Default::default()
@@ -1038,7 +1038,7 @@ fn build_quic_client_config(
 		addr: endpoint,
 		hostname: global.hostname.clone(),
 		mtls,
-		exit_id: Some(exit_id),
+		name: Some(exit_id),
 		psk,
 		accept_fingerprint,
 		..Default::default()
@@ -1204,7 +1204,7 @@ async fn run_ws_relay_capability(
 			addr: peer_addr,
 			hostname: global.hostname.clone(),
 			mtls: None,
-			exit_id: None,
+			name: None,
 			psk,
 			..Default::default()
 		},

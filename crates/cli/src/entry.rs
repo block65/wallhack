@@ -435,7 +435,7 @@ where
 						let peer_addr = accept_result.client_ident().to_string();
 						let peer_id = accept_result
 							.exit_hello()
-							.map_or_else(|| peer_addr.clone(), |h| h.exit_id.clone());
+							.map_or_else(|| peer_addr.clone(), |h| h.name.clone());
 
 						crate::info!("Connection #{conn_id} from {peer_addr}");
 						printer.print(format!("Connection #{conn_id} from {peer_addr}"));
@@ -693,7 +693,7 @@ fn parse_repl_command(line: &str) -> ReplCommand {
 			if let Some(peer_id) = arg {
 				ReplCommand::Disconnect(peer_id)
 			} else {
-				ReplCommand::Unknown("disconnect <peer_id>".to_string())
+				ReplCommand::Unknown("disconnect <peer>".to_string())
 			}
 		}
 		"help" | "?" => ReplCommand::Help,
@@ -717,7 +717,7 @@ fn parse_route_subcommand(
 			};
 			match (cidr, peer_id) {
 				(Some(c), Some(p)) => ReplCommand::RouteAdd(c.to_string(), p.to_string()),
-				_ => ReplCommand::Unknown("route add <cidr> [via] <peer_id>".to_string()),
+				_ => ReplCommand::Unknown("route add <cidr> [via] <peer>".to_string()),
 			}
 		}
 		Some("del" | "rm" | "remove") => {
@@ -829,14 +829,14 @@ fn handle_route_remove(
 
 	match routes.remove(&parsed) {
 		Some(entry) => {
-			if let Some(tun) = sessions.get_tun_for_peer(&entry.peer_id)
+			if let Some(tun) = sessions.get_tun_for_peer(&entry.peer)
 				&& let Err(reason) = remove_os_route(cidr, &tun)
 			{
 				printer.print(format!(
 					"Warning: route table updated but OS route removal failed: {reason}"
 				));
 			}
-			printer.print(format!("Route removed: {cidr} (was -> {})", entry.peer_id));
+			printer.print(format!("Route removed: {cidr} (was -> {})", entry.peer));
 		}
 		None => {
 			printer.print(format!("Route not found: {cidr}"));
@@ -857,13 +857,13 @@ fn handle_route_list(routes: &SharedRouteTable, sessions: &SessionManager, print
 	let _ = writeln!(tw, "  DESTINATION\tVIA\tDEVICE\tAGE");
 	for entry in &list {
 		let tun = sessions
-			.get_tun_for_peer(&entry.peer_id)
+			.get_tun_for_peer(&entry.peer)
 			.unwrap_or_else(|| "?".to_string());
 		let _ = writeln!(
 			tw,
 			"  {}\t{}\t{}\t{}",
 			entry.cidr,
-			entry.peer_id,
+			entry.peer,
 			tun,
 			format_duration(entry.added_at.elapsed()),
 		);
@@ -889,10 +889,10 @@ fn print_help(printer: &Printer) {
 	printer.print("  ping, p                              - Show version and uptime");
 	printer.print("  stats, s                             - Show traffic statistics");
 	printer.print("  peers                                - List connected peers and sessions");
-	printer.print("  route add <cidr> via <peer_id>       - Add a route");
+	printer.print("  route add <cidr> via <peer>          - Add a route");
 	printer.print("  route del <cidr>                     - Remove a route");
 	printer.print("  route list, routes, ip route         - List all routes");
-	printer.print("  disconnect <peer_id>                 - Disconnect a peer");
+	printer.print("  disconnect <peer>                    - Disconnect a peer");
 	printer.print("  help, ?                              - Show this help message");
 	printer.print("  quit, q                              - Exit wallhack");
 }
@@ -964,17 +964,13 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 			if token_bytes.len() != expected_bytes.len()
 				|| !bool::from(token_bytes.ct_eq(expected_bytes))
 			{
-				tracing::warn!("Peer {} failed PSK authentication, dropping", hello.exit_id);
-				anyhow::bail!("PSK authentication failed for peer {}", hello.exit_id);
+				tracing::warn!("Peer {} failed PSK authentication, dropping", hello.name);
+				anyhow::bail!("PSK authentication failed for peer {}", hello.name);
 			}
 		}
 
-		crate::info!(
-			"Exit node identified: {} (v{})",
-			hello.exit_id,
-			hello.version
-		);
-		Some(hello.exit_id)
+		crate::info!("Exit node identified: {} (v{})", hello.name, hello.version);
+		Some(hello.name)
 	} else {
 		crate::verbose!("No ExitNodeHello received, using anonymous session");
 		None

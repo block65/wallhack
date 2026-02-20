@@ -59,7 +59,7 @@ curl -k -u admin:$SECRET https://localhost:6566/peers
 # Add a route through a peer
 curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
   -H 'Content-Type: application/json' \\
-  -d '{"cidr": "192.168.1.0/24", "peer_id": "bench"}'`;
+  -d '{"cidr": "192.168.1.0/24", "peer": "bench"}'`;
 ---
 
 <DocsLayout title="REST API" description="Programmatic HTTP interface for headless management of entry nodes.">

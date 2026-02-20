@@ -35,7 +35,7 @@ pub struct PingResponse {
 /// Peer info response.
 #[derive(Debug, Serialize)]
 pub struct PeerResponse {
-	pub id: String,
+	pub name: String,
 	pub addr: String,
 	pub role: String,
 	pub connected_at: u64,
@@ -53,14 +53,14 @@ pub struct PeersResponse {
 #[derive(Debug, Deserialize)]
 pub struct RouteAddRequest {
 	pub cidr: String,
-	pub peer_id: String,
+	pub peer: String,
 }
 
 /// Route info for JSON response.
 #[derive(Debug, Serialize)]
 pub struct RouteResponse {
 	pub cidr: String,
-	pub peer_id: String,
+	pub peer: String,
 	pub added_at_secs: u64,
 }
 
@@ -112,7 +112,7 @@ pub async fn peers(State(state): State<ApiState>) -> Json<PeersResponse> {
 		peers: peers
 			.into_iter()
 			.map(|peer| PeerResponse {
-				id: peer.id,
+				name: peer.name,
 				addr: peer.addr,
 				role: match peer.capability {
 					super::node_api::NodeCapability::Exit => "exit".to_string(),
@@ -128,10 +128,10 @@ pub async fn peers(State(state): State<ApiState>) -> Json<PeersResponse> {
 
 pub async fn disconnect_peer(
 	State(state): State<ApiState>,
-	Path(peer_id): Path<String>,
+	Path(peer): Path<String>,
 ) -> (StatusCode, Json<SuccessResponse>) {
-	if let Err(e) = validation::validate_peer_id(&peer_id) {
-		tracing::warn!("Invalid peer_id in disconnect request: {e}");
+	if let Err(e) = validation::validate_peer_name(&peer) {
+		tracing::warn!("Invalid peer name in disconnect request: {e}");
 		return (
 			StatusCode::BAD_REQUEST,
 			Json(SuccessResponse {
@@ -141,7 +141,7 @@ pub async fn disconnect_peer(
 		);
 	}
 
-	match state.node_api.disconnect_peer(peer_id) {
+	match state.node_api.disconnect_peer(peer) {
 		Ok(()) => (
 			StatusCode::OK,
 			Json(SuccessResponse {
@@ -181,8 +181,8 @@ pub async fn add_route(
 		);
 	}
 
-	if let Err(e) = validation::validate_peer_id(&req.peer_id) {
-		tracing::warn!("Invalid peer_id in route add request: {e}");
+	if let Err(e) = validation::validate_peer_name(&req.peer) {
+		tracing::warn!("Invalid peer name in route add request: {e}");
 		return (
 			StatusCode::BAD_REQUEST,
 			Json(SuccessResponse {
@@ -205,7 +205,7 @@ pub async fn add_route(
 		}
 	};
 
-	match state.node_api.add_route(cidr, req.peer_id) {
+	match state.node_api.add_route(cidr, req.peer) {
 		Ok(()) => (
 			StatusCode::CREATED,
 			Json(SuccessResponse {
@@ -288,7 +288,7 @@ pub async fn list_routes(State(state): State<ApiState>) -> Json<RoutesResponse> 
 			.into_iter()
 			.map(|route| RouteResponse {
 				cidr: route.cidr.to_string(),
-				peer_id: route.peer_id,
+				peer: route.peer,
 				added_at_secs: 0, // Not available in current NodeApi
 			})
 			.collect(),

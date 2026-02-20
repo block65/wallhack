@@ -218,9 +218,9 @@ message TunnelMessage {
 }
 
 // Sent by exit node immediately after connecting to identify itself.
-// Entry uses exit_id for stable TUN naming (tun-<exit_id>).
+// Entry uses name for stable TUN naming (tun-<name>).
 message ExitNodeHello {
-  string exit_id = 1;      // Stable identifier (user-provided or auto-generated)
+  string name = 1;         // Stable identifier (user-provided or auto-generated)
   string version = 2;       // Exit node version for compatibility checks
   string auth_token = 3;    // PSK value for tunnel authentication (sent inside TLS)
 }

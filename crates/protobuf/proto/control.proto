@@ -66,7 +66,7 @@ message PeerInfo {
 }
 
 message DisconnectRequest {
-  string peer_id = 1;
+  string peer = 1;
 }
 message DisconnectResponse {
   bool success = 1;
@@ -74,7 +74,7 @@ message DisconnectResponse {
 
 message RouteAddRequest {
   string cidr = 1;  // e.g., "10.0.0.0/8"
-  string peer_id = 2;
+  string peer = 2;
 }
 message RouteAddResponse {
   bool success = 1;
@@ -96,7 +96,7 @@ message RouteListResponse {
 
 message RouteInfo {
   string cidr = 1;
-  string peer_id = 2;
+  string peer = 2;
   uint64 added_at_secs = 3;
 }
 

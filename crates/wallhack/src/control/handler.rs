@@ -134,7 +134,7 @@ impl Handler {
 	}
 
 	fn handle_disconnect(&self, req: &protobuf::control::DisconnectRequest) -> ControlResponse {
-		let success = self.peers.unregister(&req.peer_id).is_some();
+		let success = self.peers.unregister(&req.peer).is_some();
 		ControlResponse {
 			response: Some(control_response::Response::Disconnect(
 				protobuf::control::DisconnectResponse { success },
@@ -157,18 +157,18 @@ impl Handler {
 			}
 		};
 
-		if req.peer_id.is_empty() {
+		if req.peer.is_empty() {
 			return ControlResponse {
 				response: Some(control_response::Response::RouteAdd(
 					protobuf::control::RouteAddResponse {
 						success: false,
-						message: "peer_id is required".to_string(),
+						message: "peer is required".to_string(),
 					},
 				)),
 			};
 		}
 
-		self.routes.add(cidr, req.peer_id);
+		self.routes.add(cidr, req.peer);
 
 		ControlResponse {
 			response: Some(control_response::Response::RouteAdd(
@@ -218,7 +218,7 @@ impl Handler {
 			.into_iter()
 			.map(|entry| RouteInfo {
 				cidr: entry.cidr.to_string(),
-				peer_id: entry.peer_id,
+				peer: entry.peer,
 				added_at_secs: entry.added_at.elapsed().as_secs(),
 			})
 			.collect();
@@ -246,7 +246,7 @@ impl crate::api::node_api::NodeApi for Handler {
 			.list()
 			.into_iter()
 			.map(|p| crate::api::node_api::PeerInfo {
-				id: p.id,
+				name: p.id,
 				addr: p.addr,
 				capability: if p.has_relay_capability {
 					crate::api::node_api::NodeCapability::Relay
@@ -268,7 +268,7 @@ impl crate::api::node_api::NodeApi for Handler {
 			.into_iter()
 			.map(|r| crate::api::node_api::RouteEntry {
 				cidr: r.cidr,
-				peer_id: r.peer_id,
+				peer: r.peer,
 			})
 			.collect())
 	}
@@ -308,13 +308,13 @@ impl crate::api::node_api::NodeApi for Handler {
 		Err(crate::api::node_api::NodeApiError::NotSupported)
 	}
 
-	fn add_route(&self, cidr: crate::Cidr, peer_id: String) -> crate::api::node_api::Result<()> {
+	fn add_route(&self, cidr: crate::Cidr, peer: String) -> crate::api::node_api::Result<()> {
 		// Check if peer exists
-		if self.peers.get(&peer_id).is_none() {
-			return Err(crate::api::node_api::NodeApiError::PeerNotFound(peer_id));
+		if self.peers.get(&peer).is_none() {
+			return Err(crate::api::node_api::NodeApiError::PeerNotFound(peer));
 		}
 
-		self.routes.add(cidr, peer_id);
+		self.routes.add(cidr, peer);
 		Ok(())
 	}
 
@@ -325,11 +325,11 @@ impl crate::api::node_api::NodeApi for Handler {
 			.ok_or(crate::api::node_api::NodeApiError::RouteNotFound(*cidr))
 	}
 
-	fn disconnect_peer(&self, peer_id: String) -> crate::api::node_api::Result<()> {
+	fn disconnect_peer(&self, peer: String) -> crate::api::node_api::Result<()> {
 		self.peers
-			.unregister(&peer_id)
+			.unregister(&peer)
 			.map(|_| ())
-			.ok_or(crate::api::node_api::NodeApiError::PeerNotFound(peer_id))
+			.ok_or(crate::api::node_api::NodeApiError::PeerNotFound(peer))
 	}
 }
 
@@ -412,7 +412,7 @@ mod tests {
 			request: Some(control_request::Request::RouteAdd(
 				protobuf::control::RouteAddRequest {
 					cidr: "10.0.0.0/8".to_string(),
-					peer_id: "exit-1".to_string(),
+					peer: "exit-1".to_string(),
 				},
 			)),
 		};
@@ -434,7 +434,7 @@ mod tests {
 			request: Some(control_request::Request::RouteAdd(
 				protobuf::control::RouteAddRequest {
 					cidr: "not-a-cidr".to_string(),
-					peer_id: "exit-1".to_string(),
+					peer: "exit-1".to_string(),
 				},
 			)),
 		};
@@ -456,7 +456,7 @@ mod tests {
 			request: Some(control_request::Request::RouteAdd(
 				protobuf::control::RouteAddRequest {
 					cidr: "10.0.0.0/8".to_string(),
-					peer_id: String::new(),
+					peer: String::new(),
 				},
 			)),
 		};
@@ -465,7 +465,7 @@ mod tests {
 		match response.response {
 			Some(control_response::Response::RouteAdd(r)) => {
 				assert!(!r.success);
-				assert_eq!(r.message, "peer_id is required");
+				assert_eq!(r.message, "peer is required");
 			}
 			_ => panic!("Expected route add response"),
 		}
@@ -480,7 +480,7 @@ mod tests {
 			request: Some(control_request::Request::RouteAdd(
 				protobuf::control::RouteAddRequest {
 					cidr: "10.0.0.0/8".to_string(),
-					peer_id: "exit-1".to_string(),
+					peer: "exit-1".to_string(),
 				},
 			)),
 		});
@@ -531,7 +531,7 @@ mod tests {
 			request: Some(control_request::Request::RouteAdd(
 				protobuf::control::RouteAddRequest {
 					cidr: "10.0.0.0/8".to_string(),
-					peer_id: "exit-1".to_string(),
+					peer: "exit-1".to_string(),
 				},
 			)),
 		});
@@ -539,7 +539,7 @@ mod tests {
 			request: Some(control_request::Request::RouteAdd(
 				protobuf::control::RouteAddRequest {
 					cidr: "172.16.0.0/12".to_string(),
-					peer_id: "exit-2".to_string(),
+					peer: "exit-2".to_string(),
 				},
 			)),
 		});

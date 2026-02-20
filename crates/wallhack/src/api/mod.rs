@@ -5,7 +5,7 @@
 //!
 //! Enable with the `http-api` feature flag.
 //!
-//! **Maintenance note:** the OpenAPI spec is manually maintained at
+//! **Maintenance note:** the `OpenAPI` spec is manually maintained at
 //! `website/src/data/openapi.json`. If you add, remove, or change any route,
 //! request body, or response shape in this module or `handlers.rs`, update
 //! that file to match.
@@ -93,7 +93,7 @@ pub fn router(state: State) -> Router {
 		.route("/ping", get(handlers::ping))
 		.route("/stats", get(handlers::stats))
 		.route("/peers", get(handlers::peers))
-		.route("/peers/{id}", delete(handlers::disconnect_peer))
+		.route("/peers/{name}", delete(handlers::disconnect_peer))
 		.route(
 			"/routes",
 			get(handlers::list_routes).post(handlers::add_route),

@@ -95,8 +95,8 @@ impl AsyncWrite for MaybeTlsStream {
 	}
 }
 
-/// Parse a proxy URL string into (is_socks5, host, port).
-/// Handles: socks5://, socks5h://, http://, https://, bare host:port.
+/// Parse a proxy URL string into (`is_socks5`, host, port).
+/// Handles: `socks5://`, `socks5h://`, `http://`, `https://`, bare host:port.
 /// Strips user:pass@ credentials. Returns None if unparseable.
 fn parse_proxy_url(url: &str) -> Option<(bool, String, u16)> {
 	let (is_socks5, rest) = if let Some(r) = url
@@ -123,9 +123,9 @@ fn parse_proxy_url(url: &str) -> Option<(bool, String, u16)> {
 }
 
 /// Detect proxy for a given target from standard env vars.
-/// Follows curl conventions: HTTPS_PROXY > ALL_PROXY for TLS, HTTP_PROXY > ALL_PROXY for plain.
-/// Respects NO_PROXY comma-separated list (exact match or domain suffix).
-/// Returns None when no proxy is configured or target is in NO_PROXY.
+/// Follows curl conventions: `HTTPS_PROXY` > `ALL_PROXY` for TLS, `HTTP_PROXY` > `ALL_PROXY` for plain.
+/// Respects `NO_PROXY` comma-separated list (exact match or domain suffix).
+/// Returns None when no proxy is configured or target is in `NO_PROXY`.
 fn detect_proxy(use_tls: bool, target_host: &str) -> Option<(bool, String, u16)> {
 	// Check NO_PROXY / no_proxy first
 	let no_proxy = std::env::var("NO_PROXY")
@@ -309,11 +309,11 @@ impl WsClient {
 		let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
 
 		// If exit node, send Hello via the control stream
-		if let Some(ref exit_id) = self.config.base.exit_id {
-			tracing::debug!("Queuing ExitNodeHello with id: {}", exit_id);
+		if let Some(ref name) = self.config.base.name {
+			tracing::debug!("Queuing ExitNodeHello with name: {}", name);
 			let hello = ControlMessage {
 				message: Some(control_message::Message::Hello(ExitNodeHello {
-					exit_id: exit_id.clone(),
+					name: name.clone(),
 					version: env!("CARGO_PKG_VERSION").to_string(),
 					auth_token: self.config.base.psk.clone().unwrap_or_default(),
 				})),

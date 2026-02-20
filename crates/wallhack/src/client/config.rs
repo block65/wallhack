@@ -21,9 +21,9 @@ pub struct ClientConfig {
 	/// Bind address for UDP socket
 	pub bind: SocketAddr,
 
-	/// Identifier for stable TUN naming (exit nodes only).
+	/// Name for this peer (exit nodes only).
 	/// If set, sent to entry node via `ExitNodeHello` message.
-	pub exit_id: Option<String>,
+	pub name: Option<String>,
 
 	/// Pre-shared key for tunnel authentication.
 	pub psk: Option<String>,
@@ -52,7 +52,7 @@ impl Default for ClientConfig {
 			hostname: None,
 			mtls: None,
 			bind: (DEFAULT_BIND_ADDRESS, DEFAULT_BIND_PORT).into(),
-			exit_id: None,
+			name: None,
 			psk: None,
 			accept_fingerprint: None,
 		}

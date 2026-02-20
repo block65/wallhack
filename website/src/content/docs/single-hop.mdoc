@@ -20,11 +20,11 @@ With no arguments, `wallhack` starts an [entry node](/concepts) on the default p
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back to the entry node on the default port. `--exit-id` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL.
+An [exit node](/concepts) connecting back to the entry node on the default port. `--name` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL.
 
-{% codeblock code="wallhack exit --connect 192.168.1.5 --exit-id peer1" /%}
+{% codeblock code="wallhack exit --connect 192.168.1.5 --name peer1" /%}
 
-If `--exit-id` is omitted, a random identifier is generated — run `peers` in the REPL to discover it.
+If `--name` is omitted, a random name is generated — run `peers` in the REPL to discover it.
 
 {% /step %}
 
