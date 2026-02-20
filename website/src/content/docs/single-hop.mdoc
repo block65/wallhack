@@ -36,9 +36,6 @@ wallhack> route add 10.10.0.0/24
 
 With only one peer connected, the peer is inferred automatically. Use `route add <cidr> via <peer>` when multiple peers are connected.
 
-Or directly with the system `ip` tool on the attacker machine:
-```bash
-ip route add 10.10.0.0/24 dev tun0
-```
+The REPL also applies the OS route. To configure it manually with `ip route`, run `peers` first to find the TUN device name (`tun-<peer>`).
 {% /step %}
 {% /steps %}
