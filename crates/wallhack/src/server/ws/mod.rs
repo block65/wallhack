@@ -62,12 +62,23 @@ impl WsTlsConfig {
 	/// # Errors
 	///
 	/// Returns an error if the TLS configuration cannot be created.
-	pub fn new(config: Option<super::config::TlsConfig>) -> Result<(Self, String), Error> {
+	pub fn new(mut config: Option<super::config::TlsConfig>) -> Result<(Self, String), Error> {
+		let ca_roots_path = config.as_mut().and_then(|t| t.ca_roots.take());
 		let (cert_der, priv_key, fingerprint) = super::tls::configure_crypto(config)?;
 
-		let server_config = rustls::ServerConfig::builder()
-			.with_no_client_auth()
-			.with_single_cert(cert_der, priv_key)?;
+		let server_config = if let Some(ca_path) = ca_roots_path {
+			let roots = super::tls::load_ca_roots(&ca_path)?;
+			let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+				.build()
+				.map_err(|e| rustls::Error::General(e.to_string()))?;
+			rustls::ServerConfig::builder()
+				.with_client_cert_verifier(verifier)
+				.with_single_cert(cert_der, priv_key)?
+		} else {
+			rustls::ServerConfig::builder()
+				.with_no_client_auth()
+				.with_single_cert(cert_der, priv_key)?
+		};
 
 		let acceptor = TlsAcceptor::from(Arc::new(server_config));
 		Ok((Self { acceptor }, fingerprint))

@@ -1,4 +1,4 @@
-use std::{fmt::Write, fs, io};
+use std::{fmt::Write, fs, io, path::Path};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -38,6 +38,106 @@ pub enum Error {
 	// std::io::Error
 	#[error("{0}")]
 	CertificateLoad(#[from] std::io::Error),
+}
+
+/// Load CA root certificates from a PEM or DER file into a `RootCertStore`.
+///
+/// Used to build a client certificate verifier for mTLS.
+pub fn load_ca_roots(path: &Path) -> Result<rustls::RootCertStore, Error> {
+	let data = fs::read(path)?;
+	let mut store = rustls::RootCertStore::empty();
+
+	if path.extension().is_some_and(|ext| ext == "der") {
+		store.add(CertificateDer::from(data))?;
+	} else {
+		for cert in rustls_pemfile::certs(&mut data.as_slice()) {
+			store.add(cert?)?;
+		}
+	}
+
+	Ok(store)
+}
+
+#[cfg(test)]
+mod tests {
+	use std::io::Write as _;
+
+	use tempfile::NamedTempFile;
+
+	use super::*;
+
+	fn generate_ca_cert() -> (rcgen::Certificate, rcgen::KeyPair) {
+		let key_pair = rcgen::KeyPair::generate().unwrap();
+		let mut params = rcgen::CertificateParams::default();
+		params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+		let cert = params.self_signed(&key_pair).unwrap();
+		(cert, key_pair)
+	}
+
+	#[test]
+	fn load_ca_roots_pem_single_cert() {
+		let (cert, _) = generate_ca_cert();
+		let pem = cert.pem();
+
+		let mut file = NamedTempFile::with_suffix(".pem").unwrap();
+		file.write_all(pem.as_bytes()).unwrap();
+
+		let store = load_ca_roots(file.path()).unwrap();
+		assert_eq!(store.len(), 1);
+	}
+
+	#[test]
+	fn load_ca_roots_pem_multiple_certs() {
+		let (cert1, _) = generate_ca_cert();
+		let (cert2, _) = generate_ca_cert();
+		let pem = format!("{}{}", cert1.pem(), cert2.pem());
+
+		let mut file = NamedTempFile::with_suffix(".pem").unwrap();
+		file.write_all(pem.as_bytes()).unwrap();
+
+		let store = load_ca_roots(file.path()).unwrap();
+		assert_eq!(store.len(), 2);
+	}
+
+	#[test]
+	fn load_ca_roots_der() {
+		let (cert, _) = generate_ca_cert();
+		let der = cert.der().to_vec();
+
+		let mut file = NamedTempFile::with_suffix(".der").unwrap();
+		file.write_all(&der).unwrap();
+
+		let store = load_ca_roots(file.path()).unwrap();
+		assert_eq!(store.len(), 1);
+	}
+
+	#[test]
+	fn load_ca_roots_missing_file() {
+		let result = load_ca_roots(Path::new("/nonexistent/ca.pem"));
+		assert!(matches!(result, Err(Error::CertificateLoad(_))));
+	}
+
+	#[test]
+	fn load_ca_roots_empty_pem() {
+		let file = NamedTempFile::with_suffix(".pem").unwrap();
+		let store = load_ca_roots(file.path()).unwrap();
+		assert_eq!(store.len(), 0);
+	}
+
+	#[test]
+	fn build_client_verifier_succeeds_without_crls() {
+		let _ = rustls::crypto::ring::default_provider().install_default();
+
+		let (cert, _) = generate_ca_cert();
+		let pem = cert.pem();
+		let mut file = NamedTempFile::with_suffix(".pem").unwrap();
+		file.write_all(pem.as_bytes()).unwrap();
+
+		let store = load_ca_roots(file.path()).unwrap();
+		let result =
+			rustls::server::WebPkiClientVerifier::builder(std::sync::Arc::new(store)).build();
+		assert!(result.is_ok(), "build() failed: {:?}", result.err());
+	}
 }
 
 pub fn configure_crypto(

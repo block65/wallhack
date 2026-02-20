@@ -52,12 +52,23 @@ impl Server for QuicServer {
 	type Error = Error;
 	type Transport = QuicTransport;
 
-	fn try_new(config: ServerConfig, options: ServerOptions) -> Result<Self, Error> {
+	fn try_new(mut config: ServerConfig, options: ServerOptions) -> Result<Self, Error> {
+		let ca_roots_path = config.tls.as_mut().and_then(|t| t.ca_roots.take());
 		let (cert_der, priv_key, fingerprint) = configure_crypto(config.tls)?;
 
-		let mut server_crypto = rustls::ServerConfig::builder()
-			.with_no_client_auth()
-			.with_single_cert(cert_der, priv_key)?;
+		let mut server_crypto = if let Some(ca_path) = ca_roots_path {
+			let roots = tls::load_ca_roots(&ca_path)?;
+			let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+				.build()
+				.map_err(|e| rustls::Error::General(e.to_string()))?;
+			rustls::ServerConfig::builder()
+				.with_client_cert_verifier(verifier)
+				.with_single_cert(cert_der, priv_key)?
+		} else {
+			rustls::ServerConfig::builder()
+				.with_no_client_auth()
+				.with_single_cert(cert_der, priv_key)?
+		};
 
 		server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
 
