@@ -517,7 +517,23 @@ where
 					Some(ReplCommand::Peers) => {
 						print_peers(&peers, &sessions, &printer);
 					}
-					Some(ReplCommand::RouteAdd(cidr, peer)) => {
+					Some(ReplCommand::RouteAdd(cidr, peer_opt)) => {
+						let peer = if let Some(p) = peer_opt {
+							p
+						} else {
+							let names = peers.peer_names();
+							if let [name] = names.as_slice() {
+								name.clone()
+							} else if names.is_empty() {
+								printer.print("No peers connected.");
+								continue;
+							} else {
+								printer.print(
+									"Multiple peers connected; specify one: route add <cidr> via <peer>",
+								);
+								continue;
+							}
+						};
 						handle_route_add(&cidr, &peer, &routes, &sessions, &printer);
 					}
 					Some(ReplCommand::RouteRemove(cidr)) => {
@@ -549,7 +565,7 @@ enum ReplCommand {
 	Ping,
 	Stats,
 	Peers,
-	RouteAdd(String, String),
+	RouteAdd(String, Option<String>),
 	RouteRemove(String),
 	RouteList,
 	Disconnect(String),
@@ -713,9 +729,9 @@ fn parse_route_subcommand(
 				Some("via") => parts.next(),
 				other => other,
 			};
-			match (cidr, peer) {
-				(Some(c), Some(p)) => ReplCommand::RouteAdd(c.to_string(), p.to_string()),
-				_ => ReplCommand::Unknown("route add <cidr> [via] <peer>".to_string()),
+			match cidr {
+				Some(c) => ReplCommand::RouteAdd(c.to_string(), peer.map(str::to_string)),
+				None => ReplCommand::Unknown("route add <cidr> [via] <peer>".to_string()),
 			}
 		}
 		Some("del" | "rm" | "remove") => {
@@ -887,7 +903,9 @@ fn print_help(printer: &Printer) {
 	printer.print("  ping, p                              - Show version and uptime");
 	printer.print("  stats, s                             - Show traffic statistics");
 	printer.print("  peers                                - List connected peers and sessions");
-	printer.print("  route add <cidr> via <peer>          - Add a route");
+	printer.print(
+		"  route add <cidr> [via <peer>]        - Add a route (peer optional if only one connected)",
+	);
 	printer.print("  route del <cidr>                     - Remove a route");
 	printer.print("  route list, routes, ip route         - List all routes");
 	printer.print("  disconnect <peer>                    - Disconnect a peer");
