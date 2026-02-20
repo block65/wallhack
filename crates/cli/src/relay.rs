@@ -69,13 +69,13 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 		upstream_addr,
 		connect_spec.protocol
 	);
-	println!("Connecting to upstream: {upstream_addr}");
 
 	// Print warning if no auth configured
 	let psk = global.resolve_psk();
 	if psk.is_none() && cmd.accept_fingerprint.is_none() && !cmd.insecure {
-		println!("WARNING: Connecting without authentication or certificate verification.");
-		println!("Use --psk <SECRET> or --accept-fingerprint <HASH> for security.");
+		crate::warn!(
+			"Connecting without authentication or certificate verification. Use --psk <SECRET> or --accept-fingerprint <HASH> for security."
+		);
 	}
 
 	match connect_spec.protocol {
@@ -254,15 +254,14 @@ async fn connect_quic_upstream(
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				if crate::repl_common::is_nonretryable_error(&e) {
-					println!("Connection failed (not retrying): {e}");
-					return Err(e.into());
+					return Err(e).context("connection failed, not retrying");
 				}
 				tracing::debug!(
 					"Upstream connection failed: {}, retrying in {:?}",
 					e,
 					retry_delay
 				);
-				println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
@@ -305,15 +304,14 @@ async fn connect_ws_upstream(
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				if crate::repl_common::is_nonretryable_error(&e) {
-					println!("Connection failed (not retrying): {e}");
-					return Err(e.into());
+					return Err(e).context("connection failed, not retrying");
 				}
 				tracing::debug!(
 					"Upstream connection failed: {}, retrying in {:?}",
 					e,
 					retry_delay
 				);
-				println!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
