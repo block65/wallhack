@@ -11,11 +11,7 @@
 - [ ] `arc-swap` for route table and peer registry — both are read-heavy,
       write-rare; `arc-swap` gives wait-free reads on the data path vs the
       current `parking_lot::Mutex`
-- [ ] Bounded broadcast channels with tail drop — replace the hardcoded 65536
-      capacity on `instructions`/`responses` channels with a bounded `mpsc` +
-      explicit drop on full. Packet loss is semantically correct (IP expects it);
-      unbounded buffering causes OOM under backpressure. Expose drop counter via
-      peer stats.
+- [x] Bounded broadcast channels with tail drop — **see docs/tasks/07-broadcast-to-mpsc.md**
 
 ## Dropper
 
