@@ -52,11 +52,19 @@ open-pr:
 do-merge:
     #!/usr/bin/env bash
     set -euo pipefail
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "Uncommitted changes present — commit or stash before merging."
+        git status --short
+        exit 1
+    fi
     branch=$(git rev-parse --abbrev-ref HEAD)
     local=$(git rev-parse HEAD)
     remote=$(git rev-parse "origin/$branch" 2>/dev/null) || { echo "No remote tracking branch found. Push first."; exit 1; }
     [ "$local" = "$remote" ] || { echo "Local and remote are out of sync. Push first."; exit 1; }
     pr=$(gh pr view --json number --jq '.number') || { echo "No open PR found for this branch."; exit 1; }
     [ -n "$pr" ] || { echo "Could not determine PR number."; exit 1; }
-    gh pr merge "$pr" --auto --rebase --delete-branch
+    gh pr merge "$pr" --rebase --delete-branch
+    git fetch upstream
     git checkout main
+    git merge --ff-only upstream/main
+    git push origin main
