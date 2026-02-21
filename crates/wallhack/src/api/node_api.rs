@@ -83,6 +83,7 @@ pub struct Metrics {
 	pub packets_out: u64,
 	pub active_connections: u64,
 	pub active_flows: u64,
+	pub packets_dropped: u64,
 }
 
 /// Overall node status information.

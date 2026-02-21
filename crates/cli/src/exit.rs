@@ -1439,6 +1439,10 @@ fn print_exit_stats(metrics: &wallhack::control::metrics::Metrics, printer: &Pri
 		"  Flows:        {}",
 		metrics.active_flows.load(Ordering::Relaxed)
 	));
+	printer.print(format!(
+		"  Dropped:      {}",
+		metrics.packets_dropped.load(Ordering::Relaxed)
+	));
 }
 
 fn print_exit_status(printer: &Printer, connected: bool, peer_addr: &str) {

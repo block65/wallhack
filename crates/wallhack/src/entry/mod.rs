@@ -5,4 +5,3 @@ pub mod manager;
 pub mod net;
 pub mod session;
 pub mod syn_proxy;
-pub mod udp_session;

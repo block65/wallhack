@@ -11,6 +11,7 @@ pub struct Metrics {
 	pub packets_out: AtomicU64,
 	pub active_connections: AtomicU64,
 	pub active_flows: AtomicU64,
+	pub packets_dropped: AtomicU64,
 }
 
 impl Metrics {
@@ -41,6 +42,10 @@ impl Metrics {
 
 	pub fn dec_active_connections(&self) {
 		self.active_connections.fetch_sub(1, Ordering::Relaxed);
+	}
+
+	pub fn inc_packets_dropped(&self, count: u64) {
+		self.packets_dropped.fetch_add(count, Ordering::Relaxed);
 	}
 
 	pub fn inc_active_flows(&self) {
