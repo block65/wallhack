@@ -49,6 +49,7 @@ message StatsResponse {
   uint64 packets_out = 4;
   uint64 active_connections = 5;
   uint64 active_flows = 6;
+  uint64 packets_dropped = 7;
 }
 
 message PeersRequest {}

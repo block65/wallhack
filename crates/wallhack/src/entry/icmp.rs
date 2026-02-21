@@ -48,6 +48,24 @@ pub enum IcmpUnreachableReason {
 	Net,
 }
 
+/// Infer an ICMP unreachable reason from an OS error string.
+///
+/// Matches the common Linux error descriptions for `ENETUNREACH` and
+/// `EHOSTUNREACH`/`EHOSTDOWN`/`ENONET`. Falls back to
+/// [`IcmpUnreachableReason::Port`] for unrecognised strings (covers
+/// `ECONNREFUSED` and session-layer errors).
+#[must_use]
+pub fn icmp_reason_from_str(reason: &str) -> IcmpUnreachableReason {
+	let r = reason.to_ascii_lowercase();
+	if r.contains("network") && r.contains("unreachable") {
+		IcmpUnreachableReason::Net
+	} else if r.contains("no route") || r.contains("host") {
+		IcmpUnreachableReason::Host
+	} else {
+		IcmpUnreachableReason::Port
+	}
+}
+
 /// First 8 bytes of the UDP header that triggered the error (RFC 792).
 fn build_udp_header_bytes(src_port: u16, dst_port: u16, payload_len: usize) -> [u8; 8] {
 	let udp_len = u16::try_from(8 + payload_len).unwrap_or(u16::MAX);

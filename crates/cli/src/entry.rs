@@ -350,13 +350,21 @@ async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static
 ) -> Result<()> {
 	crate::info!("Connected to {}", connect_result.peer_addr());
 
+	let transport = connect_result.transport();
+	let (instructions_tx, responses_tx) = connect_result.channels().clone();
+	let responses_rx = responses_tx.subscribe();
+	drop(responses_tx);
+	drop(connect_result); // releases channels.1 sender; background tasks hold their own clones
+
 	let name = SessionManager::create_anonymous();
 	let actor = create_tun_with_retry(name.clone()).await?;
 	let (manager, _syn_proxy_state) = ConnectionManager::new(
 		actor,
-		connect_result.transport(),
+		transport,
 		Arc::clone(metrics),
 		fast_mode,
+		instructions_tx,
+		responses_rx,
 	);
 	manager.run().await?;
 
@@ -770,6 +778,10 @@ fn print_stats(metrics: &Metrics, printer: &Printer) {
 		"  Flows:        {}",
 		metrics.active_flows.load(Ordering::Relaxed)
 	));
+	printer.print(format!(
+		"  Dropped:      {}",
+		metrics.packets_dropped.load(Ordering::Relaxed)
+	));
 }
 
 fn print_peers(peers: &Arc<Registry>, sessions: &SessionManager, printer: &Printer) {
@@ -1042,8 +1054,16 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	};
 
 	let actor = create_tun_with_retry(name.clone()).await?;
-	let (manager, _syn_proxy_state) =
-		ConnectionManager::new(actor, Arc::clone(transport), metrics, fast_mode);
+	let responses_rx = responses_tx.subscribe();
+	drop(responses_tx); // background data-in task holds its own clone; drop ours so RecvError::Closed can fire
+	let (manager, _syn_proxy_state) = ConnectionManager::new(
+		actor,
+		Arc::clone(transport),
+		metrics,
+		fast_mode,
+		instructions_tx.clone(),
+		responses_rx,
+	);
 
 	// Run the connection manager alongside ping handling
 	let mut manager_handle = tokio::spawn(async move { manager.run().await });

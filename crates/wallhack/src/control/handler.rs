@@ -104,6 +104,7 @@ impl Handler {
 				packets_out: self.metrics.packets_out.load(Ordering::Relaxed),
 				active_connections: self.metrics.active_connections.load(Ordering::Relaxed),
 				active_flows: self.metrics.active_flows.load(Ordering::Relaxed),
+				packets_dropped: self.metrics.packets_dropped.load(Ordering::Relaxed),
 			})),
 		}
 	}
@@ -282,6 +283,7 @@ impl crate::api::node_api::NodeApi for Handler {
 			packets_out: self.metrics.packets_out.load(Ordering::Relaxed),
 			active_connections: self.metrics.active_connections.load(Ordering::Relaxed),
 			active_flows: self.metrics.active_flows.load(Ordering::Relaxed),
+			packets_dropped: self.metrics.packets_dropped.load(Ordering::Relaxed),
 		}
 	}
 
