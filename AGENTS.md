@@ -35,6 +35,22 @@ Use the `tracing` crate. Log levels are controlled via CLI flags — not `RUST_L
 
 Make decisions based on proof, not theory.
 
+## Multi-agent safety
+
+Multiple agents may be running concurrently. Before doing any git operation that
+touches the working tree (checkout, merge, restore, stash pop), check for
+uncommitted changes with `git status` first.
+
+If another agent has uncommitted changes:
+- **Do not** `git restore`, `git checkout -f`, or `git stash drop` those files
+- To unblock a merge: use `gh pr merge` directly, then `git fetch upstream &&
+  git merge --ff-only upstream/main` — do not rely on `just do-merge` if the
+  working tree is dirty
+- If a conflict is unavoidable, take the incoming (upstream) version for committed
+  files and manually reapply the other agent's working-tree changes afterward
+- `docs/tasks/` is managed by a dedicated tasks agent — never modify or delete
+  files there
+
 ## Quality checks
 
 Run `just check` from the repo root before opening a PR. It covers:
