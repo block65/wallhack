@@ -29,7 +29,7 @@ impl SocketAddrExt for SocketAddr {
 pub(crate) fn parse_listen_addr(addr: &str) -> Result<SocketAddr> {
 	let full_addr = if let Some(port) = addr.strip_prefix(':') {
 		// Bare port: probe IPv6 availability and pick the right wildcard.
-		if std::net::UdpSocket::bind("[::]:0").is_ok() {
+		if wallhack::client::config::ipv6_supported() {
 			format!("[::]:{port}")
 		} else {
 			format!("0.0.0.0:{port}")
