@@ -15,10 +15,6 @@ tarpaulin-report.html
 .claude/
 .vscode/
 
-# bench artifacts
-bench/bin/iperf3
-bench/results
-
 # range demo video artifacts
 range/demo.mp4
 range/demo.gif
