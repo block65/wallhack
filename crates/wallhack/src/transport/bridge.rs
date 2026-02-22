@@ -335,13 +335,17 @@ pub async fn run_data_in<S: tokio::io::AsyncRead + Unpin>(
 	}
 }
 
-/// Subscribes to instructions broadcast and writes them as `TunnelMessage`s
-/// on a send stream (entry/relay -> exit direction).
-pub async fn run_data_out_instructions<S: tokio::io::AsyncWrite + Unpin>(
+/// Reads `EntryNodeInstruction`s from a pre-subscribed broadcast receiver and
+/// writes them as `TunnelMessage`s on a send stream.
+///
+/// The caller must subscribe to the broadcast channel **before** calling this
+/// function (and before any async work such as `open_uni`) to avoid the race
+/// where a message is sent before the subscription is created and silently
+/// dropped.
+pub async fn run_send_instructions<S: tokio::io::AsyncWrite + Unpin>(
 	send: &mut S,
-	instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
+	mut rx: broadcast::Receiver<EntryNodeInstruction>,
 ) -> Result<(), TransportError> {
-	let mut rx = instructions_tx.subscribe();
 	let mut buf = Vec::with_capacity(TUNNEL_MTU);
 
 	loop {
@@ -365,13 +369,18 @@ pub async fn run_data_out_instructions<S: tokio::io::AsyncWrite + Unpin>(
 	}
 }
 
-/// Subscribes to responses broadcast and writes them as `TunnelMessage`s
-/// on a send stream (exit -> entry direction).
-pub async fn run_data_out_responses<S: tokio::io::AsyncWrite + Unpin>(
+/// Reads `ExitNodeResponse`s from a pre-subscribed broadcast receiver and
+/// writes them as `TunnelMessage`s on a send stream.
+///
+/// The caller must subscribe to the broadcast channel **before** calling this
+/// function (and before any async work such as `open_uni`) to avoid the race
+/// where a response is sent before the subscription is created and silently
+/// dropped. This race is particularly acute for WebSocket/yamux where
+/// `open_uni` requires a round-trip through the yamux driver.
+pub async fn run_send_responses<S: tokio::io::AsyncWrite + Unpin>(
 	send: &mut S,
-	responses_tx: &broadcast::Sender<ExitNodeResponse>,
+	mut rx: broadcast::Receiver<ExitNodeResponse>,
 ) -> Result<(), TransportError> {
-	let mut rx = responses_tx.subscribe();
 	let mut buf = Vec::with_capacity(TUNNEL_MTU);
 
 	loop {
@@ -387,6 +396,10 @@ pub async fn run_data_out_responses<S: tokio::io::AsyncWrite + Unpin>(
 			}
 		};
 
+		tracing::debug!(
+			response_type = ?response.response.as_ref().map(|r| std::mem::discriminant(r)),
+			"Sending response to peer"
+		);
 		let tunnel_msg = TunnelMessage::from(response);
 		if let Err(e) = write_length_delimited_buf(send, &tunnel_msg, &mut buf).await {
 			tracing::error!("Failed to write response: {e}");
@@ -539,7 +552,7 @@ mod tests {
 		let _ = tokio::time::timeout(std::time::Duration::from_secs(1), recv_handle).await;
 	}
 
-	/// End-to-end: `run_data_out_responses` → transport → `run_data_in`.
+	/// End-to-end: `run_send_responses` → transport → `run_data_in`.
 	#[tokio::test]
 	async fn test_data_out_to_data_in_roundtrip() {
 		let (exit_transport, entry_transport) = MockTransport::pair();
@@ -549,11 +562,13 @@ mod tests {
 		let (responses_dst_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
 		let mut responses_dst_rx = responses_dst_tx.subscribe();
 
+		// Subscribe before spawning to avoid the race where messages sent before
+		// the task starts are dropped.
+		let responses_src_rx = responses_src_tx.subscribe();
 		let outgoing = tokio::spawn({
-			let responses_src_tx = responses_src_tx.clone();
 			async move {
 				match exit_transport.open_uni().await {
-					Ok(mut send) => run_data_out_responses(&mut send, &responses_src_tx).await,
+					Ok(mut send) => run_send_responses(&mut send, responses_src_rx).await,
 					Err(e) => Err(e),
 				}
 			}
@@ -567,9 +582,6 @@ mod tests {
 				_ => panic!("expected uni stream"),
 			}
 		});
-
-		// Let spawned tasks start and subscribe to channels.
-		tokio::task::yield_now().await;
 
 		for _ in 0..3 {
 			responses_src_tx.send(ExitNodeResponse::default()).unwrap();

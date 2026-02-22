@@ -361,41 +361,48 @@ impl WsClient {
 			}
 		});
 
-		// Data task 2: Outgoing data based on role
+		// Data task 2: Outgoing data based on role.
+		//
+		// Subscribe to the broadcast channel BEFORE spawning the task so that
+		// messages sent while open_uni() is in progress are not dropped.
+		// For WebSocket/yamux, open_uni() requires a round-trip through the
+		// yamux driver and is not instantaneous; a fast echo (e.g. UDP loopback)
+		// can produce a response before the subscription is established if we
+		// subscribe inside the task.
 		let outgoing_handle = match role {
 			NodeRole::Entry | NodeRole::Relay => {
-				tracing::debug!("Opening data-out stream for instructions");
+				tracing::debug!("Opening stream to send instructions to peer");
 				let transport_out = Arc::clone(&transport);
-				let instructions_tx = instructions.clone();
+				let instructions_rx = instructions.subscribe();
 
 				tokio::spawn(async move {
 					match transport_out.open_uni().await {
 						Ok(mut send) => {
 							if let Err(e) =
-								bridge::run_data_out_instructions(&mut send, &instructions_tx).await
+								bridge::run_send_instructions(&mut send, instructions_rx).await
 							{
-								tracing::debug!("Data-out instructions handler finished: {e}");
+								tracing::debug!("Send-instructions handler finished: {e}");
 							}
 						}
-						Err(e) => tracing::debug!("Failed to open data-out stream: {e}"),
+						Err(e) => tracing::debug!("Failed to open send stream: {e}"),
 					}
 				})
 			}
 			NodeRole::Exit => {
-				tracing::debug!("Opening data-out stream for responses");
+				tracing::debug!("Opening stream to send responses to peer");
 				let transport_out = Arc::clone(&transport);
-				let responses_tx = responses.clone();
+				let responses_rx = responses.subscribe();
 
 				tokio::spawn(async move {
 					match transport_out.open_uni().await {
 						Ok(mut send) => {
 							if let Err(e) =
-								bridge::run_data_out_responses(&mut send, &responses_tx).await
+								bridge::run_send_responses(&mut send, responses_rx).await
 							{
-								tracing::debug!("Data-out responses handler finished: {e}");
+								tracing::debug!("Send-responses handler finished: {e}");
 							}
 						}
-						Err(e) => tracing::debug!("Failed to open data-out stream: {e}"),
+						Err(e) => tracing::debug!("Failed to open send stream: {e}"),
 					}
 				})
 			}

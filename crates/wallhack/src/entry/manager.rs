@@ -324,7 +324,9 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 						}
 					}
 					Some(udp_response::Response::DataRecv(_)) => {
-						tracing::trace!("Empty UDP response from exit");
+						tracing::warn!(
+							"Empty UDP response from exit (unexpected; possible broadcast race or echo error)"
+						);
 					}
 					None => {}
 				}

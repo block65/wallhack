@@ -1027,22 +1027,22 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 		}
 	});
 
-	// Data task: outgoing instructions (open uni stream, write instructions)
+	// Data task: send instructions to peer (open uni stream, write instructions).
+	// Subscribe before spawning so messages sent while open_uni() is in-flight
+	// are not dropped.
 	let transport_out = Arc::clone(transport);
-	let instructions_out = instructions_tx.clone();
+	let instructions_rx = instructions_tx.subscribe();
 	tokio::spawn(async move {
 		match transport_out.open_uni().await {
 			Ok(mut send) => {
-				if let Err(e) = wallhack::transport::bridge::run_data_out_instructions(
-					&mut send,
-					&instructions_out,
-				)
-				.await
+				if let Err(e) =
+					wallhack::transport::bridge::run_send_instructions(&mut send, instructions_rx)
+						.await
 				{
-					tracing::debug!("Data-out instructions handler finished: {e}");
+					tracing::debug!("Send-instructions handler finished: {e}");
 				}
 			}
-			Err(e) => tracing::debug!("Failed to open data-out stream: {e}"),
+			Err(e) => tracing::debug!("Failed to open send stream: {e}"),
 		}
 	});
 
