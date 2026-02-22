@@ -87,9 +87,9 @@ impl<D: Device + Send + 'static> UdpSocketAny<D> {
 		let mut inner = self.shared.inner.lock();
 		let socket: &mut smoltcp::socket::udp::Socket<'_> = inner.sockets_mut().get_mut(handle);
 		let meta_val = meta.into();
-		tracing::trace!(port, data_len = data.len(), endpoint = %meta_val.endpoint, "UDP send_to enqueuing");
+		tracing::debug!(port, data_len = data.len(), endpoint = %meta_val.endpoint, "UDP send_to enqueuing");
 		socket.send_slice(data, meta_val)?;
-		tracing::trace!(port, "UDP send_to enqueued successfully");
+		tracing::debug!(port, "UDP send_to enqueued successfully");
 		drop(inner);
 		self.shared.notify.notify_one();
 		Ok(())
