@@ -269,7 +269,7 @@ signal.signal(signal.SIGINT, lambda _s, _f: sys.exit(130))
 cmd = args.cmd
 debug = getattr(args, "debug", False)
 verbose = getattr(args, "verbose", False)
-transport = args.transport
+transport = getattr(args, "transport", None)
 
 if cmd == "debug-shell":
     # Boot a single VM with rdinit=/bin/sh for interactive kernel/OS debugging.
