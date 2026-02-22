@@ -283,18 +283,14 @@ for scenario, t, netem in scenarios:
     )
     print(f"[{'PASS' if ok else 'FAIL'}]  ({duration:.1f}s)")
 
-    # TASK.md Log verbosity levels:
-    # (none)   -> nothing on pass; ring buffer tail on fail
+    # Log verbosity levels:
+    # (none)   -> nothing on pass; ring buffer tail (150 lines) on fail
     # --verbose -> full ring buffer for failing scenarios only
     # --debug   -> full ring buffer for all scenarios
-    show_logs = False
-    if debug:
-        show_logs = True
-    elif not ok:
-        show_logs = True
+    show_logs = debug or not ok
 
     if show_logs:
-        log_lines = 500 if (verbose or debug) else 50
+        log_lines = 500 if (verbose or debug) else 150
         if not ok:
             print(f"       reason: {reason}")
 
@@ -311,6 +307,7 @@ for scenario, t, netem in scenarios:
         d.mkdir(parents=True, exist_ok=True)
         (d / "exit.log").write_text("\n".join(exit_log))
         (d / "entry.log").write_text("\n".join(entry_log))
+        print(f"       logs: {d}")
     else:
         passed_count += 1
 
