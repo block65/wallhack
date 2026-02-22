@@ -33,8 +33,12 @@ use crate::{
 	cli::{ExitCommand, Protocol, TransportDir},
 };
 
-/// Initial retry delay for connection attempts.
-const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+/// Initial retry delay for connection attempts (peer not yet listening).
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(50);
+/// Delay before reconnecting after an established session drops.
+/// Separate from INITIAL_RETRY_DELAY to provide storm protection without
+/// penalising the initial connect race.
+const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// Maximum retry delay (caps exponential backoff).
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// Timeout for UDP response after forwarding packet.
@@ -846,18 +850,18 @@ async fn run_quic_exit(
 						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr).await? {
 							return Ok(action);
 						}
-						// Connection dropped - backoff before reconnecting to
-						// prevent a reconnect storm (e.g. entry TUN EBUSY race).
+						// Session dropped — fixed reconnect delay for storm protection,
+						// then reset backoff so the next failure sequence starts fresh.
 						// NOTE: Keep this in sync with the WebSocket equivalent
 						// in run_ws_exit below.
-						let msg = format!("Connection dropped, reconnecting in {retry_delay:?}...");
+						let msg = format!("Connection dropped, reconnecting in {RECONNECT_DELAY:?}...");
 						if let Some(p) = printer {
 							p.print(msg);
 						} else {
 							crate::info!("{msg}");
 						}
-						tokio::time::sleep(retry_delay).await;
-						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+						tokio::time::sleep(RECONNECT_DELAY).await;
+						retry_delay = INITIAL_RETRY_DELAY;
 					}
 					Err(e) => {
 						if crate::repl_common::is_nonretryable_error(&e) {
@@ -941,18 +945,18 @@ async fn run_ws_exit(
 						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr).await? {
 							return Ok(action);
 						}
-						// Connection dropped - backoff before reconnecting to
-						// prevent a reconnect storm (e.g. entry TUN EBUSY race).
+						// Session dropped — fixed reconnect delay for storm protection,
+						// then reset backoff so the next failure sequence starts fresh.
 						// NOTE: Keep this in sync with the QUIC equivalent
 						// in run_quic_exit above.
-						let msg = format!("Connection dropped, reconnecting in {retry_delay:?}...");
+						let msg = format!("Connection dropped, reconnecting in {RECONNECT_DELAY:?}...");
 						if let Some(p) = printer {
 							p.print(msg);
 						} else {
 							crate::info!("{msg}");
 						}
-						tokio::time::sleep(retry_delay).await;
-						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+						tokio::time::sleep(RECONNECT_DELAY).await;
+						retry_delay = INITIAL_RETRY_DELAY;
 					}
 					Err(e) => {
 						if crate::repl_common::is_nonretryable_error(&e) {

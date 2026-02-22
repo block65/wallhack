@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Initial retry delay for connection attempts.
-const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(50);
 /// Maximum retry delay (caps exponential backoff).
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 

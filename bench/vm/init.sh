@@ -12,12 +12,12 @@
 #
 # Kernel cmdline params (all prefixed wallhack.):
 #   role=exit|entry
-#   scenario=smoke|resilience|benchmark|debug-topology
+#   scenario=smoke|resilience|benchmark|noop|debug-topology
 #   transport=quic|websocket
 #   loss=N%    (resilience: netem loss,  e.g. "2%")
 #   delay=Nms  (resilience: netem delay, e.g. "25ms")
 #   metric=tcp_fwd|tcp_rev|udp|latency|parallel2|parallel4  (benchmark only)
-#   debug=1    (wallhack --debug verbosity, keep running after test)
+#   debug=1    (pass --debug to wallhack, keep running after test)
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin
 
@@ -95,11 +95,6 @@ DEBUG=$(_param debug)
 # Expose _ROLE to the exit trap
 _ROLE="${ROLE}"
 
-# ---------- debug verbosity -----------------------------------------------
-if [ "${DEBUG}" = "1" ]; then
-	set -x
-fi
-
 # ---------- network layout ------------------------------------------------
 # Both VMs share an L2 segment via QEMU socket networking.
 #   exit  VM IFACE:  10.0.0.1/24   (net.ifnames=0 ensures eth0)
@@ -127,6 +122,7 @@ fi
 
 # ---------- exit role =====================================================
 _run_exit() {
+	echo "WALLHACK_TS: exit_net_start=$(date +%s%3N)"
 	ip addr add "${EXIT_ETH}/24" dev "${IFACE}"
 	ip link set "${IFACE}" up
 
@@ -145,6 +141,7 @@ _run_exit() {
 		       --logfile /tmp/iperf3-server.log &
 	fi
 
+	echo "WALLHACK_TS: exit_wallhack_start=$(date +%s%3N)"
 	# wallhack exit node — connects to entry (retries with backoff)
 	wallhack ${DEBUG:+"--debug"} exit \
 		-c "${ENTRY_ETH}:${WH_PORT}${_TSUFFIX}" \
@@ -163,6 +160,7 @@ _run_exit() {
 		_waited=$((_waited + 1))
 	done
 
+	echo "WALLHACK_TS: exit_services_ready=$(date +%s%3N)"
 	# Signal the host: network configured, services started
 	echo "WALLHACK_EXIT_READY_MAGIC_TOKEN"
 
@@ -174,27 +172,15 @@ _run_exit() {
 
 # ---------- entry role helpers ============================================
 
-# Wait up to $2 seconds for host $1 to respond to ping.
-_wait_for_host() {
-	_host="${1}" _timeout=${2:-30} _waited=0
-	until ping -c 1 -W 1 "${_host}" >/dev/null 2>&1; do
-		if [ ${_waited} -ge ${_timeout} ]; then
-			_fail "No ping response from ${_host} after ${_timeout}s"
-		fi
-		sleep 1
-		_waited=$((_waited + 1))
-	done
-}
-
 # Wait up to $1 seconds for TUN interface $TUN_NAME to appear.
 _wait_for_tun() {
-	_timeout=${1:-45} _waited=0
+	_timeout=${1:-45} _elapsed=0
 	until ip link show "${TUN_NAME}" >/dev/null 2>&1; do
-		if [ ${_waited} -ge ${_timeout} ]; then
+		if [ ${_elapsed} -ge $((_timeout * 10)) ]; then
 			_fail "TUN ${TUN_NAME} did not appear within ${_timeout}s"
 		fi
-		sleep 1
-		_waited=$((_waited + 1))
+		sleep 0.1
+		_elapsed=$((_elapsed + 1))
 	done
 }
 
@@ -326,12 +312,10 @@ _run_benchmark() {
 # ---------- entry role ====================================================
 _run_entry() {
 	_T0=$(date +%s)
+	echo "WALLHACK_TS: entry_net_start=$(date +%s%3N)"
 
 	ip addr add "${ENTRY_ETH}/24" dev "${IFACE}"
 	ip link set "${IFACE}" up
-
-	# Gate: confirm L2 connectivity to exit VM before starting wallhack
-	_wait_for_host "${EXIT_ETH}" 30
 
 	# Apply netem on eth0 BEFORE starting wallhack (resilience scenarios)
 	if [ -n "${LOSS}" ] || [ -n "${DELAY}" ]; then
@@ -340,13 +324,41 @@ _run_entry() {
 			${LOSS:+loss "$LOSS"}
 	fi
 
+	echo "WALLHACK_TS: entry_wallhack_start=$(date +%s%3N)"
 	# Start wallhack entry node (listen mode)
 	wallhack ${DEBUG:+"--debug"} entry \
 		-l ":${WH_PORT}${_TSUFFIX}" \
 		2>&1 | tee /tmp/wallhack-entry.log &
 
+	# Wait for wallhack to bind the listen port by watching /proc/net directly.
+	# Avoids sleeps: polls at 10ms until the kernel shows the socket as bound.
+	# Port in hex for /proc/net/{udp,tcp} lookup (big-endian, uppercase).
+	_PORT_HEX=$(printf '%04X' "${WH_PORT}")
+	_elapsed=0
+	if [ "${TRANSPORT}" = "websocket" ]; then
+		until grep -q ":${_PORT_HEX} " /proc/net/tcp /proc/net/tcp6 2>/dev/null; do
+			if [ ${_elapsed} -ge 100 ]; then
+				_fail "wallhack entry failed to bind TCP port ${WH_PORT} within 10s"
+			fi
+			sleep 0.1
+			_elapsed=$((_elapsed + 1))
+		done
+	else
+		until grep -q ":${_PORT_HEX} " /proc/net/udp /proc/net/udp6 2>/dev/null; do
+			if [ ${_elapsed} -ge 100 ]; then
+				_fail "wallhack entry failed to bind UDP port ${WH_PORT} within 10s"
+			fi
+			sleep 0.1
+			_elapsed=$((_elapsed + 1))
+		done
+	fi
+	echo "WALLHACK_TS: entry_port_bound=$(date +%s%3N)"
+	# Signal the host: entry is listening, safe to start exit VM
+	echo "WALLHACK_ENTRY_READY_MAGIC_TOKEN"
+
 	# Wait for TUN to appear (created when exit node connects)
 	_wait_for_tun 45
+	echo "WALLHACK_TS: entry_tun_up=$(date +%s%3N)"
 
 	# Configure TUN
 	ip link set "${TUN_NAME}" up
@@ -356,16 +368,19 @@ _run_entry() {
 	# Gate: wait for the data path through the tunnel to be ready.
 	# The TUN interface existing is necessary but not sufficient — both
 	# sides need their routes configured before traffic can flow.
-	_waited=0
+	_elapsed=0
 	until ping -c 1 -W 1 "${ECHO_PRIV}" >/dev/null 2>&1; do
-		if [ ${_waited} -ge 30 ]; then
+		if [ ${_elapsed} -ge 300 ]; then
 			_fail "Tunnel data path not ready after 30s (no ICMP reply from ${ECHO_PRIV})"
 		fi
-		sleep 1
-		_waited=$((_waited + 1))
+		sleep 0.1
+		_elapsed=$((_elapsed + 1))
 	done
+	echo "WALLHACK_TS: entry_tunnel_ready=$(date +%s%3N)"
 
-	if [ "${SCENARIO}" = "benchmark" ]; then
+	if [ "${SCENARIO}" = "noop" ]; then
+		_pass
+	elif [ "${SCENARIO}" = "benchmark" ]; then
 		_run_benchmark
 	else
 		_run_transfer_test

@@ -13,7 +13,7 @@ VMLINUZ = REPO_ROOT / "bench" / "vm" / "staging" / "vmlinuz"
 INITRD = REPO_ROOT / "bench" / "vm" / "staging" / "initrd.gz"
 LOG_DIR = REPO_ROOT / "bench" / "results" / "logs"
 QEMU = "qemu-system-x86_64"
-EXIT_READY_TIMEOUT = 60
+ENTRY_READY_TIMEOUT = 30
 RESULT_TIMEOUT = 90
 RING_BUFFER_SIZE = 500
 
@@ -52,6 +52,24 @@ def preflight():
 # ── QEMU helpers ──────────────────────────────────────────────────────────────
 
 
+def _qemu_base(append, extra=None):
+    """Common QEMU args: microvm machine, KVM, 256M, kernel+initrd, nographic."""
+    return [
+        QEMU,
+        "-M", "microvm,acpi=off,pit=off,pic=off,rtc=off",
+        "-enable-kvm",
+        "-cpu", "host",
+        "-m", "256M",
+        "-smp", "2",
+        "-kernel", str(VMLINUZ),
+        "-initrd", str(INITRD),
+        "-nographic",
+        "-no-reboot",
+        *(extra or []),
+        "-append", append,
+    ]
+
+
 def qemu_cmd(fd, role, scenario, transport, netem=None, debug=False):
     # Unique MAC for each role to avoid L2 conflicts
     mac = "52:54:00:12:34:56" if role == "exit" else "52:54:00:12:34:57"
@@ -66,36 +84,21 @@ def qemu_cmd(fd, role, scenario, transport, netem=None, debug=False):
             cmdline += f" wallhack.loss={netem['loss']}"
         if "delay" in netem:
             cmdline += f" wallhack.delay={netem['delay']}"
-
     if debug:
         cmdline += " wallhack.debug=1"
 
-    parts = [
-        QEMU,
-        "-M",
-        "microvm,acpi=off,pit=off,pic=off,rtc=off",
-        "-enable-kvm",
-        "-cpu",
-        "host",
-        "-m",
-        "256M",
-        "-smp",
-        "2",
-        "-kernel",
-        str(VMLINUZ),
-        "-initrd",
-        str(INITRD),
-        "-netdev",
-        f"socket,id=net0,fd={fd}",
-        "-device",
-        f"virtio-net-device,netdev=net0,mac={mac}",
-        "-nographic",
-        "-no-reboot",
-        "-append",
+    return _qemu_base(
         cmdline,
-    ]
+        extra=[
+            "-netdev", f"socket,id=net0,fd={fd}",
+            "-device", f"virtio-net-device,netdev=net0,mac={mac}",
+        ],
+    )
 
-    return parts
+
+def qemu_debug_shell_cmd():
+    """Single VM with rdinit=/bin/sh for interactive kernel/OS debugging."""
+    return _qemu_base("console=ttyS0 loglevel=3 net.ifnames=0 biosdevname=0 rdinit=/bin/sh")
 
 
 def start_vm(cmd, fd):
@@ -177,45 +180,49 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
     sock_a, sock_b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     exit_log = collections.deque(maxlen=RING_BUFFER_SIZE)
     entry_log = collections.deque(maxlen=RING_BUFFER_SIZE)
-    entry_proc = None
+    exit_proc = None
 
-    exit_proc = start_vm(
-        qemu_cmd(sock_a.fileno(), "exit", scenario, transport, netem, debug),
-        sock_a.fileno(),
+    # Start entry VM first — it's the listener; wallhack entry binds the port
+    # and emits WALLHACK_ENTRY_READY_MAGIC_TOKEN before we start the exit VM.
+    # This eliminates the guaranteed 50ms–500ms retry delay that occurred when
+    # exit started first and hit a "connection refused" on its first attempt.
+    entry_proc = start_vm(
+        qemu_cmd(sock_b.fileno(), "entry", scenario, transport, netem, debug),
+        sock_b.fileno(),
     )
-    sock_a.close()
+    sock_b.close()
 
-    # Drain exit VM stdout continuously in background — prevents pipe deadlock
+    # Drain entry VM stdout continuously in background — prevents pipe deadlock
     # even when the main thread is not reading from it.
-    exit_drainer = threading.Thread(
-        target=_drain, args=(exit_proc, exit_log), daemon=True
+    entry_drainer = threading.Thread(
+        target=_drain, args=(entry_proc, entry_log), daemon=True
     )
-    exit_drainer.start()
+    entry_drainer.start()
 
     try:
         _, err = _wait_for_token(
-            exit_log, exit_proc, "WALLHACK_EXIT_READY_MAGIC_TOKEN", EXIT_READY_TIMEOUT
+            entry_log, entry_proc, "WALLHACK_ENTRY_READY_MAGIC_TOKEN", ENTRY_READY_TIMEOUT
         )
         if err:
-            sock_b.close()
-            return False, f"exit VM: {err}", 0.0, exit_log, entry_log
+            sock_a.close()
+            return False, f"entry VM: {err}", 0.0, exit_log, entry_log
 
-        entry_proc = start_vm(
-            qemu_cmd(sock_b.fileno(), "entry", scenario, transport, netem, debug),
-            sock_b.fileno(),
+        exit_proc = start_vm(
+            qemu_cmd(sock_a.fileno(), "exit", scenario, transport, netem, debug),
+            sock_a.fileno(),
         )
-        sock_b.close()
+        sock_a.close()
 
-        # Drain entry VM stdout continuously in background.
-        entry_drainer = threading.Thread(
-            target=_drain, args=(entry_proc, entry_log), daemon=True
+        # Drain exit VM stdout continuously in background.
+        exit_drainer = threading.Thread(
+            target=_drain, args=(exit_proc, exit_log), daemon=True
         )
-        entry_drainer.start()
+        exit_drainer.start()
 
         if keep_running:
             print("[debug-topology] Both VMs running. Ctrl-C to stop.")
             try:
-                while exit_proc.poll() is None and entry_proc.poll() is None:
+                while entry_proc.poll() is None and exit_proc.poll() is None:
                     time.sleep(0.5)
             except KeyboardInterrupt:
                 pass
@@ -234,9 +241,9 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
             entry_log,
         )
     finally:
-        if entry_proc:
-            kill_vm(entry_proc)
-        kill_vm(exit_proc)
+        if exit_proc:
+            kill_vm(exit_proc)
+        kill_vm(entry_proc)
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -253,6 +260,7 @@ for name in ("smoke", "resilience"):
     sp.add_argument("--verbose", action="store_true")
 dt = sub.add_parser("debug-topology")
 dt.add_argument("--transport", choices=["quic", "websocket"], default="quic")
+sub.add_parser("debug-shell", help="boot a single interactive busybox shell VM")
 args = ap.parse_args()
 
 preflight()
@@ -262,6 +270,14 @@ cmd = args.cmd
 debug = getattr(args, "debug", False)
 verbose = getattr(args, "verbose", False)
 transport = args.transport
+
+if cmd == "debug-shell":
+    # Boot a single VM with rdinit=/bin/sh for interactive kernel/OS debugging.
+    # Serial console is attached to the terminal. Use Ctrl-A X to exit QEMU.
+    preflight()
+    shell_cmd = qemu_debug_shell_cmd()
+    print("Booting busybox shell VM — use 'poweroff' or Ctrl-A X to exit.")
+    os.execvp(shell_cmd[0], shell_cmd)
 
 if cmd == "debug-topology":
     run_scenario("debug-topology", transport, debug=True, keep_running=True)

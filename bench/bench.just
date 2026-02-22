@@ -98,7 +98,7 @@ build-initrd: cargo-build-musl build-kernel fetch-busybox fetch-iperf3
     chmod +x "{{ rootfs_dir }}/init"
 
     echo "creating initrd..."
-    (cd "{{ rootfs_dir }}" && find . | cpio -o -H newc --quiet) | gzip > "{{ initrd }}"
+    (cd "{{ rootfs_dir }}" && find . | cpio -o -H newc --quiet) | gzip -1 > "{{ initrd }}"
     echo "done"
 
 # VM integration tests: basic tunnel connectivity (QUIC + WebSocket)

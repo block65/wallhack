@@ -12,7 +12,7 @@ INITRD = REPO_ROOT / "bench" / "vm" / "staging" / "initrd.gz"
 LOG_DIR = REPO_ROOT / "bench" / "results" / "logs"
 RESULTS_DIR = REPO_ROOT / "bench" / "results"
 QEMU = "qemu-system-x86_64"
-EXIT_READY_TIMEOUT = 60
+ENTRY_READY_TIMEOUT = 30
 RESULT_TIMEOUT = 120
 RING_BUFFER_SIZE = 500
 
@@ -160,49 +160,50 @@ def run_one_benchmark(transport, metric, debug=False):
     sock_a, sock_b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     exit_log = collections.deque(maxlen=RING_BUFFER_SIZE)
     entry_log = collections.deque(maxlen=RING_BUFFER_SIZE)
-    entry_proc = None
+    exit_proc = None
 
-    exit_proc = start_vm(
-        qemu_cmd(sock_a.fileno(), "exit", "benchmark", transport, metric, debug),
-        sock_a.fileno(),
+    # Start entry VM first — it's the listener; exit connects to it immediately.
+    entry_proc = start_vm(
+        qemu_cmd(sock_b.fileno(), "entry", "benchmark", transport, metric, debug),
+        sock_b.fileno(),
     )
-    sock_a.close()
+    sock_b.close()
 
-    exit_drainer = threading.Thread(target=_drain, args=(exit_proc, exit_log), daemon=True)
-    exit_drainer.start()
+    entry_drainer = threading.Thread(target=_drain, args=(entry_proc, entry_log), daemon=True)
+    entry_drainer.start()
 
     try:
         _, err = _wait_for_token(
-            exit_log, exit_proc, "WALLHACK_EXIT_READY_MAGIC_TOKEN", EXIT_READY_TIMEOUT
+            entry_log, entry_proc, "WALLHACK_ENTRY_READY_MAGIC_TOKEN", ENTRY_READY_TIMEOUT
         )
         if err:
-            sock_b.close()
-            return None, f"exit VM: {err}", exit_log, entry_log
+            sock_a.close()
+            return None, f"entry VM: {err}", exit_log, entry_log
 
-        entry_proc = start_vm(
-            qemu_cmd(sock_b.fileno(), "entry", "benchmark", transport, metric, debug),
-            sock_b.fileno(),
+        exit_proc = start_vm(
+            qemu_cmd(sock_a.fileno(), "exit", "benchmark", transport, metric, debug),
+            sock_a.fileno(),
         )
-        sock_b.close()
+        sock_a.close()
 
-        entry_drainer = threading.Thread(
-            target=_drain, args=(entry_proc, entry_log), daemon=True
+        exit_drainer = threading.Thread(
+            target=_drain, args=(exit_proc, exit_log), daemon=True
         )
-        entry_drainer.start()
+        exit_drainer.start()
 
         outcome, err = _wait_for_result(entry_log, entry_proc, RESULT_TIMEOUT)
         if err:
             return None, f"entry VM: {err}", exit_log, entry_log
-        
+
         if outcome and outcome.get("status") == "pass":
             val = outcome.get("value_mbps") if "value_mbps" in outcome else outcome.get("value_ms")
             return float(val), "", exit_log, entry_log
-        
+
         return None, outcome.get("reason", "unknown"), exit_log, entry_log
     finally:
-        if entry_proc:
-            kill_vm(entry_proc)
-        kill_vm(exit_proc)
+        if exit_proc:
+            kill_vm(exit_proc)
+        kill_vm(entry_proc)
 
 
 # ── wallhack version ──────────────────────────────────────────────────────────
