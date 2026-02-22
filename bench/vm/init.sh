@@ -272,7 +272,11 @@ _run_transfer_test() {
 		_UDP_SZ=$(wc -c < /tmp/udp-response.bin)
 		echo "=== udp-response hexdump ==="
 		od -A x -t x1z /tmp/udp-response.bin 2>/dev/null || true
-		_fail "UDP echo mismatch: expected=${EXPECTED_UDP} got=${ACTUAL_UDP} response_size=${_UDP_SZ}"
+		if [ "${_UDP_SZ}" -eq 0 ]; then
+			_fail "UDP echo: response was empty (0 bytes) — tunnel may not be forwarding UDP; check wallhack-entry.log above"
+		else
+			_fail "UDP echo mismatch: expected=${EXPECTED_UDP} got=${ACTUAL_UDP} response_size=${_UDP_SZ}"
+		fi
 		return
 	fi
 
