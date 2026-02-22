@@ -15,13 +15,11 @@ iperf3_bin := tools_dir / "iperf3"
 socat_bin := tools_dir / "socat"
 
 # Build minimal kernel with TUN + virtio-net built-in (cached after first build).
-
-# Also builds static socat binary used in the initrd.
 build-kernel:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -f "{{ vmlinuz }}" && -f "{{ socat_bin }}" ]]; then
-        echo "using cached kernel and socat"
+    if [[ -f "{{ vmlinuz }}" ]]; then
+        echo "using cached kernel"
         exit 0
     fi
     mkdir -p "{{ staging_dir }}" "{{ tools_dir }}"
@@ -30,10 +28,27 @@ build-kernel:
         -f "{{ vm_dir }}/kernel/Dockerfile" \
         --progress=plain \
         --build-arg KERNEL_VERSION="{{ kernel_ver }}" \
-        --build-arg SOCAT_VERSION="{{ socat_ver }}" \
         --output "type=local,dest={{ staging_dir }}" \
         "{{ vm_dir }}/kernel/"
-    echo "kernel and socat built"
+    echo "kernel built"
+
+# Build static socat binary used in the initrd (cached after first build).
+build-socat:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f "{{ socat_bin }}" ]]; then
+        echo "using cached socat"
+        exit 0
+    fi
+    mkdir -p "{{ staging_dir }}" "{{ tools_dir }}"
+    echo "Building socat {{ socat_ver }}..."
+    DOCKER_BUILDKIT=1 docker build \
+        -f "{{ vm_dir }}/socat/Dockerfile" \
+        --progress=plain \
+        --build-arg SOCAT_VERSION="{{ socat_ver }}" \
+        --output "type=local,dest={{ staging_dir }}" \
+        "{{ vm_dir }}/socat/"
+    echo "socat built"
 
 # Download static busybox binary
 fetch-busybox:
@@ -73,7 +88,7 @@ clean:
     rm -rf "{{ staging_dir }}"
 
 # Build initramfs from musl wallhack + busybox + socat + iperf3 + init.sh
-build-initrd: cargo-build-musl build-kernel fetch-busybox fetch-iperf3
+build-initrd: cargo-build-musl build-kernel build-socat fetch-busybox fetch-iperf3
     #!/usr/bin/env bash
     set -euo pipefail
 
