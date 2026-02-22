@@ -1130,7 +1130,7 @@ async fn send_ping(
 
 fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
 	let full_addr = if let Some(port) = addr.strip_prefix(':') {
-		format!("0.0.0.0:{port}")
+		format!("[::]:{port}")
 	} else {
 		addr.to_string()
 	};
