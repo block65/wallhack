@@ -24,6 +24,9 @@ async fn main() -> Result<()> {
 
 	setup_tracing(&cli);
 
+	#[cfg(target_os = "linux")]
+	check_entropy_ready();
+
 	match &cli.command {
 		Some(Command::Entry(cmd)) => {
 			cli::info!("Starting as entry node");
@@ -50,6 +53,34 @@ async fn main() -> Result<()> {
 				fast: false,
 			};
 			run_entry(&cli, &cmd).await
+		}
+	}
+}
+
+/// Warn if the kernel entropy pool isn't seeded yet.
+///
+/// `getrandom(2)` blocks until the CRNG has 256 bits of entropy, which can take a
+/// long time on systems with limited entropy sources — causing silent hangs in crypto
+/// startup code. Probing once here makes the wait visible.
+#[cfg(target_os = "linux")]
+fn check_entropy_ready() {
+	use std::io::Read;
+	use std::os::unix::fs::OpenOptionsExt;
+
+	// O_NONBLOCK (0x800) on the /dev/random fd is the same CRNG-readiness check
+	// that getrandom(GRND_NONBLOCK) uses internally, with no unsafe required.
+	let Ok(mut f) = std::fs::OpenOptions::new()
+		.read(true)
+		.custom_flags(0x800)
+		.open("/dev/random")
+	else {
+		return;
+	};
+
+	let mut buf = [0u8; 1];
+	if let Err(e) = f.read(&mut buf) {
+		if e.kind() == std::io::ErrorKind::WouldBlock {
+			cli::warn!("Entropy pool not yet seeded — startup may stall.");
 		}
 	}
 }
