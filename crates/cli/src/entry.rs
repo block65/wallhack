@@ -37,6 +37,7 @@ use wallhack::{
 use crate::{
 	WallhackCli,
 	cli::{EntryCommand, Protocol, TransportDir},
+	net::{SocketAddrExt, parse_listen_addr},
 };
 
 /// Manages TUN sessions for connected exit nodes.
@@ -309,6 +310,7 @@ async fn run_entry_connect(
 						addr: endpoint,
 						hostname: global.hostname.clone(),
 						mtls: None,
+						bind: endpoint.bind_addr(),
 						..Default::default()
 					},
 					path: "/ws".to_string(),
@@ -1128,18 +1130,6 @@ async fn send_ping(
 	Ok(start.elapsed().as_secs_f64() * 1000.0)
 }
 
-fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
-	let full_addr = if let Some(port) = addr.strip_prefix(':') {
-		format!("[::]:{port}")
-	} else {
-		addr.to_string()
-	};
-
-	full_addr
-		.parse()
-		.with_context(|| format!("Invalid listen address: {full_addr}"))
-}
-
 fn build_server_config(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
@@ -1243,6 +1233,7 @@ fn build_quic_client_config(
 		hostname: global.hostname.clone(),
 		mtls,
 		psk: global.resolve_psk(),
+		bind: endpoint.bind_addr(),
 		..Default::default()
 	}
 }
