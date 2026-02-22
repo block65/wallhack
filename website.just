@@ -1,3 +1,4 @@
+set working-directory := "website"
 
 # Install website dependencies (pnpm, frozen lockfile)
 deps:

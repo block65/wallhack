@@ -397,7 +397,7 @@ pub async fn run_send_responses<S: tokio::io::AsyncWrite + Unpin>(
 		};
 
 		tracing::debug!(
-			response_type = ?response.response.as_ref().map(|r| std::mem::discriminant(r)),
+			response_type = ?response.response.as_ref().map(std::mem::discriminant),
 			"Sending response to peer"
 		);
 		let tunnel_msg = TunnelMessage::from(response);
