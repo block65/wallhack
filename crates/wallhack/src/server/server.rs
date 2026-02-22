@@ -155,4 +155,7 @@ pub trait Server {
 
 	/// Returns the configured PSK, if any.
 	fn psk(&self) -> Option<&str>;
+
+	/// Returns the local address the server is actually bound to.
+	fn local_addr(&self) -> std::io::Result<std::net::SocketAddr>;
 }

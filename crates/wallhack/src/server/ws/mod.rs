@@ -300,6 +300,10 @@ impl Server for WsServer {
 	fn psk(&self) -> Option<&str> {
 		self.psk.as_deref()
 	}
+
+	fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+		self.listener.local_addr()
+	}
 }
 
 /// Accepts a WebSocket connection.

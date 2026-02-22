@@ -226,4 +226,8 @@ impl Server for QuicServer {
 	fn psk(&self) -> Option<&str> {
 		self.psk.as_deref()
 	}
+
+	fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+		self.endpoint.local_addr()
+	}
 }
