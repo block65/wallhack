@@ -10,7 +10,7 @@ use std::{
 	time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use wallhack::{
@@ -37,7 +37,7 @@ use crate::{
 /// Initial retry delay for connection attempts (peer not yet listening).
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(50);
 /// Delay before reconnecting after an established session drops.
-/// Separate from INITIAL_RETRY_DELAY to provide storm protection without
+/// Separate from `INITIAL_RETRY_DELAY` to provide storm protection without
 /// penalising the initial connect race.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// Maximum retry delay (caps exponential backoff).
@@ -926,7 +926,6 @@ async fn run_ws_exit(
 			psk: security.psk.clone(),
 			accept_fingerprint: security.accept_fingerprint.clone(),
 			bind: endpoint.bind_addr(),
-			..Default::default()
 		},
 		path: "/ws".to_string(),
 		host_header: global.hostname.clone(),
@@ -1023,7 +1022,6 @@ fn build_quic_client_config(
 		psk,
 		accept_fingerprint,
 		bind: endpoint.bind_addr(),
-		..Default::default()
 	}
 }
 
