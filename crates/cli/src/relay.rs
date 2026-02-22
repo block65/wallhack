@@ -21,6 +21,7 @@ use wallhack::{client, server};
 use crate::{
 	WallhackCli,
 	cli::{Protocol, RelayCommand},
+	net::{SocketAddrExt, parse_listen_addr},
 };
 
 /// Initial retry delay for connection attempts.
@@ -138,12 +139,6 @@ async fn run_downstream(
 	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
 	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
 ) -> Result<()> {
-	crate::info!(
-		"Listening for downstream on {} ({:?})",
-		addr,
-		listen_spec.protocol
-	);
-
 	match listen_spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
@@ -236,6 +231,7 @@ async fn connect_quic_upstream(
 		mtls: None,
 		psk: psk.map(std::string::ToString::to_string),
 		accept_fingerprint: accept_fingerprint.map(std::string::ToString::to_string),
+		bind: addr.bind_addr(),
 		..Default::default()
 	};
 
@@ -282,6 +278,7 @@ async fn connect_ws_upstream(
 			mtls: None,
 			psk: psk.map(std::string::ToString::to_string),
 			accept_fingerprint: accept_fingerprint.map(std::string::ToString::to_string),
+			bind: addr.bind_addr(),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -323,6 +320,7 @@ async fn run_quic_downstream(
 ) -> Result<()> {
 	let server_config = build_server_config(global, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
+	crate::info!("Listening on {} (QUIC/UDP)", server.local_addr()?);
 
 	loop {
 		match server.accept(NodeRole::Relay).await {
@@ -354,6 +352,7 @@ async fn run_ws_downstream(
 
 	let server_config = build_server_config(global, addr);
 	let mut server = WsServer::try_new(server_config, server_options)?;
+	crate::info!("Listening on {} (WebSocket/TCP)", server.local_addr()?);
 
 	loop {
 		match server.accept(NodeRole::Relay).await {
@@ -371,18 +370,6 @@ async fn run_ws_downstream(
 	}
 
 	Ok(())
-}
-
-fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
-	let full_addr = if let Some(port) = addr.strip_prefix(':') {
-		format!("[::]:{port}")
-	} else {
-		addr.to_string()
-	};
-
-	full_addr
-		.parse()
-		.with_context(|| format!("Invalid listen address: {full_addr}"))
 }
 
 #[cfg(any(feature = "quic", feature = "websocket"))]

@@ -9,6 +9,7 @@ pub mod version;
 
 mod entry;
 mod exit;
+mod net;
 mod relay;
 
 mod styles;

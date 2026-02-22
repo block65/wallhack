@@ -31,6 +31,7 @@ use wallhack::client::{self, config::ClientConfig, config::MtlsConfig};
 use crate::{
 	WallhackCli,
 	cli::{ExitCommand, Protocol, TransportDir},
+	net::{SocketAddrExt, parse_listen_addr},
 };
 
 /// Initial retry delay for connection attempts (peer not yet listening).
@@ -279,7 +280,6 @@ async fn run_relay_capability_mode(
 	crate::route_info!(printer, "Connecting to peer: {peer_addr}");
 
 	let listen_addr = parse_listen_addr(&listen_spec.addr)?;
-	crate::route_info!(printer, "Listening for peer connections on: {listen_addr}");
 
 	match connect_spec.protocol {
 		Protocol::Udp => {
@@ -331,15 +331,15 @@ async fn run_listen_mode(
 
 	let server_config = build_server_config(global, addr);
 
-	crate::route_info!(printer, "Listening on {addr}");
-
 	match spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
 				let server =
 					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
-				run_listen_server_loop(server, metrics, repl_rx, printer, addr).await
+				let bound = server.local_addr()?;
+				crate::route_info!(printer, "Listening on {bound} (QUIC/UDP)");
+				run_listen_server_loop(server, metrics, repl_rx, printer, bound).await
 			}
 			#[cfg(not(feature = "quic"))]
 			anyhow::bail!("QUIC transport not available (compile with --features quic)")
@@ -349,7 +349,9 @@ async fn run_listen_mode(
 			{
 				let server =
 					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
-				run_listen_server_loop(server, metrics, repl_rx, printer, addr).await
+				let bound = server.local_addr()?;
+				crate::route_info!(printer, "Listening on {bound} (WebSocket/TCP)");
+				run_listen_server_loop(server, metrics, repl_rx, printer, bound).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
@@ -923,6 +925,7 @@ async fn run_ws_exit(
 			name: Some(name.to_string()),
 			psk: security.psk.clone(),
 			accept_fingerprint: security.accept_fingerprint.clone(),
+			bind: endpoint.bind_addr(),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -1019,6 +1022,7 @@ fn build_quic_client_config(
 		name: Some(name),
 		psk,
 		accept_fingerprint,
+		bind: endpoint.bind_addr(),
 		..Default::default()
 	}
 }
@@ -1058,15 +1062,15 @@ async fn run_quic_relay_capability(
 
 	let server_config = build_server_config(global, listen_addr);
 	let mut server = wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+	let bound = server.local_addr()?;
 
 	crate::route_info!(
 		printer,
-		"Relay capability active: connected to {peer_addr}, listening on :{}",
-		listen_addr.port()
+		"Relay capability active: connected to {peer_addr}, listening on {bound} (QUIC/UDP)"
 	);
 
 	let peer_addr_str = peer_addr.to_string();
-	let listen_port = listen_addr.port();
+	let listen_port = bound.port();
 	let connected_at = Instant::now();
 
 	// Accept and bridge peer connections
@@ -1176,6 +1180,7 @@ async fn run_ws_relay_capability(
 			mtls: None,
 			name: None,
 			psk,
+			bind: peer_addr.bind_addr(),
 			..Default::default()
 		},
 		path: "/ws".to_string(),
@@ -1200,15 +1205,15 @@ async fn run_ws_relay_capability(
 
 	let server_config = build_server_config(global, listen_addr);
 	let mut server = wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+	let bound = server.local_addr()?;
 
 	crate::route_info!(
 		printer,
-		"Relay capability active: connected to {peer_addr}, listening on :{}",
-		listen_addr.port()
+		"Relay capability active: connected to {peer_addr}, listening on {bound} (WebSocket/TCP)"
 	);
 
 	let peer_addr_str = peer_addr.to_string();
-	let listen_port = listen_addr.port();
+	let listen_port = bound.port();
 	let connected_at = Instant::now();
 
 	// Accept and bridge peer connections
@@ -1342,18 +1347,6 @@ fn bridge_peer<T: wallhack::transport::Transport>(
 			}
 		}
 	});
-}
-
-fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
-	let full_addr = if let Some(port) = addr.strip_prefix(':') {
-		format!("[::]:{port}")
-	} else {
-		addr.to_string()
-	};
-
-	full_addr
-		.parse()
-		.with_context(|| format!("Invalid listen address: {full_addr}"))
 }
 
 fn build_server_config(
