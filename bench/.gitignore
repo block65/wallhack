@@ -1,10 +1,4 @@
-bin/iperf3
-vm/base.qcow2
-vm/ubuntu-*.img
-vm/setup-work.qcow2
-vm/cloud-seed.iso
-results/logs/
-results/*.json
-results/latest
-__pycache__/
-*.pyc
+vm/staging/
+
+
+results/
