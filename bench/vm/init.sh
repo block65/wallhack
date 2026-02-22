@@ -247,7 +247,7 @@ _run_transfer_test() {
 	head -c 64 /dev/zero | tr '\0' 'U' > /tmp/udp-payload.bin
 	EXPECTED_UDP=$(sha256sum /tmp/udp-payload.bin | awk '{print $1}')
 
-	if ! nc -u -w 5 "${ECHO_PRIV}" "${ECHO_UDP_PORT}" \
+	if ! nc -u -w 1 "${ECHO_PRIV}" "${ECHO_UDP_PORT}" \
 		< /tmp/udp-payload.bin > /tmp/udp-response.bin; then
 		_fail "UDP echo failed (nc exit $?)"
 		return

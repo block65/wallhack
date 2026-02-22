@@ -116,3 +116,7 @@ benchmark: build-initrd
 # Boot both VMs interactively for manual topology inspection
 debug-topology: build-initrd
     python3 run_tests.py debug-topology
+
+# Boot a single interactive busybox shell VM (Ctrl-A X to exit QEMU)
+shell: build-initrd
+    python3 run_tests.py debug-shell
