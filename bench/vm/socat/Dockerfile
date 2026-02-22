@@ -7,7 +7,7 @@ RUN apt-get update -qq && \
     libssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
-ARG SOCAT_VERSION=1.8.1.1
+ARG SOCAT_VERSION
 
 WORKDIR /build/socat-${SOCAT_VERSION}
 # socat author doesnt even have SSL, so we get it from the googlesource mirror

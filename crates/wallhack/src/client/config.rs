@@ -9,8 +9,9 @@ pub const DEFAULT_CONNECT_ADDRESS: std::net::Ipv6Addr = std::net::Ipv6Addr::LOCA
 
 /// Returns `true` if the kernel supports the IPv6 address family.
 ///
-/// Asks the kernel to create an AF_INET6 socket object. No port is allocated;
+/// Asks the kernel to create an `AF_INET6` socket object. No port is allocated;
 /// this is purely a kernel capability check.
+#[must_use]
 pub fn ipv6_supported() -> bool {
 	Socket::new(Domain::IPV6, Type::DGRAM, None).is_ok()
 }
