@@ -79,7 +79,8 @@ RUN ./scripts/config \
     -e VIRTIO_NET \
     `# --- Entropy / RNG (RDRAND via -cpu host) ---` \
     -e HW_RANDOM \
-    -d MODULES
+    -d MODULES \
+    -d IPV6
 
 # dependencies
 RUN make olddefconfig
@@ -100,5 +101,7 @@ RUN make -j"$(nproc)" bzImage
 RUN cp arch/x86/boot/bzImage /build/vmlinuz
 
 FROM scratch
+ARG KERNEL_VERSION
 COPY --from=builder /build/vmlinuz /vmlinuz
 COPY --from=builder /build/socat /bin/socat
+COPY --from=builder /build/linux-${KERNEL_VERSION}/.config /kernel.config
