@@ -173,7 +173,7 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
-				crate::info!("Listening on {addr} (QUIC/UDP)");
+				crate::info!("Listening on {} (QUIC/UDP)", server.local_addr()?);
 				crate::info!("Certificate fingerprint: {}", server.fingerprint());
 				if server.psk().is_none() {
 					crate::warn!(
@@ -201,7 +201,7 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
-				crate::info!("Listening on {addr} (WebSocket/TCP)");
+				crate::info!("Listening on {} (WebSocket/TCP)", server.local_addr()?);
 				crate::info!("Certificate fingerprint: {}", server.fingerprint());
 				if server.psk().is_none() {
 					crate::warn!(
@@ -1130,7 +1130,7 @@ async fn send_ping(
 
 fn parse_listen_addr(addr: &str) -> Result<std::net::SocketAddr> {
 	let full_addr = if let Some(port) = addr.strip_prefix(':') {
-		format!("[::]:{port}")
+		format!("0.0.0.0:{port}")
 	} else {
 		addr.to_string()
 	};
