@@ -79,8 +79,7 @@ RUN ./scripts/config \
     -e VIRTIO_NET \
     `# --- Entropy / RNG (RDRAND via -cpu host) ---` \
     -e HW_RANDOM \
-    -d MODULES \
-    -d IPV6
+    -d MODULES
 
 # dependencies
 RUN make olddefconfig

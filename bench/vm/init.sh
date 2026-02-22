@@ -327,7 +327,7 @@ _run_entry() {
 	echo "WALLHACK_TS: entry_wallhack_start=$(date +%s%3N)"
 	# Start wallhack entry node (listen mode)
 	wallhack ${DEBUG:+"--debug"} entry \
-		-l "0.0.0.0:${WH_PORT}${_TSUFFIX}" \
+		-l ":${WH_PORT}${_TSUFFIX}" \
 		2>&1 | tee /tmp/wallhack-entry.log &
 
 	# Wait for wallhack to bind the listen port by watching /proc/net directly.
