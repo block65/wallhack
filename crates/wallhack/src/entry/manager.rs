@@ -160,7 +160,7 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 				}
 				result = udp.recv_from(&mut udp_buf) => {
 					let (size, meta, local_port) = result?;
-					tracing::trace!(
+					tracing::debug!(
 						size,
 						local_port,
 						remote = %meta.endpoint,
@@ -314,7 +314,7 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 						if let Err(e) = udp.send_to(local_port, &data_recv.data, meta) {
 							tracing::warn!("Failed to send UDP response to client: {e}");
 						} else {
-							tracing::trace!(
+							tracing::debug!(
 								local_port,
 								client = %client_endpoint,
 								"UDP response sent to client"
