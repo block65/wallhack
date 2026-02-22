@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -3118,7 +3118,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "wallhack"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
