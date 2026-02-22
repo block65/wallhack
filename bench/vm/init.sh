@@ -254,13 +254,16 @@ _run_transfer_test() {
 		return
 	fi
 
-	# UDP: 64-byte deterministic payload (0x55 = 'U'), echo verification
+	# UDP: 64-byte deterministic payload (0x55 = 'U'), echo verification.
+	# Use nc -u instead of socat to avoid socat's EOF-signalling behaviour
+	# (socat sends a 0-byte UDP datagram when stdin closes, which races
+	# against the real echo response arriving through the tunnel).
 	head -c 64 /dev/zero | tr '\0' 'U' > /tmp/udp-payload.bin
 	EXPECTED_UDP=$(sha256sum /tmp/udp-payload.bin | awk '{print $1}')
 
-	if ! socat -T 5 - UDP4:"${ECHO_PRIV}":"${ECHO_UDP_PORT}",bind="${ENTRY_TUN_IP}" \
+	if ! nc -u -w 5 "${ECHO_PRIV}" "${ECHO_UDP_PORT}" \
 		< /tmp/udp-payload.bin > /tmp/udp-response.bin; then
-		_fail "UDP echo failed"
+		_fail "UDP echo failed (nc exit $?)"
 		return
 	fi
 
