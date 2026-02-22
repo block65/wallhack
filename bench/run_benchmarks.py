@@ -19,7 +19,7 @@ from vm_common import (
     wait_for_token,
     wait_for_result,
     make_log_pair,
-    make_socketpair,
+    free_port,
 )
 
 SCENARIOS = [
@@ -36,18 +36,16 @@ SCENARIOS = [
 
 
 def run_one_benchmark(transport, metric, debug=False):
-    sock_a, sock_b = make_socketpair()
+    port = free_port()
     exit_log, entry_log = make_log_pair()
     exit_proc = None
 
-    # Start entry VM first — it's the listener; exit connects to it immediately.
+    # Start entry VM first — its QEMU netdev binds the listen socket immediately
+    # on startup (before the guest OS even boots), so by the time we get
+    # WALLHACK_ENTRY_READY_MAGIC_TOKEN, the port is guaranteed to be bound.
     entry_proc = start_vm(
-        qemu_cmd(
-            sock_b.fileno(), "entry", "benchmark", transport, metric=metric, debug=debug
-        ),
-        sock_b.fileno(),
+        qemu_cmd(port, "entry", "benchmark", transport, metric=metric, debug=debug)
     )
-    sock_b.close()
 
     entry_drainer = threading.Thread(
         target=drain, args=(entry_proc, entry_log), daemon=True
@@ -62,21 +60,18 @@ def run_one_benchmark(transport, metric, debug=False):
             ENTRY_READY_TIMEOUT,
         )
         if err:
-            sock_a.close()
             return None, f"entry VM: {err}", exit_log, entry_log
 
         exit_proc = start_vm(
             qemu_cmd(
-                sock_a.fileno(),
+                port,
                 "exit",
                 "benchmark",
                 transport,
                 metric=metric,
                 debug=debug,
-            ),
-            sock_a.fileno(),
+            )
         )
-        sock_a.close()
 
         exit_drainer = threading.Thread(
             target=drain, args=(exit_proc, exit_log), daemon=True
@@ -112,7 +107,8 @@ def _wallhack_version():
     if not wh.exists():
         return "unknown"
     r = subprocess.run([str(wh), "--version"], capture_output=True, text=True)
-    return r.stdout.strip().split()[-1] if r.returncode == 0 else "unknown"
+    # First line is "wallhack <semver>"; take the second word.
+    return r.stdout.split()[1] if r.returncode == 0 else "unknown"
 
 
 # ── main ──────────────────────────────────────────────────────────────────────

@@ -124,3 +124,13 @@
 - [ ] We have some serious naming issues in regards to topology, and the use of
       directional wording such as in/out send/receive and up/down. We need to
       refactor files based on the naming conventions in the agents.md file
+- [ ] Add `version` command to repl
+- [ ] Add `version` to info output when running
+- [ ] Info logs on startup are too verbose
+      ```
+      [+] Starting as exit node
+      [+] Running in headless mode (no REPL).
+      [+] Exit node starting as vm
+      [+] Resolving 10.0.0.2:6565
+      [+] Resolved as 10.0.0.2:6565
+      ```
