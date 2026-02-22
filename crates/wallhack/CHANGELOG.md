@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.3](https://github.com/block65/wallhack/compare/wallhack-v0.1.2...wallhack-v0.1.3) (2026-02-22)
+
+
+### Features
+
+* HTTP CONNECT and SOCKS5 proxy support for WebSockets transport ([ce2f8cf](https://github.com/block65/wallhack/commit/ce2f8cf3ecab8c2e38ecd5e7f8482fd80faf4708))
+* **server:** enforce mTLS when CA roots are configured ([30b6595](https://github.com/block65/wallhack/commit/30b6595e70cac91294ac451cfbe48929fafa7a11))
+
+
+### Bug Fixes
+
+* **api:** propagate route added_at timestamp to REST API ([0a2c5de](https://github.com/block65/wallhack/commit/0a2c5dea7c45fc4a6e11e13cbb4a239f6edbccd2))
+* **client:** detect IPv6 support at runtime for default bind address ([551adab](https://github.com/block65/wallhack/commit/551adab70764d96c15be55232f46ead412567006))
+* **entry:** display actual bound address instead of parsed input ([c37eb22](https://github.com/block65/wallhack/commit/c37eb22e19ccf3d8a9be269bfb041f548c5329ad))
+* **entry:** elevate UDP path tracing from trace to debug level ([5a59e08](https://github.com/block65/wallhack/commit/5a59e08d203a16cce2078988499a5ee8a4726a26))
+* **lint:** redundant closure in bridge.rs; set working-directory in website.just ([3f73f9c](https://github.com/block65/wallhack/commit/3f73f9c328c9173321a8e7c45034d5af8608e16f))
+* **server:** move test module to end of tls.rs ([eeebd7b](https://github.com/block65/wallhack/commit/eeebd7b21bb2292dc0b816dd51a3f1659ca1517c))
+* single source of truth for SOCAT_VERSION + clippy fixes ([c940fb5](https://github.com/block65/wallhack/commit/c940fb56d37702ea17d3c4218d81109cf56b26c5))
+* **transport:** subscribe before spawn to eliminate UDP broadcast race ([1272a15](https://github.com/block65/wallhack/commit/1272a1561f0d3f497c628b367e8f9428593ce09c))
+
 ## [0.1.2](https://github.com/block65/wallhack/compare/wallhack-v0.1.1...wallhack-v0.1.2) (2026-02-22)
 
 
