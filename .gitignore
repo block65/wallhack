@@ -34,3 +34,10 @@ GEMINI.md
 # AI-generated analysis/proposal docs (local only)
 docs/*AUDIT*.md
 docs/*PROPOSAL*.md
+
+# python garbage
+__pycache__/
+*.pyc
+
+# bench build artifacts
+/bin/
