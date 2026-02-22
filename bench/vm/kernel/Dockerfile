@@ -3,22 +3,12 @@ FROM debian:trixie-slim AS builder
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
     ca-certificates curl xz-utils \
-    build-essential autoconf automake \
+    build-essential \
     bc flex bison \
     libssl-dev libelf-dev && \
     rm -rf /var/lib/apt/lists/*
 
-ARG SOCAT_VERSION=1.8.1.1
 ARG KERNEL_VERSION
-
-# Static socat
-WORKDIR /build/socat-${SOCAT_VERSION}
-## socat author doesnt even have SSL, so we get it from the googlesource mirror
-RUN curl -fsSL "https://third-party-mirror.googlesource.com/socat/+archive/refs/tags/tag-${SOCAT_VERSION}.tar.gz" | tar -xz 
-RUN autoconf && ./configure --disable-shared LDFLAGS="-static" && \
-    make -j"$(nproc)" && \
-    strip socat && \
-    cp socat /build/socat
 
 # Linux Kernel
 # WARNING: the hardcoded v6.x prefix means you cant actually download
@@ -102,5 +92,4 @@ RUN cp arch/x86/boot/bzImage /build/vmlinuz
 FROM scratch
 ARG KERNEL_VERSION
 COPY --from=builder /build/vmlinuz /vmlinuz
-COPY --from=builder /build/socat /bin/socat
 COPY --from=builder /build/linux-${KERNEL_VERSION}/.config /kernel.config
