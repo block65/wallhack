@@ -54,9 +54,19 @@ add, remove, or change any route, request body, or response shape in
 
 Follow the rules in `./website/WRITING.md`
 
-### Peer naming in docs and examples
-
-- Never use "host", "client", "upstream", or "downstream" to refer to a peer identifier.
-- Never use directional or role-based language for peer IDs unless the role is absolute and unambiguous (e.g. `entry` or `exit` as node types, not as peer names).
-- In code examples, use explicit peer IDs like `peer1`, `peer2`, `dmz1`, `node1` — names that are clearly wallhack peer identifiers, not network roles.
-- Always show the `-i <peer_id>` flag on exit/relay commands when the REPL `route add` is demonstrated so examples are self-consistent.
+## Naming Conventions: Topology and Peers
+- The Protocol Exception: Standard terminology (client, server, send, receive)
+  is allowed and expected when strictly interacting with underlying transport
+  layers or standard APIs (e.g., initializing a QUIC connection, WebSocket
+  servers, HTTP APIs).
+- Prohibited terms (Domain Logic): When writing mesh topology, routing, or
+  peer-to-peer domain logic, do not use host, client, server, upstream,
+  downstream, in, out, up, down, send, receive, local, or remote to describe
+  data flows.
+- Required terminology (Vectors): Describe mesh data flows using absolute paths
+  (source, destination, target) and concrete entities (peer, tun, device).
+- Explicit identifiers: Code and logs must use explicit, fixed IDs (e.g., peer1,
+  dmz1, nodeA). Do not use network roles as variable names.
+- CLI consistency: eg REPL route add examples must explicitly include the --name
+  <peer> flag on exit/relay commands to ensure routing examples remain
+  self-documenting.

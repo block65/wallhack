@@ -121,3 +121,6 @@
 
 - [ ] Audit `#[allow(clippy::...)]` call sites — confirm each suppression is
       intentional and add a comment explaining why, or fix the underlying issue.
+- [ ] We have some serious naming issues in regards to topology, and the use of
+      directional wording such as in/out send/receive and up/down. We need to
+      refactor files based on the naming conventions in the agents.md file
