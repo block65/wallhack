@@ -1,12 +1,10 @@
+mod bench "bench/bench.just"
+mod website
+
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-website     := justfile_directory() / "website"
-bench       := justfile_directory() / "bench"
-iperf3_bin  := bench / "bin" / "iperf3"
-iperf3_ver  := "3.20"
-
-# Pre-PR gate: fmt, lint, build, unit tests, smoke, resilience, website lint + build
-check: fmt-check lint cargo-build test smoke resilience website-lint website-build
+# Pre-review gate
+check: fmt-check lint cargo-build test bench::smoke bench::resilience website::lint website::build
 
 # cargo fmt --check
 fmt-check:
@@ -26,56 +24,9 @@ cargo-build:
 test:
     cargo test --all
 
-# Build release binary with all transports (required by VM tests)
+# Build release binary with all transports (glibc, for development/IDE)
 build-release:
     cargo build --release --features full
-
-# Install website dependencies (pnpm, frozen lockfile)
-website-deps:
-    cd "{{website}}" && pnpm install --frozen-lockfile --silent
-
-# Website lint (biome)
-website-lint: website-deps
-    cd "{{website}}" && pnpm check
-
-# Website build (astro)
-website-build: website-deps
-    cd "{{website}}" && pnpm build
-
-# VM integration tests: basic tunnel connectivity (QUIC + WebSocket)
-smoke: build-release
-    python3 "{{bench}}/run_tests.py" smoke
-
-# VM integration tests: degraded network resilience (QUIC + WebSocket)
-resilience: build-release
-    python3 "{{bench}}/run_tests.py" resilience
-
-# VM integration benchmarks: throughput + latency (not in `just check`)
-benchmark: build-release fetch-iperf3
-    python3 "{{bench}}/run_benchmarks.py"
-
-# Boot both VMs interactively for manual topology inspection
-debug-topology: build-release
-    python3 "{{bench}}/run_tests.py" debug-topology
-
-# Build base VM image (run once; requires qemu + cloud-image-utils)
-setup-vm:
-    bash "{{bench}}/setup-vm.sh"
-
-# Download static iperf3 binary for benchmark VMs
-fetch-iperf3:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x "{{iperf3_bin}}" ]]; then
-        echo "iperf3 already present"
-        exit 0
-    fi
-    mkdir -p "$(dirname "{{iperf3_bin}}")"
-    url="https://github.com/userdocs/iperf3-static/releases/download/{{iperf3_ver}}/iperf3-amd64"
-    echo "Downloading iperf3 {{iperf3_ver}}..."
-    curl -fsSL -o "{{iperf3_bin}}" "$url"
-    chmod +x "{{iperf3_bin}}"
-    echo "iperf3 downloaded to {{iperf3_bin}}"
 
 # Delete local branches that have been merged and deleted on origin
 clean-branches:
