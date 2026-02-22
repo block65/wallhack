@@ -271,37 +271,51 @@ _run_transfer_test() {
 
 # ---------- benchmark test ------------------------------------------------
 
-_iperf3_mbps() {
-	awk "/$1/{for(i=1;i<=NF;i++) if(\$i==\"Mbits/sec\") {printf \"%.2f\\n\", \$(i-1); exit}}"
+# Parse bits_per_second (→ Mbps, 3 decimal places) from a named section in
+# iperf3 --json output. iperf3 3.20 uses tab after colon so we use match().
+# $1 = section name: sum_sent | sum_received | sum
+_iperf3_bps_mbps() {
+	awk -v sec="$1" '
+		$0 ~ ("\"" sec "\"") { in_sec = 1 }
+		in_sec && /"bits_per_second"/ {
+			match($0, /[0-9]+\.?[0-9]*/)
+			printf "%.3f\n", substr($0, RSTART, RLENGTH) / 1e6
+			exit
+		}
+	'
 }
 
 _run_latency_benchmark() {
-	if ! _PING_OUT=$(ping -c 20 -q "${ECHO_PRIV}" 2>&1); then
-		_fail "ping failed: $(echo "${_PING_OUT}" | head -1 | tr '"' "'")"
-		return
-	fi
-	_AVG=$(printf '%s' "${_PING_OUT}" | awk -F'[=/]' '/rtt/{print $5}')
-	: "${_AVG:=0}"
-	_pass "\"metric\":\"latency\",\"value_ms\":${_AVG}"
+	# TCP RTT from iperf3 --json end.streams[].sender.mean_rtt (microseconds).
+	# iperf3 3.20 uses tab after colon ("mean_rtt":\t<value>) so we use
+	# match() to extract the first digit sequence on the matching line.
+	_RAW=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json 2>/dev/null)
+	_VALUE=$(printf '%s' "${_RAW}" \
+		| awk '/"mean_rtt"/{match($0,/[0-9]+/); v=substr($0,RSTART,RLENGTH)+0; printf "%.3f\n", v/1000; exit}')
+	: "${_VALUE:=0}"
+	_pass "\"metric\":\"latency\",\"value_ms\":${_VALUE}"
 }
 
 _run_benchmark() {
-	if [ "${METRIC}" = "latency" ]; then
-		_run_latency_benchmark
-		return
-	fi
-
 	if ! command -v iperf3 >/dev/null 2>&1; then
 		_fail "iperf3 not found in initramfs"
 		return
 	fi
 
+	if [ "${METRIC}" = "latency" ]; then
+		_run_latency_benchmark
+		return
+	fi
+
+	# All throughput scenarios use --json for sub-Mbps precision.
+	# sum_sent = client-side sender stats (tcp_fwd, udp, parallel)
+	# sum_received = client-side receiver stats (tcp_rev with -R)
 	case "${METRIC}" in
-		tcp_fwd)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 -f m    | _iperf3_mbps "sender") ;;
-		tcp_rev)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 -f m -R | _iperf3_mbps "receiver") ;;
-		udp)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 -f m -u -b 0 | _iperf3_mbps "sender") ;;
-		parallel2) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 -f m -P 2 | _iperf3_mbps "SUM.*sender") ;;
-		parallel4) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 -f m -P 4 | _iperf3_mbps "SUM.*sender") ;;
+		tcp_fwd)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json    | _iperf3_bps_mbps "sum_sent") ;;
+		tcp_rev)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -R | _iperf3_bps_mbps "sum_received") ;;
+		udp)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -u -b 0 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel2) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 2 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel4) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 4 | _iperf3_bps_mbps "sum_sent") ;;
 		*)         _fail "unknown benchmark metric: ${METRIC}"; return ;;
 	esac
 

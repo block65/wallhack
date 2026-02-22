@@ -21,7 +21,7 @@ from vm_common import (
     wait_for_token,
     wait_for_result,
     make_log_pair,
-    make_socketpair,
+    free_port,
 )
 
 SMOKE = [
@@ -41,7 +41,7 @@ RESILIENCE = [
 def qemu_debug_shell_cmd():
     """Single VM with rdinit=/bin/sh for interactive kernel/OS debugging."""
     return qemu_base(
-        "console=ttyS0 loglevel=3 net.ifnames=0 biosdevname=0 rdinit=/bin/sh panic=-1"
+        "console=ttyS0 loglevel=3 net.ifnames=0 biosdevname=0 ipv6.disable=1 rdinit=/bin/sh panic=-1",
     )
 
 
@@ -49,19 +49,19 @@ def qemu_debug_shell_cmd():
 
 
 def run_scenario(scenario, transport, netem=None, debug=False, keep_running=False):
-    sock_a, sock_b = make_socketpair()
+    port = free_port()
     exit_log, entry_log = make_log_pair()
     exit_proc = None
 
-    # Start entry VM first — it's the listener; wallhack entry binds the port
-    # and emits WALLHACK_ENTRY_READY_MAGIC_TOKEN before we start the exit VM.
-    # This eliminates the guaranteed 50ms–500ms retry delay that occurred when
-    # exit started first and hit a "connection refused" on its first attempt.
+    # Start entry VM first — its QEMU netdev binds the listen socket immediately
+    # on startup (before the guest OS even boots), so by the time we get
+    # WALLHACK_ENTRY_READY_MAGIC_TOKEN, the port is guaranteed to be bound.
+    # wallhack entry binds the wallhack port and emits ENTRY_READY before we
+    # start the exit VM, eliminating the 50ms–500ms retry delay that occurred
+    # when exit started first and hit a "connection refused" on its first attempt.
     entry_proc = start_vm(
-        qemu_cmd(sock_b.fileno(), "entry", scenario, transport, netem, debug),
-        sock_b.fileno(),
+        qemu_cmd(port, "entry", scenario, transport, netem, debug)
     )
-    sock_b.close()
 
     # Drain entry VM stdout continuously in background — prevents pipe deadlock
     # even when the main thread is not reading from it.
@@ -78,14 +78,11 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
             ENTRY_READY_TIMEOUT,
         )
         if err:
-            sock_a.close()
             return False, f"entry VM: {err}", 0.0, exit_log, entry_log
 
         exit_proc = start_vm(
-            qemu_cmd(sock_a.fileno(), "exit", scenario, transport, netem, debug),
-            sock_a.fileno(),
+            qemu_cmd(port, "exit", scenario, transport, netem, debug)
         )
-        sock_a.close()
 
         # Drain exit VM stdout continuously in background.
         exit_drainer = threading.Thread(
@@ -150,7 +147,7 @@ if cmd == "debug-shell":
     # Serial console is attached to the terminal. Use Ctrl-A X to exit QEMU.
     preflight()
     shell_cmd = qemu_debug_shell_cmd()
-    print("Booting busybox shell VM — use 'poweroff' or Ctrl-A X to exit.")
+    print("Booting busybox shell VM — Ctrl-A X to exit.")
     os.execvp(shell_cmd[0], shell_cmd)
 
 if cmd == "debug-topology":

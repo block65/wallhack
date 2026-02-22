@@ -36,7 +36,11 @@ def preflight():
 
 
 def qemu_base(append, extra=None):
-    """Common QEMU args: microvm machine, KVM, 256M, kernel+initrd, nographic."""
+    """Common QEMU args: microvm machine, KVM, 256M, kernel+initrd, nographic.
+
+    append -- kernel command line string (passed to QEMU's -append flag)
+    extra  -- additional QEMU flags inserted before -append, e.g. -netdev/-device pairs
+    """
     return [
         QEMU,
         "-M",
@@ -60,14 +64,23 @@ def qemu_base(append, extra=None):
     ]
 
 
-def qemu_cmd(fd, role, scenario, transport, netem=None, metric=None, debug=False):
+def qemu_cmd(port, role, scenario, transport, netem=None, metric=None, debug=False):
     """Build a QEMU command for a wallhack VM.
 
+    port   — TCP port for inter-VM L2 socket (entry listens, exit connects)
     netem  — dict with optional 'loss' and 'delay' keys (test runner)
     metric — benchmark metric name string (benchmark runner)
     """
     # Unique MAC for each role to avoid L2 conflicts
     mac = "52:54:00:12:34:56" if role == "exit" else "52:54:00:12:34:57"
+
+    # Entry VM binds the listen socket; exit VM connects to it.
+    # TCP listen/connect avoids the AF_UNIX socketpair QEMU assertion
+    # (net_fill_rstate: size == 0) that fires under high-throughput iperf3 load.
+    if role == "entry":
+        netdev = f"socket,id=net0,listen=127.0.0.1:{port}"
+    else:
+        netdev = f"socket,id=net0,connect=127.0.0.1:{port}"
 
     # ipv6.disable=1: kernel has IPv6 compiled in (olddefconfig default y)
     # but we disable it at boot to exercise the IPv4 fallback path —
@@ -91,20 +104,19 @@ def qemu_cmd(fd, role, scenario, transport, netem=None, metric=None, debug=False
         cmdline,
         extra=[
             "-netdev",
-            f"socket,id=net0,fd={fd}",
+            netdev,
             "-device",
             f"virtio-net-device,netdev=net0,mac={mac}",
         ],
     )
 
 
-def start_vm(cmd, fd):
+def start_vm(cmd):
     return subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        pass_fds=(fd,),
         start_new_session=True,
     )
 
@@ -178,6 +190,8 @@ def make_log_pair():
     )
 
 
-def make_socketpair():
-    """Return a connected (sock_a, sock_b) Unix socket pair."""
-    return socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+def free_port():
+    """Allocate a free ephemeral TCP port for inter-VM QEMU socket networking."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
