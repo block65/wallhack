@@ -125,6 +125,7 @@
       directional wording such as in/out send/receive and up/down. We need to
       refactor files based on the naming conventions in the agents.md file
 - [ ] Add `version` command to repl
+- [ ] `--version` is way too verbose, maybe also check `--verhose` before outputting so much
 - [ ] Add `version` to info output when running
 - [ ] Info logs on startup are too verbose
       ```
