@@ -388,7 +388,7 @@ async fn run_udp_recv<A: ExitAdapter>(
 	loop {
 		match session.recv(&mut recv_buf).await {
 			Ok(sessions::common::SessionStatus::DataIo { size }) => {
-				tracing::trace!("Received {size} bytes from UDP session {set}");
+				tracing::debug!("Received {size} bytes from UDP session {set}");
 				responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
 					response: Some(exit_node_response::Response::UdpResponse(v2::UdpResponse {
