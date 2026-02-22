@@ -196,12 +196,15 @@ impl<D: Device + Send + 'static> Drop for TcpStream<D> {
 			return;
 		}
 
-		// Abort the socket (sends RST, transitions to Closed)
-		// Do NOT remove - let prune_closed_tcp_sockets clean it up after
-		// the RST has been sent by the next poll() cycle
+		// Close the socket gracefully (sends FIN, not RST).
+		// Using abort() here would send RST which causes the peer to lose any
+		// data still in its receive buffer, resulting in ECONNRESET even when
+		// the transfer completed successfully.
+		// Do NOT remove the socket — let prune_closed_tcp_sockets clean it up
+		// after the FIN/ACK exchange completes on the next poll() cycles.
 		let socket: &mut tcp::Socket<'_> = inner.sockets_mut().get_mut(self.handle);
-		socket.abort();
-		tracing::debug!(handle = ?self.handle, "TcpStream dropped, socket aborted");
+		socket.close();
+		tracing::debug!(handle = ?self.handle, "TcpStream dropped, socket closed");
 		drop(inner);
 		self.shared.notify.notify_one();
 	}
