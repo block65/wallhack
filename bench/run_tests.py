@@ -6,16 +6,23 @@ Usage:
     python3 bench/run_tests.py resilience  [--transport quic|websocket|both] [--debug] [--verbose]
     python3 bench/run_tests.py debug-topology [--transport quic|websocket]
 """
-import argparse, collections, json, os, pathlib, signal, socket, subprocess, sys, threading, time
+import argparse, os, signal, sys, threading, time
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-VMLINUZ = REPO_ROOT / "bench" / "vm" / "staging" / "vmlinuz"
-INITRD = REPO_ROOT / "bench" / "vm" / "staging" / "initrd.gz"
-LOG_DIR = REPO_ROOT / "bench" / "results" / "logs"
-QEMU = "qemu-system-x86_64"
-ENTRY_READY_TIMEOUT = 30
-RESULT_TIMEOUT = 90
-RING_BUFFER_SIZE = 500
+from vm_common import (
+    LOG_DIR,
+    ENTRY_READY_TIMEOUT,
+    RESULT_TIMEOUT,
+    preflight,
+    qemu_cmd,
+    qemu_base,
+    start_vm,
+    kill_vm,
+    drain,
+    wait_for_token,
+    wait_for_result,
+    make_log_pair,
+    make_socketpair,
+)
 
 SMOKE = [
     ("smoke", "quic", None),
@@ -30,168 +37,20 @@ RESILIENCE = [
     ("resilience", "websocket", {"loss": "0%", "delay": "100ms"}),
 ]
 
-# ── preflight ─────────────────────────────────────────────────────────────────
-
-
-def preflight():
-    errs = []
-    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
-        errs.append("/dev/kvm not accessible")
-    if subprocess.run(["which", QEMU], capture_output=True).returncode != 0:
-        errs.append(f"{QEMU} not found")
-    if not VMLINUZ.exists():
-        errs.append(f"kernel not found: {VMLINUZ}")
-    if not INITRD.exists():
-        errs.append(f"initramfs not found: {INITRD}")
-    for e in errs:
-        print(f"Error: {e}", file=sys.stderr)
-    if errs:
-        sys.exit(1)
-
-
-# ── QEMU helpers ──────────────────────────────────────────────────────────────
-
-
-def _qemu_base(append, extra=None):
-    """Common QEMU args: microvm machine, KVM, 256M, kernel+initrd, nographic."""
-    return [
-        QEMU,
-        "-M",
-        "microvm,acpi=off,pit=off,pic=off,rtc=off",
-        "-enable-kvm",
-        "-cpu",
-        "host",
-        "-m",
-        "256M",
-        "-smp",
-        "2",
-        "-kernel",
-        str(VMLINUZ),
-        "-initrd",
-        str(INITRD),
-        "-nographic",
-        "-no-reboot",
-        *(extra or []),
-        "-append",
-        append,
-    ]
-
-
-def qemu_cmd(fd, role, scenario, transport, netem=None, debug=False):
-    # Unique MAC for each role to avoid L2 conflicts
-    mac = "52:54:00:12:34:56" if role == "exit" else "52:54:00:12:34:57"
-
-    cmdline = (
-        f"console=ttyS0 quiet loglevel=0 net.ifnames=0 biosdevname=0 rdinit=/init"
-        f" wallhack.role={role} wallhack.scenario={scenario}"
-        f" wallhack.transport={transport}"
-    )
-    if netem:
-        if "loss" in netem:
-            cmdline += f" wallhack.loss={netem['loss']}"
-        if "delay" in netem:
-            cmdline += f" wallhack.delay={netem['delay']}"
-    if debug:
-        cmdline += " wallhack.debug=1"
-
-    return _qemu_base(
-        cmdline,
-        extra=[
-            "-netdev",
-            f"socket,id=net0,fd={fd}",
-            "-device",
-            f"virtio-net-device,netdev=net0,mac={mac}",
-        ],
-    )
-
 
 def qemu_debug_shell_cmd():
     """Single VM with rdinit=/bin/sh for interactive kernel/OS debugging."""
-
-    return _qemu_base(
+    return qemu_base(
         "console=ttyS0 loglevel=3 net.ifnames=0 biosdevname=0 rdinit=/bin/sh panic=-1"
     )
-
-
-def start_vm(cmd, fd):
-    return subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        pass_fds=(fd,),
-        start_new_session=True,
-    )
-
-
-def kill_vm(proc):
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (OSError, ProcessLookupError):
-        pass
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-
-
-# ── concurrent log drain ──────────────────────────────────────────────────────
-# Each QEMU stdout is drained by a daemon thread into a shared deque.
-# The main thread polls the deque — no synchronous cross-process blocking.
-
-
-def _drain(proc, log):
-    """Background daemon: drain proc.stdout into log (deque of str)."""
-    for raw in iter(proc.stdout.readline, b""):
-        log.append(raw.decode(errors="replace").rstrip())
-
-
-def _wait_for_token(log, proc, token, timeout):
-    """Poll log for token. Returns (matched_line, error_str)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        # Scan the full snapshot each iteration: the bounded deque evicts old
-        # entries from the front when full, making index-based seen_count wrong.
-        for line in list(log):
-            if token in line:
-                return line, None
-
-        if proc.poll() is not None:
-            return None, f"process exited (rc={proc.returncode}) before {token!r}"
-        time.sleep(0.05)
-    return None, f"timeout ({timeout}s) waiting for {token!r}"
-
-
-def _wait_for_result(log, proc, timeout):
-    """Poll log for WALLHACK_RESULT_MAGIC_TOKEN. Returns (dict, error_str)."""
-    prefix = "WALLHACK_RESULT_MAGIC_TOKEN: "
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        # Scan the full snapshot each iteration: the bounded deque evicts old
-        # entries from the front when full, making index-based seen_count wrong.
-        for line in list(log):
-            if line.startswith(prefix):
-                try:
-                    return json.loads(line[len(prefix) :]), None
-                except json.JSONDecodeError as e:
-                    return None, f"bad result JSON: {e}"
-
-        if proc.poll() is not None and proc.returncode != 0:
-            return None, f"process exited (rc={proc.returncode}) before result token"
-        time.sleep(0.05)
-    return None, f"timeout ({timeout}s) waiting for WALLHACK_RESULT_MAGIC_TOKEN"
 
 
 # ── scenario runner ───────────────────────────────────────────────────────────
 
 
 def run_scenario(scenario, transport, netem=None, debug=False, keep_running=False):
-    sock_a, sock_b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-    exit_log = collections.deque(maxlen=RING_BUFFER_SIZE)
-    entry_log = collections.deque(maxlen=RING_BUFFER_SIZE)
+    sock_a, sock_b = make_socketpair()
+    exit_log, entry_log = make_log_pair()
     exit_proc = None
 
     # Start entry VM first — it's the listener; wallhack entry binds the port
@@ -207,12 +66,12 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
     # Drain entry VM stdout continuously in background — prevents pipe deadlock
     # even when the main thread is not reading from it.
     entry_drainer = threading.Thread(
-        target=_drain, args=(entry_proc, entry_log), daemon=True
+        target=drain, args=(entry_proc, entry_log), daemon=True
     )
     entry_drainer.start()
 
     try:
-        _, err = _wait_for_token(
+        _, err = wait_for_token(
             entry_log,
             entry_proc,
             "WALLHACK_ENTRY_READY_MAGIC_TOKEN",
@@ -230,7 +89,7 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
 
         # Drain exit VM stdout continuously in background.
         exit_drainer = threading.Thread(
-            target=_drain, args=(exit_proc, exit_log), daemon=True
+            target=drain, args=(exit_proc, exit_log), daemon=True
         )
         exit_drainer.start()
 
@@ -243,7 +102,7 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
                 pass
             return True, "", 0.0, [], []
 
-        outcome, err = _wait_for_result(entry_log, entry_proc, RESULT_TIMEOUT)
+        outcome, err = wait_for_result(entry_log, entry_proc, RESULT_TIMEOUT)
         if err:
             return False, f"entry VM: {err}", 0.0, exit_log, entry_log
         if outcome and outcome.get("status") == "pass":
