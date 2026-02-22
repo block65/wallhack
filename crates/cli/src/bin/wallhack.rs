@@ -42,7 +42,6 @@ async fn main() -> Result<()> {
 		}
 		None => {
 			// Default: entry node listening on default port
-			cli::info!("Starting as entry node (default)");
 			let cmd = EntryCommand {
 				listen: None,
 				connect: None,
@@ -64,8 +63,7 @@ async fn main() -> Result<()> {
 /// startup code. Probing once here makes the wait visible.
 #[cfg(target_os = "linux")]
 fn check_entropy_ready() {
-	use std::io::Read;
-	use std::os::unix::fs::OpenOptionsExt;
+	use std::{io::Read, os::unix::fs::OpenOptionsExt};
 
 	// O_NONBLOCK (0x800) on the /dev/random fd is the same CRNG-readiness check
 	// that getrandom(GRND_NONBLOCK) uses internally, with no unsafe required.
@@ -78,10 +76,10 @@ fn check_entropy_ready() {
 	};
 
 	let mut buf = [0u8; 1];
-	if let Err(e) = f.read(&mut buf) {
-		if e.kind() == std::io::ErrorKind::WouldBlock {
-			cli::warn!("Entropy pool not yet seeded — startup may stall.");
-		}
+	if let Err(e) = f.read(&mut buf)
+		&& e.kind() == std::io::ErrorKind::WouldBlock
+	{
+		cli::warn!("Entropy pool not yet seeded — startup may stall.");
 	}
 }
 
