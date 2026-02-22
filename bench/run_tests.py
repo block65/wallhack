@@ -56,17 +56,24 @@ def _qemu_base(append, extra=None):
     """Common QEMU args: microvm machine, KVM, 256M, kernel+initrd, nographic."""
     return [
         QEMU,
-        "-M", "microvm,acpi=off,pit=off,pic=off,rtc=off",
+        "-M",
+        "microvm,acpi=off,pit=off,pic=off,rtc=off",
         "-enable-kvm",
-        "-cpu", "host",
-        "-m", "256M",
-        "-smp", "2",
-        "-kernel", str(VMLINUZ),
-        "-initrd", str(INITRD),
+        "-cpu",
+        "host",
+        "-m",
+        "256M",
+        "-smp",
+        "2",
+        "-kernel",
+        str(VMLINUZ),
+        "-initrd",
+        str(INITRD),
         "-nographic",
         "-no-reboot",
         *(extra or []),
-        "-append", append,
+        "-append",
+        append,
     ]
 
 
@@ -90,15 +97,20 @@ def qemu_cmd(fd, role, scenario, transport, netem=None, debug=False):
     return _qemu_base(
         cmdline,
         extra=[
-            "-netdev", f"socket,id=net0,fd={fd}",
-            "-device", f"virtio-net-device,netdev=net0,mac={mac}",
+            "-netdev",
+            f"socket,id=net0,fd={fd}",
+            "-device",
+            f"virtio-net-device,netdev=net0,mac={mac}",
         ],
     )
 
 
 def qemu_debug_shell_cmd():
     """Single VM with rdinit=/bin/sh for interactive kernel/OS debugging."""
-    return _qemu_base("console=ttyS0 loglevel=3 net.ifnames=0 biosdevname=0 rdinit=/bin/sh")
+
+    return _qemu_base(
+        "console=ttyS0 loglevel=3 net.ifnames=0 biosdevname=0 rdinit=/bin/sh panic=-1"
+    )
 
 
 def start_vm(cmd, fd):
@@ -163,7 +175,7 @@ def _wait_for_result(log, proc, timeout):
         for line in list(log):
             if line.startswith(prefix):
                 try:
-                    return json.loads(line[len(prefix):]), None
+                    return json.loads(line[len(prefix) :]), None
                 except json.JSONDecodeError as e:
                     return None, f"bad result JSON: {e}"
 
@@ -201,7 +213,10 @@ def run_scenario(scenario, transport, netem=None, debug=False, keep_running=Fals
 
     try:
         _, err = _wait_for_token(
-            entry_log, entry_proc, "WALLHACK_ENTRY_READY_MAGIC_TOKEN", ENTRY_READY_TIMEOUT
+            entry_log,
+            entry_proc,
+            "WALLHACK_ENTRY_READY_MAGIC_TOKEN",
+            ENTRY_READY_TIMEOUT,
         )
         if err:
             sock_a.close()

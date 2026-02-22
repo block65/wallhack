@@ -327,7 +327,7 @@ _run_entry() {
 	echo "WALLHACK_TS: entry_wallhack_start=$(date +%s%3N)"
 	# Start wallhack entry node (listen mode)
 	wallhack ${DEBUG:+"--debug"} entry \
-		-l ":${WH_PORT}${_TSUFFIX}" \
+		-l "0.0.0.0:${WH_PORT}${_TSUFFIX}" \
 		2>&1 | tee /tmp/wallhack-entry.log &
 
 	# Wait for wallhack to bind the listen port by watching /proc/net directly.
@@ -357,7 +357,7 @@ _run_entry() {
 	echo "WALLHACK_ENTRY_READY_MAGIC_TOKEN"
 
 	# Wait for TUN to appear (created when exit node connects)
-	_wait_for_tun 45
+	_wait_for_tun 5
 	echo "WALLHACK_TS: entry_tun_up=$(date +%s%3N)"
 
 	# Configure TUN
