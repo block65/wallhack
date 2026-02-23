@@ -1,7 +1,11 @@
 [package]
-name = "wallhack-cli"
+name = "wallhackd"
 version = "0.2.6"
 edition = "2024"
+
+[[bin]]
+name = "wallhackd"
+path = "src/bin/wallhackd.rs"
 
 [features]
 default = ["quic", "websocket", "color", "repl", "http-api"]

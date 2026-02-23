@@ -42,6 +42,18 @@ impl DaemonHandle {
 		&*self.node_api
 	}
 
+	/// Returns a cloneable handle to the node's management API.
+	#[must_use]
+	pub fn api_arc(&self) -> Arc<dyn NodeApi> {
+		Arc::clone(&self.node_api)
+	}
+
+	/// Returns the shutdown receiver for coordinating graceful shutdown.
+	#[must_use]
+	pub fn shutdown_rx(&self) -> watch::Receiver<()> {
+		self.shutdown_tx.subscribe()
+	}
+
 	/// Signals the node to shut down and waits for it to finish.
 	///
 	/// Sends the shutdown signal first. If the node doesn't stop promptly,

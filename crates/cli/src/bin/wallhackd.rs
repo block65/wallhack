@@ -1,36 +1,36 @@
-//! Wallhack binary entry point.
+//! Wallhack daemon entry point.
 //!
 //! Usage:
-//!   wallhack
-//!   wallhack entry --listen :6565
-//!   wallhack entry --connect host:443
-//!   wallhack exit --connect host:6565
-//!   wallhack exit --listen :443
-//!   wallhack relay --connect upstream:443 --listen :6565
+//!   wallhackd
+//!   wallhackd entry --listen :6565
+//!   wallhackd entry --connect host:443
+//!   wallhackd exit --connect host:6565
+//!   wallhackd exit --listen :443
+//!   wallhackd relay --connect upstream:443 --listen :6565
 
 use std::io::IsTerminal;
 
 use anyhow::Result;
 use tracing::level_filters::LevelFilter;
-use wallhack_cli::{Command, EntryCommand, parse_cli, start_entry, start_exit, start_relay};
+use wallhackd::{Command, EntryCommand, parse_cli, start_entry, start_exit, start_relay};
 
 #[tokio::main]
 async fn main() -> Result<()> {
 	let cli = parse_cli();
 
 	// Initialize output config: enable colour only when stderr is a terminal.
-	wallhack_cli::output::initialize_output_config(
-		wallhack_cli::output::OutputFormat::Plain,
-		wallhack_cli::OutputStyles::default(),
+	wallhackd::output::initialize_output_config(
+		wallhackd::output::OutputFormat::Plain,
+		wallhackd::OutputStyles::default(),
 		std::io::stderr().is_terminal(),
 	);
 
 	// Handle --version flag
 	if cli.version {
 		if cli.verbose {
-			wallhack_cli::version::print_version_verbose();
+			wallhackd::version::print_version_verbose();
 		} else {
-			wallhack_cli::version::print_version_short();
+			wallhackd::version::print_version_short();
 		}
 		return Ok(());
 	}
@@ -60,7 +60,21 @@ async fn main() -> Result<()> {
 		}
 	};
 
-	handle.wait().await
+	// Start IPC listener for the management protocol.
+	let socket_path = wallhack_core::ipc::socket_path();
+	let api = handle.api_arc();
+	let shutdown_rx = handle.shutdown_rx();
+
+	let ipc_task = tokio::spawn(async move {
+		if let Err(e) = wallhack_core::ipc::run_ipc_listener(api, &socket_path, shutdown_rx).await {
+			tracing::error!("IPC listener error: {e}");
+		}
+	});
+
+	tokio::select! {
+		result = handle.wait() => result,
+		_ = ipc_task => Ok(()),
+	}
 }
 
 /// Warn if the kernel entropy pool isn't seeded yet.
@@ -86,11 +100,11 @@ fn check_entropy_ready() {
 	if let Err(e) = f.read(&mut buf)
 		&& e.kind() == std::io::ErrorKind::WouldBlock
 	{
-		wallhack_cli::warn!("Entropy pool not yet seeded — startup may stall.");
+		wallhackd::warn!("Entropy pool not yet seeded — startup may stall.");
 	}
 }
 
-fn setup_tracing(cli: &wallhack_cli::WallhackCli) {
+fn setup_tracing(cli: &wallhackd::WallhackCli) {
 	let (level, filter_str) = if cli.trace || cli.trace_filter.is_some() {
 		(
 			LevelFilter::TRACE,
@@ -102,10 +116,10 @@ fn setup_tracing(cli: &wallhack_cli::WallhackCli) {
 			cli.debug_filter.as_deref().unwrap_or(""),
 		)
 	} else {
-		// No internal tracing by default — user-facing output uses wallhack_cli::info!/error!
+		// No internal tracing by default — user-facing output uses wallhackd::info!/error!
 		(LevelFilter::OFF, "")
 	};
 
-	let subscriber = wallhack_cli::subscriber::SimpleSubscriber::new(level, filter_str);
+	let subscriber = wallhackd::subscriber::SimpleSubscriber::new(level, filter_str);
 	tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 }
