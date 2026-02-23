@@ -10,8 +10,8 @@ use crate::{
 	transport::{bridge, quic::QuicTransport},
 };
 use wallhack_wire::{
-	control_v2::{ControlMessage, control_message},
-	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+	control::{ControlMessage, control_message},
+	data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
 };
 
 use super::client::{Client, ConnectResult, ConnectionTasks};

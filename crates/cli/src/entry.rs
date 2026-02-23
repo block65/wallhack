@@ -1271,9 +1271,9 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 
 /// Send a ping via the control stream and measure round-trip time.
 async fn send_ping(
-	control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control_v2::ControlMessage>,
+	control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
 ) -> Result<f64> {
-	use wallhack_wire::control_v2::{ControlMessage, control_message};
+	use wallhack_wire::control::{ControlMessage, control_message};
 
 	#[allow(clippy::cast_possible_truncation)]
 	let ts = std::time::SystemTime::now()
@@ -1282,7 +1282,7 @@ async fn send_ping(
 		.as_millis() as u64;
 
 	let ping_msg = ControlMessage {
-		message: Some(control_message::Message::Ping(wallhack_wire::v2::Ping {
+		message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
 			timestamp_ms: ts,
 		})),
 	};

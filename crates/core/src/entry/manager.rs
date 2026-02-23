@@ -17,11 +17,11 @@ use tokio::{
 use wallhack_netstack::async_stack::{HeldSyn, Netstack, SynProxyState, udp_socket::UdpSocketAny};
 use wallhack_transport::Transport;
 use wallhack_wire::{
-	socket_set::SocketSet,
-	v2::{
+	data::{
 		EntryNodeInstruction, ExitNodeResponse, UdpSendInstruction, entry_node_instruction,
 		exit_node_response, udp_response,
 	},
+	socket_set::SocketSet,
 };
 
 use crate::control::metrics::SharedMetrics;
@@ -187,10 +187,10 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 
 					let pair = match (src_addr, dst_addr) {
 						(std::net::SocketAddr::V4(src), std::net::SocketAddr::V4(dst)) => {
-							wallhack_wire::v2::SocketAddressPair::from(SocketSet::Ipv4((src, dst)))
+							wallhack_wire::data::SocketAddressPair::from(SocketSet::Ipv4((src, dst)))
 						}
 						(std::net::SocketAddr::V6(src), std::net::SocketAddr::V6(dst)) => {
-							wallhack_wire::v2::SocketAddressPair::from(SocketSet::Ipv6((src, dst)))
+							wallhack_wire::data::SocketAddressPair::from(SocketSet::Ipv6((src, dst)))
 						}
 						_ => {
 							tracing::warn!("UDP: mixed IPv4/IPv6 endpoint pair, dropping");

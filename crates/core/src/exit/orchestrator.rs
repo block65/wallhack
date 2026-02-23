@@ -3,13 +3,13 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use tokio::{sync::broadcast, task::JoinSet};
-use wallhack_wire::v2::{
+use wallhack_wire::data::{
 	self, EntryNodeInstruction, ExitNodeResponse, RuntimeErrorResponse, TcpCloseInstruction,
 	TcpConnectInstruction, TcpListenCloseInstruction, TcpListenInstruction, TcpSendInstruction,
 	UdpSendInstruction, entry_node_instruction::Instruction, exit_node_response,
 };
 #[cfg(unix)]
-use wallhack_wire::v2::{
+use wallhack_wire::data::{
 	IcmpEchoRequest, IcmpSendInstruction, icmp_response, icmp_send_instruction::IcmpMessage,
 };
 
@@ -58,7 +58,7 @@ pub struct Orchestrator<A: ExitAdapter> {
 	metrics: SharedMetrics,
 }
 
-fn extract_socket_set(pair: Option<v2::SocketAddressPair>) -> Result<SocketSet, Error> {
+fn extract_socket_set(pair: Option<data::SocketAddressPair>) -> Result<SocketSet, Error> {
 	let pair = pair.ok_or_else(|| {
 		tracing::error!("Invalid instruction: missing pair");
 		Error::InvalidInstruction
@@ -140,11 +140,13 @@ fn handle_tcp_connect<A: ExitAdapter>(
 				tracing::debug!("Connected to remote for {set}, sending Connected response");
 				if let Err(e) = responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
-					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
-						response: Some(v2::tcp_response::Response::Connected(
-							v2::TcpConnectedResponse {},
-						)),
-					})),
+					response: Some(exit_node_response::Response::TcpResponse(
+						data::TcpResponse {
+							response: Some(data::tcp_response::Response::Connected(
+								data::TcpConnectedResponse {},
+							)),
+						},
+					)),
 				}) {
 					tracing::error!("TcpConnect: Error sending Connected response for {set}: {e}");
 					return;
@@ -159,11 +161,13 @@ fn handle_tcp_connect<A: ExitAdapter>(
 				tracing::warn!("Connection to remote for {set} reset");
 				if let Err(e) = responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
-					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
-						response: Some(v2::tcp_response::Response::ConnectionClosed(
-							v2::TcpConnectionClosedResponse {},
-						)),
-					})),
+					response: Some(exit_node_response::Response::TcpResponse(
+						data::TcpResponse {
+							response: Some(data::tcp_response::Response::ConnectionClosed(
+								data::TcpConnectionClosedResponse {},
+							)),
+						},
+					)),
 				}) {
 					tracing::error!(
 						"TcpConnect: Error sending ConnectionRefused response for {set}: {e}"
@@ -174,11 +178,13 @@ fn handle_tcp_connect<A: ExitAdapter>(
 				tracing::warn!("Connection to remote for {set} refused");
 				if let Err(e) = responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
-					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
-						response: Some(v2::tcp_response::Response::ConnectionRefused(
-							v2::TcpConnectionRefusedResponse {},
-						)),
-					})),
+					response: Some(exit_node_response::Response::TcpResponse(
+						data::TcpResponse {
+							response: Some(data::tcp_response::Response::ConnectionRefused(
+								data::TcpConnectionRefusedResponse {},
+							)),
+						},
+					)),
 				}) {
 					tracing::error!(
 						"TcpConnect: Error sending ConnectionRefused response for {set}: {e}"
@@ -232,28 +238,32 @@ async fn run_tcp_recv<A: ExitAdapter>(
 				tracing::trace!("Received {size} bytes {set}. DataRecv");
 				responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
-					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
-						response: Some(v2::tcp_response::Response::DataRecv(
-							v2::TcpDataRecvResponse {
-								data: Bytes::copy_from_slice(&recv_buf[..size]),
-								fin: false,
-							},
-						)),
-					})),
+					response: Some(exit_node_response::Response::TcpResponse(
+						data::TcpResponse {
+							response: Some(data::tcp_response::Response::DataRecv(
+								data::TcpDataRecvResponse {
+									data: Bytes::copy_from_slice(&recv_buf[..size]),
+									fin: false,
+								},
+							)),
+						},
+					)),
 				})?;
 			}
 			Ok(sessions::common::SessionStatus::PeerClosed) => {
 				tracing::trace!("Peer closed {set}. Sending DataRecv with fin");
 				responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
-					response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
-						response: Some(v2::tcp_response::Response::DataRecv(
-							v2::TcpDataRecvResponse {
-								data: Bytes::new(),
-								fin: true,
-							},
-						)),
-					})),
+					response: Some(exit_node_response::Response::TcpResponse(
+						data::TcpResponse {
+							response: Some(data::tcp_response::Response::DataRecv(
+								data::TcpDataRecvResponse {
+									data: Bytes::new(),
+									fin: true,
+								},
+							)),
+						},
+					)),
 				})?;
 				break;
 			}
@@ -262,7 +272,7 @@ async fn run_tcp_recv<A: ExitAdapter>(
 				responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
 					response: Some(exit_node_response::Response::RuntimeError(
-						v2::RuntimeErrorResponse {
+						data::RuntimeErrorResponse {
 							reason: e.to_string(),
 						},
 					)),
@@ -313,11 +323,13 @@ fn handle_tcp_close<A: ExitAdapter>(
 
 	responses.send(ExitNodeResponse {
 		pair: Some(set.into()),
-		response: Some(exit_node_response::Response::TcpResponse(v2::TcpResponse {
-			response: Some(v2::tcp_response::Response::ConnectionClosed(
-				v2::TcpConnectionClosedResponse {},
-			)),
-		})),
+		response: Some(exit_node_response::Response::TcpResponse(
+			data::TcpResponse {
+				response: Some(data::tcp_response::Response::ConnectionClosed(
+					data::TcpConnectionClosedResponse {},
+				)),
+			},
+		)),
 	})?;
 
 	Ok(())
@@ -391,13 +403,15 @@ async fn run_udp_recv<A: ExitAdapter>(
 				tracing::debug!("Received {size} bytes from UDP session {set}");
 				responses.send(ExitNodeResponse {
 					pair: Some(set.into()),
-					response: Some(exit_node_response::Response::UdpResponse(v2::UdpResponse {
-						response: Some(v2::udp_response::Response::DataRecv(
-							v2::UdpDataRecvResponse {
-								data: Bytes::copy_from_slice(&recv_buf[..size]),
-							},
-						)),
-					})),
+					response: Some(exit_node_response::Response::UdpResponse(
+						data::UdpResponse {
+							response: Some(data::udp_response::Response::DataRecv(
+								data::UdpDataRecvResponse {
+									data: Bytes::copy_from_slice(&recv_buf[..size]),
+								},
+							)),
+						},
+					)),
 				})?;
 			}
 			Ok(sessions::common::SessionStatus::PeerClosed) => {
@@ -482,9 +496,9 @@ fn handle_icmp_send<A: ExitAdapter>(
 			responses.send(ExitNodeResponse {
 				pair: Some(set.into()),
 				response: Some(exit_node_response::Response::IcmpResponse(
-					v2::IcmpResponse {
+					data::IcmpResponse {
 						response: Some(icmp_response::Response::DataRecv(
-							v2::IcmpDataRecvResponse {
+							data::IcmpDataRecvResponse {
 								data: recv_buf.into(),
 								echo_ident: ident,
 							},

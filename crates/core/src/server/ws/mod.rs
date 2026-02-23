@@ -18,8 +18,8 @@ use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::WebSocketStream;
 use wallhack_transport::Transport;
 use wallhack_wire::{
-	control_v2::{ControlMessage, control_message},
-	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+	control::{ControlMessage, control_message},
+	data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
 };
 use yamux::Mode;
 

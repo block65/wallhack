@@ -7,7 +7,7 @@ use crate::helpers::{ConversionError, vec_to_sized_array};
 // Suppress clippy warnings from auto-generated prost code
 #[allow(clippy::doc_markdown, clippy::must_use_candidate)]
 mod generated {
-	include!(concat!(env!("OUT_DIR"), "/tunnel.command.v2.rs"));
+	include!(concat!(env!("OUT_DIR"), "/wallhack.data.rs"));
 }
 pub use generated::*;
 
@@ -133,9 +133,6 @@ impl From<(SocketV6Address, SocketV6Address)> for SocketAddressPair {
 }
 
 // std::net
-// std::net
-// std::net
-// std::net
 impl From<IpV4Address> for std::net::Ipv4Addr {
 	fn from(addr: IpV4Address) -> Self {
 		vec_to_sized_array::<4>(&addr.ip).into()
@@ -204,28 +201,6 @@ impl From<std::net::Ipv6Addr> for IpV6Address {
 	}
 }
 
-// impl From<(std::net::Ipv4Addr, std::net::Ipv4Addr)> for IpAddressPair {
-// 	fn from(addresses: (std::net::Ipv4Addr, std::net::Ipv4Addr)) -> Self {
-// 		IpAddressPair {
-// 			pair: Some(ip_address_pair::Pair::Ipv4(IpV4AddressPair {
-// 				src_ip: Some(addresses.0.into()),
-// 				dst_ip: Some(addresses.1.into()),
-// 			})),
-// 		}
-// 	}
-// }
-
-// impl From<(std::net::Ipv6Addr, std::net::Ipv6Addr)> for IpAddressPair {
-// 	fn from(addresses: (std::net::Ipv6Addr, std::net::Ipv6Addr)) -> Self {
-// 		IpAddressPair {
-// 			pair: Some(ip_address_pair::Pair::Ipv6(IpV6AddressPair {
-// 				src_ip: Some(addresses.0.into()),
-// 				dst_ip: Some(addresses.1.into()),
-// 			})),
-// 		}
-// 	}
-// }
-
 impl From<IpV4Address> for std::net::IpAddr {
 	fn from(addr: IpV4Address) -> Self {
 		std::net::IpAddr::V4(addr.into())
@@ -237,64 +212,6 @@ impl From<IpV6Address> for std::net::IpAddr {
 		std::net::IpAddr::V6(addr.into())
 	}
 }
-
-/* impl TryFrom<IpAddressPair> for (std::net::IpAddr, std::net::IpAddr) {
-	type Error = ConversionError;
-
-	fn try_from(pair: IpAddressPair) -> Result<Self, Self::Error> {
-		let Some(pair) = pair.pair else {
-			return Err(Self::Error::MissingIpAddressPair);
-		};
-
-		match pair {
-			ip_address_pair::Pair::Ipv4(pair) => {
-				let src_ip = pair.src_ip.ok_or(Self::Error::MissingIpAddress)?;
-				let dst_ip = pair.dst_ip.ok_or(Self::Error::MissingIpAddress)?;
-				Ok((src_ip.into(), dst_ip.into()))
-			}
-			ip_address_pair::Pair::Ipv6(pair) => {
-				let src_ip = pair.src_ip.ok_or(Self::Error::MissingIpAddress)?;
-				let dst_ip = pair.dst_ip.ok_or(Self::Error::MissingIpAddress)?;
-				Ok((src_ip.into(), dst_ip.into()))
-			}
-		}
-	}
-} */
-
-// #[prost(message, tag = "2")]
-// TcpResponse(super::TcpResponse),
-// #[prost(message, tag = "3")]
-// UdpResponse(super::UdpResponse),
-// #[prost(message, tag = "4")]
-// IcmpResponse(super::IcmpResponse),
-// #[prost(message, tag = "5")]
-// RuntimeError(super::RuntimeErrorResponse),
-
-// /// Nested message and enum types in `TcpResponse`.
-// pub mod tcp_response {
-//     #[derive(Clone, PartialEq, ::prost::Oneof)]
-//     pub enum Response {
-//         /// TcpConnectOkResponse connect_ok = 4;
-//         #[prost(message, tag = "5")]
-//         Connected(super::TcpConnectedResponse),
-//         #[prost(message, tag = "6")]
-//         SendOk(super::TcpSendOkResponse),
-//         #[prost(message, tag = "7")]
-//         DataRecv(super::TcpDataRecvResponse),
-//         #[prost(message, tag = "8")]
-//         ConnectionClosed(super::TcpConnectionClosedResponse),
-//         #[prost(message, tag = "9")]
-//         ConnectionRefused(super::TcpConnectionRefusedResponse),
-//         #[prost(message, tag = "10")]
-//         ListenOk(super::TcpListenerOkResponse),
-//         #[prost(message, tag = "11")]
-//         Listening(super::TcpListenerListeningResponse),
-//         #[prost(message, tag = "12")]
-//         ListenerConnect(super::TcpListenerConnectResponse),
-//         #[prost(message, tag = "13")]
-//         ListenerClosed(super::TcpListenerClosedResponse),
-//     }
-// }
 
 impl Display for TcpDataRecvResponse {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

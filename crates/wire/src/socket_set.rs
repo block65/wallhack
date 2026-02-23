@@ -1,7 +1,7 @@
 #![allow(clippy::cast_possible_truncation)]
 use std::fmt::Display;
 
-use crate::{helpers::ConversionError, v2};
+use crate::{data, helpers::ConversionError};
 
 #[derive(Hash, Eq, PartialEq, Debug, Copy, Clone)]
 pub enum SocketSet {
@@ -28,11 +28,11 @@ impl Display for SocketSet {
 	}
 }
 
-impl TryFrom<(v2::SocketV4Address, v2::SocketV4Address)> for SocketSet {
+impl TryFrom<(data::SocketV4Address, data::SocketV4Address)> for SocketSet {
 	type Error = ConversionError;
 
 	fn try_from(
-		(src, dst): (v2::SocketV4Address, v2::SocketV4Address),
+		(src, dst): (data::SocketV4Address, data::SocketV4Address),
 	) -> std::result::Result<Self, Self::Error> {
 		if let Some(pair) = src.ip.zip(dst.ip) {
 			let (src_ip, dst_ip) = pair;
@@ -46,20 +46,20 @@ impl TryFrom<(v2::SocketV4Address, v2::SocketV4Address)> for SocketSet {
 	}
 }
 
-impl From<SocketSet> for v2::SocketAddressPair {
+impl From<SocketSet> for data::SocketAddressPair {
 	fn from(val: SocketSet) -> Self {
 		match val {
-			SocketSet::Ipv4((src, dst)) => v2::SocketAddressPair {
-				pair: Some(v2::socket_address_pair::Pair::Ipv4(
-					v2::SocketV4AddressPair {
-						src_addr: Some(v2::SocketV4Address {
-							ip: Some(v2::IpV4Address {
+			SocketSet::Ipv4((src, dst)) => data::SocketAddressPair {
+				pair: Some(data::socket_address_pair::Pair::Ipv4(
+					data::SocketV4AddressPair {
+						src_addr: Some(data::SocketV4Address {
+							ip: Some(data::IpV4Address {
 								ip: src.ip().octets().to_vec(),
 							}),
 							port: u32::from(src.port()),
 						}),
-						dst_addr: Some(v2::SocketV4Address {
-							ip: Some(v2::IpV4Address {
+						dst_addr: Some(data::SocketV4Address {
+							ip: Some(data::IpV4Address {
 								ip: dst.ip().octets().to_vec(),
 							}),
 							port: u32::from(dst.port()),
@@ -67,19 +67,19 @@ impl From<SocketSet> for v2::SocketAddressPair {
 					},
 				)),
 			},
-			SocketSet::Ipv6((src, dst)) => v2::SocketAddressPair {
-				pair: Some(v2::socket_address_pair::Pair::Ipv6(
-					v2::SocketV6AddressPair {
-						src_addr: Some(v2::SocketV6Address {
-							ip: Some(v2::IpV6Address {
+			SocketSet::Ipv6((src, dst)) => data::SocketAddressPair {
+				pair: Some(data::socket_address_pair::Pair::Ipv6(
+					data::SocketV6AddressPair {
+						src_addr: Some(data::SocketV6Address {
+							ip: Some(data::IpV6Address {
 								ip: src.ip().octets().to_vec(),
 							}),
 							port: u32::from(src.port()),
 							flowinfo: src.flowinfo(),
 							scope_id: src.scope_id(),
 						}),
-						dst_addr: Some(v2::SocketV6Address {
-							ip: Some(v2::IpV6Address {
+						dst_addr: Some(data::SocketV6Address {
+							ip: Some(data::IpV6Address {
 								ip: dst.ip().octets().to_vec(),
 							}),
 							port: u32::from(dst.port()),
@@ -93,11 +93,11 @@ impl From<SocketSet> for v2::SocketAddressPair {
 	}
 }
 
-impl TryFrom<(v2::SocketV6Address, v2::SocketV6Address)> for SocketSet {
+impl TryFrom<(data::SocketV6Address, data::SocketV6Address)> for SocketSet {
 	type Error = ConversionError;
 
 	fn try_from(
-		(src, dst): (v2::SocketV6Address, v2::SocketV6Address),
+		(src, dst): (data::SocketV6Address, data::SocketV6Address),
 	) -> std::result::Result<Self, Self::Error> {
 		if let Some(pair) = src.ip.zip(dst.ip) {
 			let (src_ip, dst_ip) = pair;
@@ -121,12 +121,12 @@ impl TryFrom<(v2::SocketV6Address, v2::SocketV6Address)> for SocketSet {
 	}
 }
 
-impl TryFrom<v2::socket_address_pair::Pair> for SocketSet {
+impl TryFrom<data::socket_address_pair::Pair> for SocketSet {
 	type Error = ConversionError;
 
-	fn try_from(pair: v2::socket_address_pair::Pair) -> std::result::Result<Self, Self::Error> {
+	fn try_from(pair: data::socket_address_pair::Pair) -> std::result::Result<Self, Self::Error> {
 		match pair {
-			v2::socket_address_pair::Pair::Ipv4(pair) => {
+			data::socket_address_pair::Pair::Ipv4(pair) => {
 				let maybe_pair = pair.src_addr.zip(pair.dst_addr);
 				let Some(pair) = maybe_pair else {
 					return Err(Self::Error::InvalidSocketAddrPair);
@@ -134,7 +134,7 @@ impl TryFrom<v2::socket_address_pair::Pair> for SocketSet {
 
 				SocketSet::try_from(pair)
 			}
-			v2::socket_address_pair::Pair::Ipv6(pair) => {
+			data::socket_address_pair::Pair::Ipv6(pair) => {
 				let maybe_pair = pair.src_addr.zip(pair.dst_addr);
 				let Some(pair) = maybe_pair else {
 					return Err(Self::Error::InvalidSocketAddrPair);
@@ -159,10 +159,10 @@ impl From<SocketSet> for (std::net::SocketAddr, std::net::SocketAddr) {
 	}
 }
 
-impl TryFrom<v2::SocketV4AddressPair> for SocketSet {
+impl TryFrom<data::SocketV4AddressPair> for SocketSet {
 	type Error = ConversionError;
 
-	fn try_from(pair: v2::SocketV4AddressPair) -> std::result::Result<Self, Self::Error> {
+	fn try_from(pair: data::SocketV4AddressPair) -> std::result::Result<Self, Self::Error> {
 		let maybe_pair = pair.src_addr.zip(pair.dst_addr);
 		let Some(pair) = maybe_pair else {
 			return Err(Self::Error::InvalidSocketAddrPair);
@@ -172,10 +172,10 @@ impl TryFrom<v2::SocketV4AddressPair> for SocketSet {
 	}
 }
 
-impl TryFrom<v2::SocketV6AddressPair> for SocketSet {
+impl TryFrom<data::SocketV6AddressPair> for SocketSet {
 	type Error = ConversionError;
 
-	fn try_from(pair: v2::SocketV6AddressPair) -> std::result::Result<Self, Self::Error> {
+	fn try_from(pair: data::SocketV6AddressPair) -> std::result::Result<Self, Self::Error> {
 		let maybe_pair = pair.src_addr.zip(pair.dst_addr);
 		let Some(pair) = maybe_pair else {
 			return Err(Self::Error::InvalidSocketAddrPair);
@@ -185,13 +185,13 @@ impl TryFrom<v2::SocketV6AddressPair> for SocketSet {
 	}
 }
 
-impl TryFrom<v2::SocketAddressPair> for SocketSet {
+impl TryFrom<data::SocketAddressPair> for SocketSet {
 	type Error = ConversionError;
 
-	fn try_from(s: v2::SocketAddressPair) -> Result<Self, Self::Error> {
+	fn try_from(s: data::SocketAddressPair) -> Result<Self, Self::Error> {
 		match s.pair {
-			Some(v2::socket_address_pair::Pair::Ipv4(pair)) => SocketSet::try_from(pair),
-			Some(v2::socket_address_pair::Pair::Ipv6(pair)) => SocketSet::try_from(pair),
+			Some(data::socket_address_pair::Pair::Ipv4(pair)) => SocketSet::try_from(pair),
+			Some(data::socket_address_pair::Pair::Ipv6(pair)) => SocketSet::try_from(pair),
 			_ => Err(Self::Error::InvalidSocketAddrPair),
 		}
 	}

@@ -3,9 +3,9 @@
 mod helpers;
 
 pub mod control;
-pub mod control_v2;
+pub mod data;
+pub mod management;
 pub mod socket_set;
-pub mod v2;
 
 pub use socket_set::SocketSet;
 

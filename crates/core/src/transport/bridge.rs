@@ -10,8 +10,8 @@ use tokio::{
 	sync::{broadcast, mpsc, oneshot},
 };
 use wallhack_wire::{
-	control_v2::{ControlMessage, control_message},
-	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message},
+	control::{ControlMessage, control_message},
+	data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message},
 };
 
 use crate::control::handler::Handler;
@@ -128,7 +128,7 @@ pub async fn run_control_loop<S: BiStream>(
 	outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
 	handler: Option<&Handler>,
 	hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
-	pong_tx: Option<&mpsc::Sender<wallhack_wire::v2::Pong>>,
+	pong_tx: Option<&mpsc::Sender<wallhack_wire::data::Pong>>,
 	control_response_tx: Option<&mpsc::Sender<wallhack_wire::control::ControlResponse>>,
 	ping_interval: std::time::Duration,
 ) -> ControlLoopExit {
@@ -167,7 +167,7 @@ pub async fn run_control_loop<S: BiStream>(
 						tracing::trace!("Control: received Ping, auto-replying Pong");
 						let reply = ControlMessage {
 							message: Some(control_message::Message::Pong(
-								wallhack_wire::v2::Pong { timestamp_ms: ping_msg.timestamp_ms },
+								wallhack_wire::data::Pong { timestamp_ms: ping_msg.timestamp_ms },
 							)),
 						};
 						if let Err(e) = write_length_delimited_buf(stream, &reply, &mut write_buf).await {
@@ -231,7 +231,7 @@ pub async fn run_control_loop<S: BiStream>(
 					.as_millis() as u64;
 				let ping = ControlMessage {
 					message: Some(control_message::Message::Ping(
-						wallhack_wire::v2::Ping { timestamp_ms: ts },
+						wallhack_wire::data::Ping { timestamp_ms: ts },
 					)),
 				};
 				if let Err(e) = write_length_delimited_buf(stream, &ping, &mut write_buf).await {
@@ -248,7 +248,7 @@ pub async fn run_control_stream_initiator<T: Transport>(
 	transport: &T,
 	outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
 	handler: Option<&Handler>,
-	pong_tx: Option<&mpsc::Sender<wallhack_wire::v2::Pong>>,
+	pong_tx: Option<&mpsc::Sender<wallhack_wire::data::Pong>>,
 	control_response_tx: Option<&mpsc::Sender<wallhack_wire::control::ControlResponse>>,
 	ping_interval: std::time::Duration,
 ) -> Result<ControlLoopExit, TransportError> {
@@ -275,7 +275,7 @@ pub async fn run_control_stream_acceptor<T: Transport>(
 	outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
 	handler: Option<&Handler>,
 	hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
-	pong_tx: Option<&mpsc::Sender<wallhack_wire::v2::Pong>>,
+	pong_tx: Option<&mpsc::Sender<wallhack_wire::data::Pong>>,
 	ping_interval: std::time::Duration,
 ) -> Result<ControlLoopExit, TransportError> {
 	let Some(mut stream) = transport.accept_bi().await? else {

@@ -1,8 +1,8 @@
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use wallhack_wire::{
-	control_v2::ControlMessage,
-	v2::{EntryNodeInstruction, ExitNodeResponse},
+	control::ControlMessage,
+	data::{EntryNodeInstruction, ExitNodeResponse},
 };
 
 use crate::NodeRole;

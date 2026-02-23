@@ -1,6 +1,10 @@
 syntax = "proto3";
 
-package tunnel.control.v1;
+package wallhack.control;
+
+import "proto/data.proto";
+
+// ── Peer control requests/responses (in-band over tunnel) ───────────
 
 message ControlRequest {
   oneof request {
@@ -103,4 +107,23 @@ message RouteInfo {
 
 message ErrorResponse {
   string message = 1;
+}
+
+// ── Control stream envelope (bidi stream framing) ───────────────────
+
+// Wrapper for all messages sent over the persistent control bidi stream.
+message ControlMessage {
+  oneof message {
+    wallhack.data.ExitNodeHello hello = 1;
+    wallhack.data.Ping ping = 2;
+    wallhack.data.Pong pong = 3;
+    ControlRequest control_request = 4;
+    ControlResponse control_response = 5;
+    Disconnect disconnect = 6;
+  }
+}
+
+// Sent to signal graceful shutdown of the connection.
+message Disconnect {
+  string reason = 1;
 }

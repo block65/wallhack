@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package tunnel.command.v2;
+package wallhack.data;
 
 message IpAddress {
   oneof ip_address {

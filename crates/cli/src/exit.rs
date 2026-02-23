@@ -776,9 +776,10 @@ where
 }
 
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
-	let init = read_length_delimited::<wallhack_wire::v2::SessionInit, _>(stream, SESSION_INIT_MTU)
-		.await
-		.map_err(|e| anyhow::anyhow!(e))?;
+	let init =
+		read_length_delimited::<wallhack_wire::data::SessionInit, _>(stream, SESSION_INIT_MTU)
+			.await
+			.map_err(|e| anyhow::anyhow!(e))?;
 	tracing::trace!(target = %init.target_addr, source = %init.source_addr, protocol = init.protocol, "SessionInit received");
 	let target: std::net::SocketAddr = init.target_addr.parse()?;
 	let source: Option<std::net::SocketAddr> = if init.source_addr.is_empty() {
@@ -787,11 +788,11 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 		Some(init.source_addr.parse()?)
 	};
 	match init.protocol {
-		val if val == wallhack_wire::v2::SessionProtocol::Tcp as i32 => {
+		val if val == wallhack_wire::data::SessionProtocol::Tcp as i32 => {
 			match tokio::net::TcpStream::connect(target).await {
 				Ok(mut socket) => {
-					let status = wallhack_wire::v2::SessionStatus {
-						status: wallhack_wire::v2::ResponseStatus::Success.into(),
+					let status = wallhack_wire::data::SessionStatus {
+						status: wallhack_wire::data::ResponseStatus::Success.into(),
 						reason: String::new(),
 					};
 					write_length_delimited(&mut *stream, &status)
@@ -802,11 +803,11 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				Err(e) => {
 					let status_code = match e.kind() {
 						std::io::ErrorKind::ConnectionRefused => {
-							wallhack_wire::v2::ResponseStatus::ConnectionRefused
+							wallhack_wire::data::ResponseStatus::ConnectionRefused
 						}
-						_ => wallhack_wire::v2::ResponseStatus::HostUnreachable,
+						_ => wallhack_wire::data::ResponseStatus::HostUnreachable,
 					};
-					let status = wallhack_wire::v2::SessionStatus {
+					let status = wallhack_wire::data::SessionStatus {
 						status: status_code.into(),
 						reason: e.to_string(),
 					};
@@ -815,7 +816,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				}
 			}
 		}
-		val if val == wallhack_wire::v2::SessionProtocol::Udp as i32 => {
+		val if val == wallhack_wire::data::SessionProtocol::Udp as i32 => {
 			// Note: source address is informational only, we don't bind to it
 			// because it may not exist in our namespace (same as TCP)
 			tracing::trace!(target = %target, source = ?source, "Processing UDP session");
@@ -1483,8 +1484,8 @@ async fn run_ws_relay_capability(
 /// Bridge a peer connection to relay broadcast channels.
 fn bridge_peer<T: wallhack_core::transport::Transport>(
 	accept_result: wallhack_core::server::server::AcceptResult<T>,
-	relay_instr: &tokio::sync::broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
-	relay_resp: &tokio::sync::broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
+	relay_instr: &tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+	relay_resp: &tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) {
 	tracing::debug!("Bridging peer connection: {}", accept_result.peer_addr());
 
