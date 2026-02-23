@@ -283,8 +283,8 @@ impl RelayCommand {
 			(Some(connect), Some(listen)) => {
 				Ok((AddressSpec::parse(connect), AddressSpec::parse(listen)))
 			}
-			(None, _) => Err("relay requires --connect (upstream peer)".into()),
-			(_, None) => Err("relay requires --listen (downstream port)".into()),
+			(None, _) => Err("relay requires --connect".into()),
+			(_, None) => Err("relay requires --listen".into()),
 		}
 	}
 }

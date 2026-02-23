@@ -5,10 +5,10 @@ pub mod dns;
 pub mod subscriber;
 pub mod version;
 
-mod entry;
-mod exit;
+mod config;
+mod mode;
 mod net;
-mod relay;
+mod transport;
 
 pub use cli::{Command, EntryCommand, ExitCommand, RelayCommand, WallhackCli, parse_cli_from_args};
 
@@ -25,6 +25,7 @@ use wallhack_core::{
 		routes::RouteTable,
 	},
 	daemon::DaemonHandle,
+	entry::actor,
 	node_api::NodeApi,
 };
 
@@ -75,24 +76,38 @@ pub enum NodeError {
 	#[error("no addresses resolved for {0}")]
 	NoAddresses(String),
 
-	/// I/O error.
-	#[error(transparent)]
-	Io(#[from] std::io::Error),
-
 	/// Address parse error.
 	#[error(transparent)]
 	AddrParse(#[from] std::net::AddrParseError),
 
-	/// Wrapped error from a dependency.
-	#[error(transparent)]
-	Internal(#[from] anyhow::Error),
-}
+	#[error("TUN subsystem error: {0}")]
+	TunActor(#[from] crate::actor::Error),
 
-impl NodeError {
-	/// Wrap an arbitrary error from a dependency into [`NodeError::Internal`].
-	pub(crate) fn wrap(e: impl std::error::Error + Send + Sync + 'static) -> Self {
-		Self::Internal(e.into())
-	}
+	#[error("connection manager error: {0}")]
+	ConnectionManager(#[from] wallhack_core::entry::manager::Error),
+
+	#[error("runtime task error: {0}")]
+	Runtime(#[from] tokio::task::JoinError),
+
+	/// I/O error.
+	#[error(transparent)]
+	Io(#[from] std::io::Error),
+
+	/// WebSocket Server Error
+	#[error(transparent)]
+	WebSocketServer(#[from] wallhack_core::server::ws::Error),
+
+	/// DNS resolution failure.
+	#[error("DNS resolution failed: {0}")]
+	DnsResolution(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+	/// Transport creation or connection failure.
+	#[error("transport error: {0}")]
+	Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+	/// Stream-level I/O error (bi-stream read/write).
+	#[error("stream error: {0}")]
+	Stream(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 // ============================================================================
@@ -128,25 +143,18 @@ pub async fn run_daemon_engine(args: Vec<String>) -> Result<(), DaemonError> {
 	#[cfg(target_os = "linux")]
 	check_entropy_ready();
 
-	let handle = match &cli.command {
-		Some(Command::Entry(cmd)) => start_entry(&cli, cmd)?,
-		Some(Command::Relay(cmd)) => start_relay(&cli, cmd)?,
-		Some(Command::Exit(cmd)) => start_exit(&cli, cmd)?,
-		None => {
-			// Default: entry node listening on default port
-			let cmd = EntryCommand {
-				name: None,
-				listen: None,
-				connect: None,
-				api: None,
-				api_user: None,
-				api_secret: None,
-				max_peers: None,
-				fast: false,
-			};
-			start_entry(&cli, &cmd)?
-		}
-	};
+	let command = cli.command.clone().unwrap_or(Command::Entry(EntryCommand {
+		name: None,
+		listen: None,
+		connect: None,
+		api: None,
+		api_user: None,
+		api_secret: None,
+		max_peers: None,
+		fast: false,
+	}));
+
+	let handle = start_node(&cli, &command)?;
 
 	// Start IPC listener for the management protocol.
 	let socket_path = wallhack_core::ipc::socket_path();
@@ -226,24 +234,30 @@ pub(crate) fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
 }
 
 // ============================================================================
-// Daemon handle constructors
+// Unified node constructor
 // ============================================================================
 
-/// Start an entry node and return a [`DaemonHandle`].
+/// Start a node in the given mode and return a [`DaemonHandle`].
 ///
 /// Spawns the node into a background task. Use [`DaemonHandle::wait`] to
 /// block until the node exits, or [`DaemonHandle::shutdown`] to stop it.
 ///
 /// # Errors
 ///
-/// Returns error if entry node setup fails.
-pub fn start_entry(global: &WallhackCli, cmd: &EntryCommand) -> Result<DaemonHandle, NodeError> {
+/// Returns error if node setup fails.
+pub fn start_node(global: &WallhackCli, command: &Command) -> Result<DaemonHandle, NodeError> {
+	let role = match command {
+		Command::Entry(_) => NodeRole::Entry,
+		Command::Exit(_) => NodeRole::Exit,
+		Command::Relay(_) => NodeRole::Relay,
+	};
+
 	let metrics = Arc::new(Metrics::default());
 	let peers = Arc::new(Registry::new());
 	let routes = RouteTable::shared();
 
 	let handler = Handler::new(
-		HandlerConfig::new(NodeRole::Entry),
+		HandlerConfig::new(role),
 		Arc::clone(&metrics),
 		Arc::clone(&peers),
 		Arc::clone(&routes),
@@ -253,68 +267,17 @@ pub fn start_entry(global: &WallhackCli, cmd: &EntryCommand) -> Result<DaemonHan
 	let (shutdown_tx, _shutdown_rx) = watch::channel(());
 
 	let global = global.clone();
-	let cmd = cmd.clone();
+	let command = command.clone();
+	let resources = mode::NodeResources {
+		metrics,
+		peers,
+		routes,
+	};
 	let task = tokio::spawn(async move {
-		entry::run(&global, &cmd, metrics, peers, routes)
+		mode::run(&global, &command, resources)
 			.await
 			.map_err(Into::into)
 	});
-
-	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
-}
-
-/// Start an exit node and return a [`DaemonHandle`].
-///
-/// # Errors
-///
-/// Returns error if exit node setup fails.
-pub fn start_exit(global: &WallhackCli, cmd: &ExitCommand) -> Result<DaemonHandle, NodeError> {
-	let metrics = Arc::new(Metrics::default());
-	let peers = Arc::new(Registry::new());
-	let routes = RouteTable::shared();
-
-	let handler = Handler::new(
-		HandlerConfig::new(NodeRole::Exit),
-		Arc::clone(&metrics),
-		Arc::clone(&peers),
-		Arc::clone(&routes),
-	);
-	let node_api: Arc<dyn NodeApi> = Arc::new(handler);
-
-	let (shutdown_tx, _shutdown_rx) = watch::channel(());
-
-	let global = global.clone();
-	let cmd = cmd.clone();
-	let task =
-		tokio::spawn(async move { exit::run(&global, &cmd, metrics).await.map_err(Into::into) });
-
-	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
-}
-
-/// Start a relay node and return a [`DaemonHandle`].
-///
-/// # Errors
-///
-/// Returns error if relay node setup fails.
-pub fn start_relay(global: &WallhackCli, cmd: &RelayCommand) -> Result<DaemonHandle, NodeError> {
-	let metrics = Arc::new(Metrics::default());
-	let peers = Arc::new(Registry::new());
-	let routes = RouteTable::shared();
-
-	let handler = Handler::new(
-		HandlerConfig::new(NodeRole::Relay),
-		Arc::clone(&metrics),
-		Arc::clone(&peers),
-		Arc::clone(&routes),
-	);
-	let node_api: Arc<dyn NodeApi> = Arc::new(handler);
-
-	let (shutdown_tx, _shutdown_rx) = watch::channel(());
-
-	let global = global.clone();
-	let cmd = cmd.clone();
-	let task =
-		tokio::spawn(async move { relay::run(&global, &cmd, metrics).await.map_err(Into::into) });
 
 	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
 }

@@ -26,7 +26,7 @@ test:
 
 # Build release binary with all transports (glibc, for development/IDE)
 build-release:
-    cargo build --release --features full
+    cargo build --quiet --release --features full
 
 # Delete local branches that have been merged and deleted on origin
 clean-branches:

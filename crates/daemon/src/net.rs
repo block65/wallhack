@@ -1,4 +1,10 @@
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::{
+	net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
+	ops::Deref,
+	str::FromStr,
+};
+
+use wallhack_core::client::config::ipv6_supported;
 
 use crate::NodeError;
 
@@ -21,26 +27,42 @@ impl SocketAddrExt for SocketAddr {
 	}
 }
 
-/// Resolves a listen address string to a `SocketAddr`.
-///
-/// A bare `:port` is expanded to a full wildcard address: `[::]` on kernels
-/// with IPv6 support (dual-stack), `0.0.0.0` on IPv4-only kernels. Explicit
-/// addresses (IP literals or `hostname:port`) are resolved via DNS.
-pub(crate) fn parse_listen_addr(addr: &str) -> Result<SocketAddr, NodeError> {
-	let full_addr = if let Some(port) = addr.strip_prefix(':') {
-		// Bare port: probe IPv6 availability and pick the right wildcard.
-		if wallhack_core::client::config::ipv6_supported() {
-			format!("[::]:{port}")
-		} else {
-			format!("0.0.0.0:{port}")
-		}
-	} else {
-		addr.to_string()
-	};
+pub struct ListenAddr(SocketAddr);
 
-	full_addr
-		.to_socket_addrs()
-		.map_err(|e| NodeError::Config(format!("invalid listen address {full_addr}: {e}")))?
-		.next()
-		.ok_or_else(|| NodeError::NoAddresses(full_addr))
+impl FromStr for ListenAddr {
+	type Err = NodeError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let normalized = if let Some(port) = s.strip_prefix(':') {
+			if ipv6_supported() {
+				format!("[::]:{port}")
+			} else {
+				format!("0.0.0.0:{port}")
+			}
+		} else {
+			s.to_string()
+		};
+
+		let addr = normalized
+			.to_socket_addrs()
+			.map_err(|e| NodeError::Config(format!("invalid address {normalized}: {e}")))?
+			.next()
+			.ok_or_else(|| NodeError::NoAddresses(normalized))?;
+
+		Ok(ListenAddr(addr))
+	}
+}
+
+impl Deref for ListenAddr {
+	type Target = SocketAddr;
+
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+impl From<ListenAddr> for SocketAddr {
+	fn from(addr: ListenAddr) -> Self {
+		addr.0
+	}
 }
