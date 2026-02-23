@@ -3,14 +3,14 @@
 //! These tests verify that sockets are properly cleaned up after use
 //! and don't accumulate over time.
 
-use netstack::{
-	config::StackConfig,
-	inner::{InnerStack, device::VecDevice},
-};
 use smoltcp::{
 	socket::tcp,
 	time::Instant,
 	wire::{IpCidr, Ipv4Address},
+};
+use wallhack_netstack::{
+	config::StackConfig,
+	inner::{InnerStack, device::VecDevice},
 };
 
 const STACK_IPV4: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);

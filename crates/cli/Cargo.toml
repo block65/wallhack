@@ -1,5 +1,5 @@
 [package]
-name = "cli"
+name = "wallhack-cli"
 version = "0.2.6"
 edition = "2024"
 
@@ -11,12 +11,12 @@ repl = ["dep:reedline"]                              # Interactive REPL (history
 tokio-console = ["dep:console-subscriber"]
 dns-resolver = ["dep:hickory-resolver"]
 
-# Transport features (forwarded to wallhack)
-quic = ["wallhack/quic"]
-websocket = ["wallhack/websocket"]
+# Transport features (forwarded to wallhack-core)
+quic = ["wallhack-core/quic"]
+websocket = ["wallhack-core/websocket"]
 
-# REST API feature (forwarded to wallhack)
-http-api = ["wallhack/http-api"]
+# REST API feature (forwarded to wallhack-core)
+http-api = ["wallhack-core/http-api"]
 
 [dependencies]
 anstyle = "1"
@@ -26,7 +26,7 @@ derive_more = { version = "2", features = ["display"] }
 hickory-resolver = { version = "0.25", default-features = false, features = [
   "tokio",
 ], optional = true }
-protobuf = { path = "../protobuf" }
+wallhack-wire = { path = "../wire" }
 prost = "0.13"
 quinn = { version = "0.11", default-features = false, features = [
   "runtime-tokio",
@@ -37,7 +37,7 @@ shlex = "1"
 thiserror = "2"
 tokio.workspace = true
 tracing.workspace = true
-wallhack = { path = "../wallhack", default-features = false }
+wallhack-core = { path = "../core", default-features = false }
 subtle = "2"
 console-subscriber = { workspace = true, optional = true }
 rand = { version = "0.9", default-features = false, features = [

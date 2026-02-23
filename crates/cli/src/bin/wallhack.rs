@@ -11,26 +11,26 @@
 use std::io::IsTerminal;
 
 use anyhow::Result;
-use cli::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
 use tracing::level_filters::LevelFilter;
+use wallhack_cli::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
 
 #[tokio::main]
 async fn main() -> Result<()> {
 	let cli = parse_cli();
 
 	// Initialize output config: enable colour only when stderr is a terminal.
-	cli::output::initialize_output_config(
-		cli::output::OutputFormat::Plain,
-		cli::OutputStyles::default(),
+	wallhack_cli::output::initialize_output_config(
+		wallhack_cli::output::OutputFormat::Plain,
+		wallhack_cli::OutputStyles::default(),
 		std::io::stderr().is_terminal(),
 	);
 
 	// Handle --version flag
 	if cli.version {
 		if cli.verbose {
-			cli::version::print_version_verbose();
+			wallhack_cli::version::print_version_verbose();
 		} else {
-			cli::version::print_version_short();
+			wallhack_cli::version::print_version_short();
 		}
 		return Ok(());
 	}
@@ -84,11 +84,11 @@ fn check_entropy_ready() {
 	if let Err(e) = f.read(&mut buf)
 		&& e.kind() == std::io::ErrorKind::WouldBlock
 	{
-		cli::warn!("Entropy pool not yet seeded — startup may stall.");
+		wallhack_cli::warn!("Entropy pool not yet seeded — startup may stall.");
 	}
 }
 
-fn setup_tracing(cli: &cli::WallhackCli) {
+fn setup_tracing(cli: &wallhack_cli::WallhackCli) {
 	let (level, filter_str) = if cli.trace || cli.trace_filter.is_some() {
 		(
 			LevelFilter::TRACE,
@@ -100,10 +100,10 @@ fn setup_tracing(cli: &cli::WallhackCli) {
 			cli.debug_filter.as_deref().unwrap_or(""),
 		)
 	} else {
-		// No internal tracing by default — user-facing output uses cli::info!/error!
+		// No internal tracing by default — user-facing output uses wallhack_cli::info!/error!
 		(LevelFilter::OFF, "")
 	};
 
-	let subscriber = cli::subscriber::SimpleSubscriber::new(level, filter_str);
+	let subscriber = wallhack_cli::subscriber::SimpleSubscriber::new(level, filter_str);
 	tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 }

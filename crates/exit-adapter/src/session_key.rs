@@ -1,4 +1,4 @@
-use protobuf::SocketSet;
+use wallhack_wire::SocketSet;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum SessionKey {

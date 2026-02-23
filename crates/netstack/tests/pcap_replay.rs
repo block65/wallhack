@@ -7,10 +7,6 @@
 
 use std::fs::File;
 
-use netstack::{
-	config::StackConfig,
-	inner::{InnerStack, device::VecDevice},
-};
 use pcap_file::{
 	DataLink,
 	pcapng::{Block, PcapNgReader},
@@ -18,6 +14,10 @@ use pcap_file::{
 use smoltcp::{
 	time::Instant,
 	wire::{IpCidr, IpProtocol, Ipv4Address, Ipv4Packet, Ipv6Packet},
+};
+use wallhack_netstack::{
+	config::StackConfig,
+	inner::{InnerStack, device::VecDevice},
 };
 
 const PCAP_PATH: &str = "tests/captures/The Ultimate PCAP v20251206.pcapng";
