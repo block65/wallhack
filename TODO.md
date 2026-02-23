@@ -33,6 +33,8 @@
 ## REPL Commands
 
 - [ ] `shell` — spawn shell over tunnel
+- [ ] Per-peer traffic stats — `stats [<peer>]` showing bytes/packets per peer rather than
+      global node aggregates. Requires per-peer counters in `Metrics`/`Registry`.
 
 ## Transports
 
@@ -67,6 +69,15 @@
       automatically — entry if the server is exit/relay, exit if the server is
       entry. Peer name defaults to random (same as `exit` today).
 - [ ] Drop the subcommand requirement when `--connect` is the only flag.
+
+## Bugs
+
+- [ ] TUN EBUSY on rapid reconnect — `create_tun_with_retry` (entry) retries 3× at 500ms
+      but the previous `TunActor` hasn't been fully dropped before the new connection
+      attempts to claim the same TUN name. Rapid connect/disconnect cycles accumulate
+      stale connections, eventually causing resource exhaustion and process kill (OOM or
+      SIGKILL). Needs proper TUN lifecycle tracking — ensure the old actor is fully dropped
+      before allowing a new connection to reuse the name.
 
 ## UX
 
@@ -124,14 +135,18 @@
 - [ ] We have some serious naming issues in regards to topology, and the use of
       directional wording such as in/out send/receive and up/down. We need to
       refactor files based on the naming conventions in the agents.md file
-- [ ] Add `version` command to repl
-- [ ] `--version` is way too verbose, maybe also check `--verhose` before outputting so much
-- [ ] Add `version` to info output when running
-- [ ] Info logs on startup are too verbose
-      ```
-      [+] Starting as exit node
-      [+] Running in headless mode (no REPL).
-      [+] Exit node starting as vm
-      [+] Resolving 10.0.0.2:6565
-      [+] Resolved as 10.0.0.2:6565
-      ```
+- [x] Add `version` command to repl — shows version only (one line); uptime is in `info`
+- [x] `--version` is way too verbose — default is `wallhack <version>` only; full output behind `--verbose`
+- [x] Add uptime to `info` output — uptime belongs with node state, not version
+- [x] Info logs on startup are too verbose — collapsed to two lines: `wallhack <version>  <name>` and `Connecting to <addr>`
+- [x] REPL command set unified across entry and exit — same commands on all node types; unsupported commands return a clear error rather than being hidden
+- [x] `--name`/`-n` flag added to both entry and exit nodes — random 8-char hex if omitted; shared `generate_node_name()` (will later default to CPU/hardware ID)
+- [x] Async REPL output race fixed — Done sentinel (`PrintMsg::Done` / `DoneGuard`) ensures all command responses are flushed to `ExternalPrinter` before the next prompt is drawn
+- [x] REPL colour enabled — guarded by `IsTerminal`; headless output uses plain `[+]`/`[!]`/`[-]` prefixes
+ - [ ] Update the website with the benchmarks, explain that they are just "in
+      the gigabits per second" and its kind of irrelevant because the tunnel
+      isnt a bottleneck, its the OS or the VM. Confirm this makes sense first.
+      Some benchmarks are below 1gbps, which should be quoted. latency can be
+      quoted also. maybe we can just say "1gbps+" Its like a weird flex because
+      we cant say.
+      
