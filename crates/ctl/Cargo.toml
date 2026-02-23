@@ -1,0 +1,23 @@
+[package]
+name = "wallhack-ctl"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "wallhack"
+path = "src/bin/wallhack.rs"
+
+[dependencies]
+argh = "0.1"
+prost = "0.13"
+thiserror.workspace = true
+tokio = { workspace = true, features = [
+  "net",
+  "io-util",
+  "rt-multi-thread",
+  "macros",
+] }
+wallhack-wire = { path = "../wire" }
+
+[lints]
+workspace = true
