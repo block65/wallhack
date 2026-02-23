@@ -95,7 +95,7 @@ async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
 	}
 }
 
-#[cfg(feature = "readline")]
+#[cfg(feature = "repl")]
 use rustyline::ExternalPrinter;
 
 use crate::repl_common::{
@@ -646,7 +646,7 @@ enum ReplCommand {
 }
 
 /// Run the REPL input loop in a blocking thread (with rustyline).
-#[cfg(feature = "readline")]
+#[cfg(feature = "repl")]
 fn run_repl_input(
 	tx: &mpsc::Sender<ReplCommand>,
 	_metrics: Arc<Metrics>,
@@ -719,7 +719,7 @@ fn run_repl_input(
 }
 
 /// Run the REPL input loop in a blocking thread (simple stdin, no readline).
-#[cfg(not(feature = "readline"))]
+#[cfg(not(feature = "repl"))]
 fn run_repl_input(
 	tx: &mpsc::Sender<ReplCommand>,
 	_metrics: Arc<Metrics>,

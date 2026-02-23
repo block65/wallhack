@@ -4,10 +4,10 @@ version = "0.2.6"
 edition = "2024"
 
 [features]
-default = ["quic", "websocket", "color", "readline", "http-api"]
+default = ["quic", "websocket", "color", "repl", "http-api"]
 slim = ["quic", "websocket", "color"]
 color = []
-readline = ["dep:rustyline"]                         # Full REPL with history/completion
+repl = ["dep:rustyline"]                             # Interactive REPL (history, completion)
 tokio-console = ["dep:console-subscriber"]
 dns-resolver = ["dep:hickory-resolver"]
 
