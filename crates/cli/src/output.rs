@@ -59,6 +59,9 @@ impl Output {
 	}
 
 	fn format_level(&self, level: Level) -> String {
+		if !self.use_color {
+			return format!("{level}");
+		}
 		match level {
 			Level::Info => format!(
 				"{style}{:6}{style:#}",
