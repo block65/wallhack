@@ -61,7 +61,7 @@ use crate::repl_common::{
 	uptime,
 };
 
-#[cfg(feature = "readline")]
+#[cfg(feature = "repl")]
 use rustyline::ExternalPrinter;
 
 /// REPL commands for exit nodes.
@@ -1629,7 +1629,7 @@ fn print_exit_stats(metrics: &wallhack::control::metrics::Metrics, printer: &Pri
 }
 
 /// Run the REPL input loop in a blocking thread (with rustyline).
-#[cfg(feature = "readline")]
+#[cfg(feature = "repl")]
 fn run_exit_repl_input(
 	tx: &mpsc::Sender<ExitReplCommand>,
 	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,
@@ -1692,7 +1692,7 @@ fn run_exit_repl_input(
 }
 
 /// Run the REPL input loop in a blocking thread (simple stdin, no readline).
-#[cfg(not(feature = "readline"))]
+#[cfg(not(feature = "repl"))]
 fn run_exit_repl_input(
 	tx: &mpsc::Sender<ExitReplCommand>,
 	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,

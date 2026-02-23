@@ -3,7 +3,7 @@ use rustyline::{CompletionType, EditMode, Editor};
 
 use crate::helper::LineHelper;
 
-#[cfg(feature = "readline")]
+#[cfg(feature = "repl")]
 pub fn make_readline() -> Result<Editor<LineHelper, rustyline::history::FileHistory>> {
 	let config = rustyline::Config::builder()
 		.history_ignore_space(true)
