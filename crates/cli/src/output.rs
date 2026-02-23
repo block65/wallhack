@@ -9,7 +9,6 @@ use crate::styles::OutputStyles;
 pub enum OutputFormat {
 	#[default]
 	Plain,
-	Json,
 }
 
 pub static OUTPUT_CONFIG: LazyLock<RwLock<Output>> = LazyLock::new(|| {
@@ -40,16 +39,8 @@ pub struct Output {
 
 impl Output {
 	pub fn print(&self, message: &StatusMessage) {
-		match self.format {
-			OutputFormat::Plain => {
-				eprintln!("{} {}", self.format_level(message.level), message.message);
-			}
-			OutputFormat::Json => {
-				// let json_output = serde_json::to_string(&message)
-				// 	.expect("Failed to serialize status message to JSON");
-				println!("{{ json_output }}");
-			}
-		}
+		let OutputFormat::Plain = self.format;
+		eprintln!("{} {}", self.format_level(message.level), message.message);
 	}
 
 	/// Format a message as a plain-text string without printing it.
