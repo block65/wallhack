@@ -19,10 +19,7 @@ use tokio::sync::mpsc;
 use wallhack_core::{
 	NodeRole,
 	control::{
-		handler::HandlerConfig,
-		metrics::Metrics,
-		peers::Registry,
-		routes::{RouteTable, SharedRouteTable},
+		handler::HandlerConfig, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
 	},
 	entry::{actor::TunActor, manager::ConnectionManager},
 	server::{
@@ -30,6 +27,9 @@ use wallhack_core::{
 		server::{Server, ServerOptions},
 	},
 };
+
+#[cfg(feature = "http-api")]
+use wallhack_core::control::routes::RouteTable;
 
 use crate::{
 	WallhackCli,
@@ -120,7 +120,13 @@ const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(50
 /// # Errors
 ///
 /// Returns error if server or client setup fails.
-pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
+pub async fn run(
+	global: &WallhackCli,
+	cmd: &EntryCommand,
+	metrics: Arc<Metrics>,
+	peers: Arc<Registry>,
+	routes: SharedRouteTable,
+) -> Result<()> {
 	crate::repl_common::mark_started();
 	let name = cmd.name();
 	crate::info!(
@@ -130,9 +136,9 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let res = EntryResources {
 		sessions: SessionManager::default(),
-		metrics: Arc::new(Metrics::default()),
-		peers: Arc::new(Registry::new()),
-		routes: RouteTable::shared(),
+		metrics,
+		peers,
+		routes,
 	};
 
 	// Set up REPL once — shared across listen and connect modes.

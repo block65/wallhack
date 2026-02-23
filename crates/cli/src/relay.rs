@@ -37,7 +37,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// # Errors
 ///
 /// Returns error if server fails (connection errors are retried).
-pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
+pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>) -> Result<()> {
 	crate::repl_common::mark_started();
 	let name = cmd.name();
 	crate::info!(
@@ -49,9 +49,6 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 
 	// Parse listen address
 	let addr = parse_listen_addr(&listen_spec.addr)?;
-
-	// Shared metrics across all connections and control
-	let metrics = Arc::new(Metrics::default());
 
 	// Server options with control handler config
 	let server_options = ServerOptions {
