@@ -61,9 +61,6 @@ use crate::repl_common::{
 	uptime,
 };
 
-#[cfg(feature = "repl")]
-use rustyline::ExternalPrinter;
-
 /// REPL commands for exit nodes.
 enum ExitReplCommand {
 	Quit,
@@ -101,22 +98,23 @@ enum ExitAction {
 
 /// Setup the REPL once (shared across mode transitions).
 fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer>) {
-	if crate::repl_common::is_interactive() {
-		let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
-		let (print_tx, print_rx) = mpsc::unbounded_channel::<PrintMsg>();
-		let printer = Printer::new(print_tx);
+	let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
+	let (print_tx, print_rx) = mpsc::unbounded_channel::<PrintMsg>();
+	let printer = Printer::new(print_tx);
 
-		crate::info!("Type 'help' for commands, 'quit' to exit.");
+	crate::info!("Type 'help' for commands, 'quit' to exit.");
 
-		std::thread::spawn(move || {
-			run_exit_repl_input(&tx, print_rx);
-		});
+	std::thread::spawn(move || {
+		crate::repl_common::run_repl_input(
+			"wallhack",
+			&tx,
+			print_rx,
+			parse_exit_repl_command,
+			|cmd| matches!(cmd, ExitReplCommand::Quit),
+		);
+	});
 
-		(Some(rx), Some(printer))
-	} else {
-		// Headless mode — no REPL
-		(None, None)
-	}
+	(Some(rx), Some(printer))
 }
 
 /// Run as an exit node.
@@ -1339,7 +1337,7 @@ async fn run_ws_relay_capability(
 			addr: peer_addr,
 			hostname: global.hostname.clone(),
 			mtls: None,
-			name: None,
+			name: Some(node_name.to_string()),
 			psk,
 			bind: peer_addr.bind_addr(),
 			..Default::default()
@@ -1626,107 +1624,4 @@ fn print_exit_stats(metrics: &wallhack::control::metrics::Metrics, printer: &Pri
 		"  Dropped:      {}",
 		metrics.packets_dropped.load(Ordering::Relaxed)
 	));
-}
-
-/// Run the REPL input loop in a blocking thread (with rustyline).
-#[cfg(feature = "repl")]
-fn run_exit_repl_input(
-	tx: &mpsc::Sender<ExitReplCommand>,
-	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,
-) {
-	let mut rl = match rustyline::DefaultEditor::new() {
-		Ok(rl) => rl,
-		Err(e) => {
-			crate::error!("Failed to initialize readline: {e}");
-			let _ = tx.blocking_send(ExitReplCommand::Quit);
-			return;
-		}
-	};
-
-	let mut ep = rl.create_external_printer().ok();
-	let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-
-	std::thread::spawn(move || {
-		while let Some(msg) = print_rx.blocking_recv() {
-			match msg {
-				PrintMsg::Text(s) => {
-					if let Some(ref mut p) = ep {
-						let _ = p.print(s);
-					} else {
-						println!("{s}");
-					}
-				}
-				PrintMsg::Done => {
-					let _ = done_tx.send(());
-				}
-			}
-		}
-	});
-
-	loop {
-		match rl.readline("wallhack> ") {
-			Ok(line) => {
-				let line = line.trim();
-				if line.is_empty() {
-					continue;
-				}
-
-				let _ = rl.add_history_entry(line);
-
-				let cmd = parse_exit_repl_command(line);
-				let is_quit = matches!(cmd, ExitReplCommand::Quit);
-				if tx.blocking_send(cmd).is_err() || is_quit {
-					break;
-				}
-				let _ = done_rx.recv_timeout(std::time::Duration::from_millis(500));
-			}
-			Err(rustyline::error::ReadlineError::Interrupted) => {
-				// Continue on Ctrl-C
-			}
-			Err(rustyline::error::ReadlineError::Eof | _) => {
-				let _ = tx.blocking_send(ExitReplCommand::Quit);
-				break;
-			}
-		}
-	}
-}
-
-/// Run the REPL input loop in a blocking thread (simple stdin, no readline).
-#[cfg(not(feature = "repl"))]
-fn run_exit_repl_input(
-	tx: &mpsc::Sender<ExitReplCommand>,
-	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,
-) {
-	use std::io::{BufRead, Write};
-
-	let stdin = std::io::stdin();
-	let mut stdout = std::io::stdout();
-
-	loop {
-		print!("wallhack> ");
-		let _ = stdout.flush();
-
-		let mut line = String::new();
-		match stdin.lock().read_line(&mut line) {
-			Ok(0) | Err(_) => {
-				let _ = tx.blocking_send(ExitReplCommand::Quit);
-				break;
-			}
-			Ok(_) => {
-				let line = line.trim();
-				if line.is_empty() {
-					continue;
-				}
-
-				let cmd = parse_exit_repl_command(line);
-				let is_quit = matches!(cmd, ExitReplCommand::Quit);
-				if tx.blocking_send(cmd).is_err() || is_quit {
-					break;
-				}
-				while let Some(PrintMsg::Text(s)) = print_rx.blocking_recv() {
-					println!("{s}");
-				}
-			}
-		}
-	}
 }

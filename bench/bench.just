@@ -82,7 +82,7 @@ fetch-iperf3:
 
 cargo-build-musl:
     echo "Building musl binary (slim)..."
-    cross build --release --target "{{ musl_target }}" --features slim
+    cross build --release --target "{{ musl_target }}" --no-default-features --features slim
 
 clean:
     rm -rf "{{ staging_dir }}"

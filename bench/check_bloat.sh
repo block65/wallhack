@@ -21,14 +21,15 @@ mkdir -p "$RESULTS_DIR"
 cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
-# Updated: 2026-02-20, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
+# Updated: 2026-02-23, baseline commit: $(git rev-parse --short HEAD 2>/dev/null)
 # Set ~2% above current measured sizes. Adjust as features are added.
 declare -A THRESHOLDS=(
     # glibc x86_64 (~2% headroom)
-    ["default-glibc"]=6480000      # current: 6352672
-    ["slim-glibc"]=5033165         # current: 4958496 (4.73M, feat/server-mtls); limit: 4.80M
+    # default: rustyline→reedline added ~153KB (crossbeam for ExternalPrinter)
+    ["default-glibc"]=6740000      # current: 6606736 (6.30M, feat/reedline)
+    ["slim-glibc"]=5033165         # current: 4950144 (4.72M, feat/reedline); limit: 4.80M
     # musl x86_64 (~2% headroom, estimated — update after first musl build)
-    ["default-musl"]=6480000       # estimated ~6.3MB (not yet measured)
+    ["default-musl"]=6740000       # estimated ~6.5MB (not yet measured post-reedline)
     ["slim-musl"]=5000000          # estimated ~4.9MB (not yet measured)
 )
 
