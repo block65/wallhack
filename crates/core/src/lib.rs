@@ -16,6 +16,7 @@ pub mod control;
 pub mod daemon;
 pub mod entry;
 pub mod exit;
+pub mod ipc;
 pub mod node_api;
 pub mod server;
 pub mod transport;
