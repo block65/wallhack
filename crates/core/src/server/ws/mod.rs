@@ -132,7 +132,7 @@ impl AsyncWrite for MaybeTlsStream {
 }
 
 /// WebSocket server for tunnel connections.
-pub struct WsServer {
+pub struct WebSocketServer {
 	listener: TcpListener,
 	tls: WsTlsConfig,
 	options: ServerOptions,
@@ -140,7 +140,7 @@ pub struct WsServer {
 	psk: Option<String>,
 }
 
-impl Server for WsServer {
+impl Server for WebSocketServer {
 	type Error = Error;
 	type Transport = WsTransport;
 
