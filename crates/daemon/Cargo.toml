@@ -3,10 +3,6 @@ name = "wallhackd"
 version = "0.2.6"
 edition = "2024"
 
-[[bin]]
-name = "wallhackd"
-path = "src/bin/wallhackd.rs"
-
 [features]
 default = ["quic", "websocket", "http-api"]
 slim = ["quic", "websocket"]
