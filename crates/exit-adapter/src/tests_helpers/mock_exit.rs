@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use wallhack_wire::{
 	SocketAddrPair,
-	v2::{
+	data::{
 		ExitNodeResponse, EntryNodeInstruction, IcmpSendInstruction, TcpCloseInstruction,
 		TcpConnectInstruction, TcpListenCloseInstruction, TcpListenInstruction, TcpSendInstruction,
 		UdpSendInstruction, entry_node_instruction::Instruction,

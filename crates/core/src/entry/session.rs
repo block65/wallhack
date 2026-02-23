@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::io::copy_bidirectional;
 use wallhack_netstack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream, Transport, TransportError};
-use wallhack_wire::v2::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
+use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
 use crate::transport::bridge::{read_length_delimited, write_length_delimited};
 

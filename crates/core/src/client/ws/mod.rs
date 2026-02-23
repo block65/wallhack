@@ -16,8 +16,8 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{WebSocketStream, client_async};
 use wallhack_wire::{
-	control_v2::{ControlMessage, control_message},
-	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+	control::{ControlMessage, control_message},
+	data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
 };
 use yamux::Mode;
 

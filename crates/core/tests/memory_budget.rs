@@ -28,7 +28,7 @@ use std::{
 };
 
 use tokio::sync::broadcast;
-use wallhack_wire::v2::{EntryNodeInstruction, ExitNodeResponse, TunnelMessage};
+use wallhack_wire::data::{EntryNodeInstruction, ExitNodeResponse, TunnelMessage};
 
 // ---------------------------------------------------------------------------
 // Tracking allocator
@@ -138,10 +138,10 @@ fn fmt_bytes(n: usize) -> String {
 fn make_response_with_payload(payload_size: usize) -> ExitNodeResponse {
 	ExitNodeResponse {
 		response: Some(
-			wallhack_wire::v2::exit_node_response::Response::UdpResponse(
-				wallhack_wire::v2::UdpResponse {
-					response: Some(wallhack_wire::v2::udp_response::Response::DataRecv(
-						wallhack_wire::v2::UdpDataRecvResponse {
+			wallhack_wire::data::exit_node_response::Response::UdpResponse(
+				wallhack_wire::data::UdpResponse {
+					response: Some(wallhack_wire::data::udp_response::Response::DataRecv(
+						wallhack_wire::data::UdpDataRecvResponse {
 							data: bytes::Bytes::from(vec![0xABu8; payload_size]),
 						},
 					)),

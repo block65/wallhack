@@ -139,8 +139,8 @@ async fn run_downstream(
 	listen_spec: &crate::cli::AddressSpec,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
-	upstream_resp: broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
+	upstream_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) -> Result<()> {
 	match listen_spec.protocol {
 		Protocol::Udp => {
@@ -170,8 +170,8 @@ async fn run_downstream(
 /// Bridge a downstream connection to upstream channels.
 fn bridge_downstream<T: wallhack_core::transport::Transport>(
 	accept_result: AcceptResult<T>,
-	upstream_instr: &broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
-	upstream_resp: &broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
+	upstream_instr: &broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+	upstream_resp: &broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) {
 	crate::info!("Downstream connected: {}", accept_result.peer_addr());
 
@@ -318,8 +318,8 @@ async fn run_quic_downstream(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
-	upstream_resp: broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
+	upstream_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) -> Result<()> {
 	let server_config = build_server_config(global, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
@@ -348,8 +348,8 @@ async fn run_ws_downstream(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
-	upstream_resp: broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
+	upstream_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) -> Result<()> {
 	use wallhack_core::server::ws::WsServer;
 

@@ -1,8 +1,8 @@
 use tokio::sync::mpsc;
 use wallhack_transport::Transport;
 use wallhack_wire::{
-	control_v2::ControlMessage,
-	v2::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+	control::ControlMessage,
+	data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
 };
 
 use crate::{
