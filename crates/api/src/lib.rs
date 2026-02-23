@@ -3,8 +3,6 @@
 //! Thin HTTP wrapper over the existing control plane protocol.
 //! Provides endpoints for health checks, metrics, and real-time events.
 //!
-//! Enable with the `http-api` feature flag.
-//!
 //! **Maintenance note:** the `OpenAPI` spec is manually maintained at
 //! `website/src/data/openapi.json`. If you add, remove, or change any route,
 //! request body, or response shape in this module or `handlers.rs`, update
@@ -12,7 +10,6 @@
 
 mod auth;
 mod handlers;
-pub mod node_api;
 mod state;
 mod validation;
 
@@ -124,7 +121,7 @@ pub fn router(state: State) -> Router {
 pub async fn serve(
 	addr: SocketAddr,
 	state: State,
-	tls_config: Option<crate::server::config::TlsConfig>,
+	tls_config: Option<wallhack_core::server::config::TlsConfig>,
 ) -> std::io::Result<()> {
 	use axum_server::tls_rustls::RustlsConfig;
 
@@ -138,7 +135,7 @@ pub async fn serve(
 
 	// Use the same TLS setup as the main server
 	let (certs, key, _fingerprint) =
-		crate::server::tls::configure_crypto(tls_config).map_err(std::io::Error::other)?;
+		wallhack_core::server::tls::configure_crypto(tls_config).map_err(std::io::Error::other)?;
 
 	let rustls_config = RustlsConfig::from_der(
 		certs.into_iter().map(|c| c.to_vec()).collect(),

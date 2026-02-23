@@ -3129,6 +3129,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wallhack-api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "urlencoding",
+ "wallhack-core",
+]
+
+[[package]]
 name = "wallhack-cli"
 version = "0.2.6"
 dependencies = [
@@ -3150,6 +3167,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "wallhack-api",
  "wallhack-core",
  "wallhack-wire",
 ]
@@ -3161,9 +3179,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-http-proxy",
- "axum",
- "axum-server",
- "base64 0.22.1",
  "bytes",
  "dashmap",
  "futures",
@@ -3175,23 +3190,18 @@ dependencies = [
  "ring",
  "rustls",
  "rustls-pemfile",
- "serde",
- "serde_json",
  "smoltcp",
  "socket2 0.5.10",
- "subtle",
  "tempfile",
  "test-log",
  "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
  "tokio-socks",
- "tokio-stream",
  "tokio-test",
  "tokio-tungstenite",
  "tracing",
  "tun",
- "urlencoding",
  "wallhack-exit-adapter",
  "wallhack-netstack",
  "wallhack-transport",

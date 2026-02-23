@@ -5,7 +5,7 @@ edition = "2024"
 categories = ["network-programming"]
 
 [features]
-default = ["quic", "websocket", "http-api"]
+default = ["quic", "websocket"]
 slim = ["quic", "websocket"]
 quic = ["dep:quinn", "wallhack-transport/quic"]
 websocket = [
@@ -15,15 +15,6 @@ websocket = [
     "dep:async-http-proxy",
     "dep:tokio-socks",
     "wallhack-transport/websocket",
-]
-http-api = [
-    "dep:axum",
-    "dep:axum-server",
-    "dep:serde",
-    "dep:serde_json",
-    "dep:tokio-stream",
-    "dep:urlencoding",
-    "dep:base64",
 ]
 
 [dependencies]
@@ -88,21 +79,6 @@ tokio-socks = { version = "0.5", optional = true }
 bytes = "1.11.1"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 
-# REST API (optional)
-axum = { version = "0.7", default-features = false, features = [
-    "tokio",
-    "json",
-    "http1",
-], optional = true }
-axum-server = { version = "0.7", default-features = false, features = [
-    "tls-rustls",
-], optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-tokio-stream = { version = "0.1", features = ["sync"], optional = true }
-urlencoding = { version = "2", optional = true }
-base64 = { version = "0.22", optional = true }
-subtle = "2"
 ring = { version = "0.17", default-features = false }
 
 [build-dependencies]

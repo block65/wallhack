@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
+use wallhack_core::node_api;
 
 use super::{state::State as ApiState, validation};
 
@@ -115,8 +116,8 @@ pub async fn peers(State(state): State<ApiState>) -> Json<PeersResponse> {
 				name: peer.name,
 				addr: peer.addr,
 				role: match peer.capability {
-					super::node_api::NodeCapability::Exit => "exit".to_string(),
-					super::node_api::NodeCapability::Relay => "relay".to_string(),
+					node_api::NodeCapability::Exit => "exit".to_string(),
+					node_api::NodeCapability::Relay => "relay".to_string(),
 				},
 				connected_at: peer.connected_at_secs,
 				bytes_transferred: peer.bytes_transferred,
@@ -149,7 +150,7 @@ pub async fn disconnect_peer(
 				message: None,
 			}),
 		),
-		Err(super::node_api::NodeApiError::PeerNotFound(_)) => (
+		Err(node_api::NodeApiError::PeerNotFound(_)) => (
 			StatusCode::NOT_FOUND,
 			Json(SuccessResponse {
 				success: false,
@@ -263,7 +264,7 @@ pub async fn delete_route(
 				message: None,
 			}),
 		),
-		Err(super::node_api::NodeApiError::RouteNotFound(_)) => (
+		Err(node_api::NodeApiError::RouteNotFound(_)) => (
 			StatusCode::NOT_FOUND,
 			Json(SuccessResponse {
 				success: false,

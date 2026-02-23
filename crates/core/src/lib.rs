@@ -11,12 +11,11 @@ mod tls;
 pub mod types;
 
 // public
-#[cfg(feature = "http-api")]
-pub mod api;
 pub mod client;
 pub mod control;
 pub mod entry;
 pub mod exit;
+pub mod node_api;
 pub mod server;
 pub mod transport;
 

@@ -4,6 +4,8 @@
 
 use std::net::IpAddr;
 
+use wallhack_core::{Cidr, CidrParseError};
+
 /// Maximum length for peer names.
 const MAX_PEER_NAME_LEN: usize = 128;
 
@@ -154,8 +156,6 @@ pub fn validate_peer_name(id: &str) -> Result<(), ValidationError> {
 ///
 /// Returns error if the CIDR is invalid.
 pub fn validate_cidr(cidr: &str) -> Result<(), ValidationError> {
-	use crate::types::{Cidr, CidrParseError};
-
 	if cidr.is_empty() {
 		return Err(ValidationError::Empty);
 	}
@@ -174,6 +174,7 @@ pub fn validate_cidr(cidr: &str) -> Result<(), ValidationError> {
 		CidrParseError::InvalidPrefixLen(_) | CidrParseError::PrefixLenTooLarge { .. } => {
 			ValidationError::InvalidPrefixLength
 		}
+		_ => ValidationError::InvalidCidr,
 	})?;
 
 	Ok(())
