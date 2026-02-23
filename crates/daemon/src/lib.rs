@@ -29,10 +29,10 @@ use wallhack_core::{
 };
 
 // ============================================================================
-// Error type
+// Error types
 // ============================================================================
 
-/// Errors from the daemon engine.
+/// Errors from the daemon engine (public API).
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
 	/// CLI produced output and exited early (help text or parse error).
@@ -45,7 +45,54 @@ pub enum DaemonError {
 
 	/// Node setup or runtime failure.
 	#[error(transparent)]
+	Node(#[from] NodeError),
+
+	/// Error from the runtime (e.g. spawned task panicked).
+	#[error(transparent)]
 	Runtime(#[from] anyhow::Error),
+}
+
+/// Typed errors for node operations.
+#[derive(Debug, thiserror::Error)]
+pub enum NodeError {
+	/// Required transport feature not compiled in.
+	#[error("{0} transport not available (compile with --features {0})")]
+	TransportUnavailable(&'static str),
+
+	/// Invalid CLI or node configuration.
+	#[error("{0}")]
+	Config(String),
+
+	/// PSK authentication failure.
+	#[error("PSK authentication failed for peer {0}")]
+	PskAuth(String),
+
+	/// Control channel unexpectedly closed.
+	#[error("control channel closed")]
+	ChannelClosed,
+
+	/// Address resolution produced no results.
+	#[error("no addresses resolved for {0}")]
+	NoAddresses(String),
+
+	/// I/O error.
+	#[error(transparent)]
+	Io(#[from] std::io::Error),
+
+	/// Address parse error.
+	#[error(transparent)]
+	AddrParse(#[from] std::net::AddrParseError),
+
+	/// Wrapped error from a dependency.
+	#[error(transparent)]
+	Internal(#[from] anyhow::Error),
+}
+
+impl NodeError {
+	/// Wrap an arbitrary error from a dependency into [`NodeError::Internal`].
+	pub(crate) fn wrap(e: impl std::error::Error + Send + Sync + 'static) -> Self {
+		Self::Internal(e.into())
+	}
 }
 
 // ============================================================================
@@ -60,7 +107,7 @@ pub enum DaemonError {
 /// # Errors
 ///
 /// Returns [`DaemonError::Cli`] for parse errors or informational output
-/// (--help, --version). Returns [`DaemonError::Runtime`] for node failures.
+/// (--help, --version). Returns [`DaemonError::Node`] for node failures.
 pub async fn run_daemon_engine(args: Vec<String>) -> Result<(), DaemonError> {
 	let cli = cli::parse_cli_from_args(args)?;
 
@@ -167,12 +214,9 @@ fn check_entropy_ready() {
 // Utilities
 // ============================================================================
 
-/// Check if an error is terminal and should not be retried.
-///
-/// Authentication failures and certificate mismatches indicate a configuration
-/// problem — retrying won't help and just creates noise.
-#[must_use]
-pub fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
+/// Check whether an error looks terminal (auth/cert failure) and should not be
+/// retried.  Uses string matching because upstream error types are opaque.
+pub(crate) fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
 	let msg = err.to_string();
 	msg.contains("Fingerprint mismatch")
 		|| msg.contains("PSK authentication failed")
@@ -193,7 +237,7 @@ pub fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
 /// # Errors
 ///
 /// Returns error if entry node setup fails.
-pub fn start_entry(global: &WallhackCli, cmd: &EntryCommand) -> anyhow::Result<DaemonHandle> {
+pub fn start_entry(global: &WallhackCli, cmd: &EntryCommand) -> Result<DaemonHandle, NodeError> {
 	let metrics = Arc::new(Metrics::default());
 	let peers = Arc::new(Registry::new());
 	let routes = RouteTable::shared();
@@ -210,20 +254,21 @@ pub fn start_entry(global: &WallhackCli, cmd: &EntryCommand) -> anyhow::Result<D
 
 	let global = global.clone();
 	let cmd = cmd.clone();
-	let task = tokio::spawn(async move { entry::run(&global, &cmd, metrics, peers, routes).await });
+	let task = tokio::spawn(async move {
+		entry::run(&global, &cmd, metrics, peers, routes)
+			.await
+			.map_err(Into::into)
+	});
 
 	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
 }
 
 /// Start an exit node and return a [`DaemonHandle`].
 ///
-/// Spawns the node into a background task. Use [`DaemonHandle::wait`] to
-/// block until the node exits, or [`DaemonHandle::shutdown`] to stop it.
-///
 /// # Errors
 ///
 /// Returns error if exit node setup fails.
-pub fn start_exit(global: &WallhackCli, cmd: &ExitCommand) -> anyhow::Result<DaemonHandle> {
+pub fn start_exit(global: &WallhackCli, cmd: &ExitCommand) -> Result<DaemonHandle, NodeError> {
 	let metrics = Arc::new(Metrics::default());
 	let peers = Arc::new(Registry::new());
 	let routes = RouteTable::shared();
@@ -240,20 +285,18 @@ pub fn start_exit(global: &WallhackCli, cmd: &ExitCommand) -> anyhow::Result<Dae
 
 	let global = global.clone();
 	let cmd = cmd.clone();
-	let task = tokio::spawn(async move { exit::run(&global, &cmd, metrics).await });
+	let task =
+		tokio::spawn(async move { exit::run(&global, &cmd, metrics).await.map_err(Into::into) });
 
 	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
 }
 
 /// Start a relay node and return a [`DaemonHandle`].
 ///
-/// Spawns the node into a background task. Use [`DaemonHandle::wait`] to
-/// block until the node exits, or [`DaemonHandle::shutdown`] to stop it.
-///
 /// # Errors
 ///
 /// Returns error if relay node setup fails.
-pub fn start_relay(global: &WallhackCli, cmd: &RelayCommand) -> anyhow::Result<DaemonHandle> {
+pub fn start_relay(global: &WallhackCli, cmd: &RelayCommand) -> Result<DaemonHandle, NodeError> {
 	let metrics = Arc::new(Metrics::default());
 	let peers = Arc::new(Registry::new());
 	let routes = RouteTable::shared();
@@ -270,7 +313,8 @@ pub fn start_relay(global: &WallhackCli, cmd: &RelayCommand) -> anyhow::Result<D
 
 	let global = global.clone();
 	let cmd = cmd.clone();
-	let task = tokio::spawn(async move { relay::run(&global, &cmd, metrics).await });
+	let task =
+		tokio::spawn(async move { relay::run(&global, &cmd, metrics).await.map_err(Into::into) });
 
 	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
 }

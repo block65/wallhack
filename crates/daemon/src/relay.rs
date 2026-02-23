@@ -5,7 +5,6 @@
 
 use std::{str::FromStr, sync::Arc, time::Duration};
 
-use anyhow::{Context, Result};
 use tokio::sync::broadcast;
 
 use wallhack_core::{
@@ -19,7 +18,7 @@ use wallhack_core::{
 use wallhack_core::{client, server};
 
 use crate::{
-	WallhackCli,
+	NodeError, WallhackCli,
 	cli::{Protocol, RelayCommand},
 	net::{SocketAddrExt, parse_listen_addr},
 };
@@ -37,14 +36,18 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// # Errors
 ///
 /// Returns error if server fails (connection errors are retried).
-pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>) -> Result<()> {
+pub async fn run(
+	global: &WallhackCli,
+	cmd: &RelayCommand,
+	metrics: Arc<Metrics>,
+) -> Result<(), NodeError> {
 	let name = cmd.name();
 	tracing::info!(
 		"wallhack {}  {name}",
 		crate::version::built_info::PKG_VERSION
 	);
 
-	let (connect_spec, listen_spec) = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
+	let (connect_spec, listen_spec) = cmd.transport().map_err(NodeError::Config)?;
 
 	// Parse listen address
 	let addr = parse_listen_addr(&listen_spec.addr)?;
@@ -58,16 +61,20 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>
 	};
 
 	tracing::info!("Connecting to {}...", connect_spec.addr);
-	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
+	let resolvable =
+		crate::dns::ResolvableAddress::from_str(&connect_spec.addr).map_err(NodeError::wrap)?;
 	tracing::debug!("Resolving {}...", connect_spec.addr);
 	let dns_server = global
 		.dns
 		.as_ref()
 		.map(|s| crate::dns::parse_str_to_addr(s))
-		.transpose()?;
+		.transpose()
+		.map_err(NodeError::wrap)?;
 
 	let is_hostname = resolvable.hostname.parse::<std::net::IpAddr>().is_err();
-	let upstream_addr = crate::dns::resolve(resolvable, dns_server).await?;
+	let upstream_addr = crate::dns::resolve(resolvable, dns_server)
+		.await
+		.map_err(NodeError::wrap)?;
 	if is_hostname {
 		tracing::info!("Resolved {} as {}", connect_spec.addr, upstream_addr);
 	}
@@ -98,7 +105,7 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>
 			}
 			#[cfg(not(feature = "quic"))]
 			{
-				anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
+				Err(NodeError::TransportUnavailable("quic"))
 			}
 		}
 		Protocol::Tcp => {
@@ -124,7 +131,7 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
-				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
+				Err(NodeError::TransportUnavailable("websocket"))
 			}
 		}
 	}
@@ -137,7 +144,7 @@ async fn run_downstream(
 	server_options: ServerOptions,
 	upstream_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
 	upstream_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	match listen_spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
@@ -147,7 +154,7 @@ async fn run_downstream(
 			}
 			#[cfg(not(feature = "quic"))]
 			{
-				anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
+				Err(NodeError::TransportUnavailable("quic"))
 			}
 		}
 		Protocol::Tcp => {
@@ -157,7 +164,7 @@ async fn run_downstream(
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
-				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
+				Err(NodeError::TransportUnavailable("websocket"))
 			}
 		}
 	}
@@ -223,7 +230,7 @@ async fn connect_quic_upstream(
 	addr: std::net::SocketAddr,
 	psk: Option<&str>,
 	accept_fingerprint: Option<&str>,
-) -> Result<ConnectResult<wallhack_core::transport::quic::QuicTransport>> {
+) -> Result<ConnectResult<wallhack_core::transport::quic::QuicTransport>, NodeError> {
 	let client_config = client::config::ClientConfig {
 		addr,
 		hostname: global.hostname.clone(),
@@ -237,13 +244,15 @@ async fn connect_quic_upstream(
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
 	loop {
-		let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
+		let mut client =
+			client::quic::QuicClient::try_new(client_config.clone()).map_err(NodeError::wrap)?;
 
 		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				if crate::is_nonretryable_error(&e) {
-					return Err(e).context("connection failed, not retrying");
+					tracing::error!("Connection failed (not retrying): {e}");
+					return Err(NodeError::wrap(e));
 				}
 				tracing::debug!(
 					"Upstream connection failed: {}, retrying in {:?}",
@@ -264,7 +273,7 @@ async fn connect_ws_upstream(
 	addr: std::net::SocketAddr,
 	psk: Option<&str>,
 	accept_fingerprint: Option<&str>,
-) -> Result<ConnectResult<wallhack_core::transport::ws::WsTransport>> {
+) -> Result<ConnectResult<wallhack_core::transport::ws::WsTransport>, NodeError> {
 	use wallhack_core::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
@@ -288,13 +297,14 @@ async fn connect_ws_upstream(
 	let mut retry_delay = INITIAL_RETRY_DELAY;
 
 	loop {
-		let mut client = WsClient::new(client_config.clone())?;
+		let mut client = WsClient::new(client_config.clone()).map_err(NodeError::wrap)?;
 
 		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
 				if crate::is_nonretryable_error(&e) {
-					return Err(e).context("connection failed, not retrying");
+					tracing::error!("Connection failed (not retrying): {e}");
+					return Err(NodeError::wrap(e));
 				}
 				tracing::debug!(
 					"Upstream connection failed: {}, retrying in {:?}",
@@ -316,9 +326,10 @@ async fn run_quic_downstream(
 	server_options: ServerOptions,
 	upstream_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
 	upstream_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	let server_config = build_server_config(global, addr);
-	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
+	let mut server = server::quic::QuicServer::try_new(server_config, server_options)
+		.map_err(NodeError::wrap)?;
 	tracing::info!("Listening on {} (QUIC)", server.local_addr()?);
 
 	loop {
@@ -346,11 +357,11 @@ async fn run_ws_downstream(
 	server_options: ServerOptions,
 	upstream_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
 	upstream_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use wallhack_core::server::ws::WsServer;
 
 	let server_config = build_server_config(global, addr);
-	let mut server = WsServer::try_new(server_config, server_options)?;
+	let mut server = WsServer::try_new(server_config, server_options).map_err(NodeError::wrap)?;
 	tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
 	loop {
