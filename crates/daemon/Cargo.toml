@@ -8,10 +8,8 @@ name = "wallhackd"
 path = "src/bin/wallhackd.rs"
 
 [features]
-default = ["quic", "websocket", "color", "repl", "http-api"]
-slim = ["quic", "websocket", "color"]
-color = []
-repl = ["dep:reedline"]                              # Interactive REPL (history, completion)
+default = ["quic", "websocket", "http-api"]
+slim = ["quic", "websocket"]
 tokio-console = ["dep:console-subscriber"]
 dns-resolver = ["dep:hickory-resolver"]
 
@@ -23,10 +21,8 @@ websocket = ["wallhack-core/websocket"]
 http-api = ["dep:wallhack-api"]
 
 [dependencies]
-anstyle = "1"
 anyhow = "1"
 argh = "0.1"
-derive_more = { version = "2", features = ["display"] }
 hickory-resolver = { version = "0.25", default-features = false, features = [
   "tokio",
 ], optional = true }
@@ -36,8 +32,6 @@ quinn = { version = "0.11", default-features = false, features = [
   "runtime-tokio",
   "rustls-ring",
 ] }
-reedline = { version = "0.45", default-features = false, features = ["external_printer"], optional = true }
-shlex = "1"
 thiserror = "2"
 tokio.workspace = true
 tracing.workspace = true
@@ -50,7 +44,6 @@ rand = { version = "0.9", default-features = false, features = [
   "std_rng",
 ] }
 parking_lot = "0.12.5"
-tabwriter = "1.4.1"
 
 [build-dependencies]
 built = { version = "0.7", features = ["git2", "chrono"] }

@@ -38,9 +38,8 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 ///
 /// Returns error if server fails (connection errors are retried).
 pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>) -> Result<()> {
-	crate::repl_common::mark_started();
 	let name = cmd.name();
-	crate::info!(
+	tracing::info!(
 		"wallhack {}  {name}",
 		crate::version::built_info::PKG_VERSION
 	);
@@ -58,7 +57,7 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>
 		routes: None,
 	};
 
-	crate::info!("Connecting to {}...", connect_spec.addr);
+	tracing::info!("Connecting to {}...", connect_spec.addr);
 	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
 	tracing::debug!("Resolving {}...", connect_spec.addr);
 	let dns_server = global
@@ -70,7 +69,7 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand, metrics: Arc<Metrics>
 	let is_hostname = resolvable.hostname.parse::<std::net::IpAddr>().is_err();
 	let upstream_addr = crate::dns::resolve(resolvable, dns_server).await?;
 	if is_hostname {
-		crate::info!("Resolved {} as {}", connect_spec.addr, upstream_addr);
+		tracing::info!("Resolved {} as {}", connect_spec.addr, upstream_addr);
 	}
 
 	let psk = global.resolve_psk();
@@ -170,7 +169,7 @@ fn bridge_downstream<T: wallhack_core::transport::Transport>(
 	upstream_instr: &broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
 	upstream_resp: &broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) {
-	crate::info!("Downstream connected: {}", accept_result.peer_addr());
+	tracing::info!("Downstream connected: {}", accept_result.peer_addr());
 
 	let ((downstream_instr, downstream_resp), control_tx) = accept_result.channels();
 
@@ -243,7 +242,7 @@ async fn connect_quic_upstream(
 		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
-				if crate::repl_common::is_nonretryable_error(&e) {
+				if crate::is_nonretryable_error(&e) {
 					return Err(e).context("connection failed, not retrying");
 				}
 				tracing::debug!(
@@ -251,7 +250,7 @@ async fn connect_quic_upstream(
 					e,
 					retry_delay
 				);
-				crate::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
@@ -294,7 +293,7 @@ async fn connect_ws_upstream(
 		match client.connect(NodeRole::Relay).await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
-				if crate::repl_common::is_nonretryable_error(&e) {
+				if crate::is_nonretryable_error(&e) {
 					return Err(e).context("connection failed, not retrying");
 				}
 				tracing::debug!(
@@ -302,7 +301,7 @@ async fn connect_ws_upstream(
 					e,
 					retry_delay
 				);
-				crate::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
@@ -320,7 +319,7 @@ async fn run_quic_downstream(
 ) -> Result<()> {
 	let server_config = build_server_config(global, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
-	crate::info!("Listening on {} (QUIC)", server.local_addr()?);
+	tracing::info!("Listening on {} (QUIC)", server.local_addr()?);
 
 	loop {
 		match server.accept(NodeRole::Relay).await {
@@ -328,11 +327,11 @@ async fn run_quic_downstream(
 				bridge_downstream(accept_result, &upstream_instr, &upstream_resp);
 			}
 			Ok(None) => {
-				crate::info!("Server closed");
+				tracing::info!("Server closed");
 				break;
 			}
 			Err(e) => {
-				crate::error!("Accept error: {}", e);
+				tracing::warn!("Accept error: {}", e);
 			}
 		}
 	}
@@ -352,7 +351,7 @@ async fn run_ws_downstream(
 
 	let server_config = build_server_config(global, addr);
 	let mut server = WsServer::try_new(server_config, server_options)?;
-	crate::info!("Listening on {} (WebSocket)", server.local_addr()?);
+	tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
 	loop {
 		match server.accept(NodeRole::Relay).await {
@@ -360,11 +359,11 @@ async fn run_ws_downstream(
 				bridge_downstream(accept_result, &upstream_instr, &upstream_resp);
 			}
 			Ok(None) => {
-				crate::info!("Server closed");
+				tracing::info!("Server closed");
 				break;
 			}
 			Err(e) => {
-				crate::error!("Accept error: {}", e);
+				tracing::warn!("Accept error: {}", e);
 			}
 		}
 	}
