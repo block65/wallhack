@@ -18,6 +18,7 @@
 - **Phase 0b**: Extract `wallhack_core::api` → `wallhack-api` crate ✅
 - **Phase 1a**: Define management protocol (`management.proto`) ✅
 - **Phase 1b+1c**: `DaemonHandle` + refactor node startup ✅
+- **Phase 1d**: IPC listener (management protocol over Unix socket) ✅
 
 ### Crate layout (current)
 ```
