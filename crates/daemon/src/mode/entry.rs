@@ -15,10 +15,7 @@ use wallhack_core::{
 		handler::HandlerConfig, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
 	},
 	entry::{actor::TunActor, manager::ConnectionManager},
-	server::{
-		config::ServerConfig,
-		server::{Server, ServerOptions},
-	},
+	server::server::{Server, ServerOptions},
 };
 
 #[cfg(feature = "http-api")]
@@ -27,7 +24,7 @@ use wallhack_core::control::routes::RouteTable;
 use crate::{
 	NodeError, WallhackCli,
 	cli::{EntryCommand, Protocol, TransportDir},
-	net::{SocketAddrExt, parse_listen_addr},
+	config::SecurityParams,
 };
 
 /// Shared node resources passed through the entry server call stack.
@@ -52,7 +49,7 @@ impl SessionManager {
 	///
 	/// If the exit node has connected before, returns a clone of their existing
 	/// TUN. Otherwise creates a new TUN with stable naming (`tun-{name}`).
-	fn get_or_create(&self, name: &str) -> std::string::String {
+	fn get_or_create(&self, name: &str) -> String {
 		let mut sessions = self.sessions.lock();
 
 		if let Some(name) = sessions.get(name) {
@@ -69,7 +66,7 @@ impl SessionManager {
 
 	/// Gets a TUN adapter with auto-generated name (for exit nodes without
 	/// identity).
-	fn create_anonymous() -> std::string::String {
+	fn create_anonymous() -> String {
 		TunActor::random_iface_name()
 	}
 
@@ -91,7 +88,7 @@ async fn create_tun_with_retry(name: String) -> Result<TunActor, NodeError> {
 				tracing::debug!("TUN creation attempt {attempts} failed: {e}, retrying...");
 				tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 			}
-			Err(e) => return Err(NodeError::wrap(e)),
+			Err(e) => return Err(e.into()),
 		}
 	}
 }
@@ -101,12 +98,12 @@ const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(50
 
 /// Run as an entry node (headless daemon).
 ///
-/// Creates TUN interface and either listens for downstream connections or
+/// Creates TUN interface and either listens for peer connections or
 /// connects to a remote peer.
 ///
 /// # Errors
 ///
-/// Returns error if server or client setup fails.
+/// Returns error if server or connection setup fails.
 pub async fn run(
 	global: &WallhackCli,
 	cmd: &EntryCommand,
@@ -143,7 +140,7 @@ async fn run_entry_listen(
 	spec: &crate::cli::AddressSpec,
 	res: EntryResources,
 ) -> Result<(), NodeError> {
-	let addr = parse_listen_addr(&spec.addr)?;
+	let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
 	let psk = global.resolve_psk();
 	let server_options = ServerOptions {
 		handler_config: HandlerConfig::new(NodeRole::Entry),
@@ -151,7 +148,7 @@ async fn run_entry_listen(
 		peers: Some(Arc::clone(&res.peers)),
 		routes: Some(Arc::clone(&res.routes)),
 	};
-	let server_config = build_server_config(global, addr, psk, cmd.max_peers);
+	let server_config = crate::config::build_server_config(global, addr, psk, cmd.max_peers);
 
 	// Start REST API if enabled
 	#[cfg(feature = "http-api")]
@@ -174,7 +171,7 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
-						.map_err(NodeError::wrap)?;
+						.map_err(|e| NodeError::Transport(Box::new(e)))?;
 				start_entry_server(server, res, cmd).await
 			}
 			#[cfg(not(feature = "quic"))]
@@ -185,9 +182,10 @@ async fn run_entry_listen(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				let server =
-					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)
-						.map_err(NodeError::wrap)?;
+				let server = wallhack_core::server::ws::WebSocketServer::try_new(
+					server_config,
+					server_options,
+				)?;
 				start_entry_server(server, res, cmd).await
 			}
 			#[cfg(not(feature = "websocket"))]
@@ -237,25 +235,13 @@ async fn run_entry_connect(
 	spec: &crate::cli::AddressSpec,
 	metrics: Arc<Metrics>,
 ) -> Result<(), NodeError> {
-	use std::str::FromStr;
-
 	tracing::info!("Connecting to {}...", spec.addr);
-	let resolvable =
-		crate::dns::ResolvableAddress::from_str(&spec.addr).map_err(NodeError::wrap)?;
-	let dns_server = global
-		.dns
-		.as_ref()
-		.map(|s| crate::dns::parse_str_to_addr(s))
-		.transpose()
-		.map_err(NodeError::wrap)?;
-	let endpoint = crate::dns::resolve(resolvable, dns_server)
-		.await
-		.map_err(NodeError::wrap)?;
+	let endpoint = crate::transport::resolve_endpoint(&spec.addr, global).await?;
 
 	// Start REST API if enabled (peers registry is unused in connect mode)
 	#[cfg(feature = "http-api")]
 	if let Some(api_addr) = cmd.api_addr() {
-		let tls = build_tls_config(global);
+		let tls = crate::config::build_tls_config(global);
 		let peers = Arc::new(Registry::new());
 		let routes = RouteTable::shared();
 		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
@@ -265,12 +251,34 @@ async fn run_entry_connect(
 	}
 
 	let peer_addr = endpoint.to_string();
+	let security = SecurityParams {
+		psk: global.resolve_psk(),
+		accept_fingerprint: None,
+	};
 
 	match spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_entry_connect_quic(global, endpoint, &peer_addr, &metrics, cmd.fast).await
+				let client_config =
+					crate::config::build_quic_client_config(global, endpoint, None, &security);
+				crate::transport::connect_loop(
+					|| {
+						let cfg = client_config.clone();
+						async move {
+							use wallhack_core::client::client::Client;
+							let mut client = wallhack_core::client::quic::QuicClient::try_new(cfg)?;
+							client.connect(NodeRole::Entry).await
+						}
+					},
+					|connect_result| {
+						let m = Arc::clone(&metrics);
+						let pa = peer_addr.clone();
+						async move { run_entry_connected(connect_result, &m, cmd.fast, &pa).await }
+					},
+					RECONNECT_DELAY,
+				)
+				.await
 			}
 			#[cfg(not(feature = "quic"))]
 			Err(NodeError::TransportUnavailable("quic"))
@@ -278,106 +286,27 @@ async fn run_entry_connect(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_entry_connect_ws(global, endpoint, &peer_addr, &metrics, cmd.fast).await
+				let client_config =
+					crate::config::build_ws_client_config(global, endpoint, None, &security);
+				crate::transport::connect_loop(
+					|| {
+						let cfg = client_config.clone();
+						async move {
+							let mut client = wallhack_core::client::ws::WsClient::new(cfg)?;
+							client.connect(NodeRole::Entry).await
+						}
+					},
+					|connect_result| {
+						let m = Arc::clone(&metrics);
+						let pa = peer_addr.clone();
+						async move { run_entry_connected(connect_result, &m, cmd.fast, &pa).await }
+					},
+					RECONNECT_DELAY,
+				)
+				.await
 			}
 			#[cfg(not(feature = "websocket"))]
 			Err(NodeError::TransportUnavailable("websocket"))
-		}
-	}
-}
-
-#[cfg(feature = "quic")]
-async fn run_entry_connect_quic(
-	global: &WallhackCli,
-	endpoint: std::net::SocketAddr,
-	peer_addr: &str,
-	metrics: &Arc<Metrics>,
-	fast_mode: bool,
-) -> Result<(), NodeError> {
-	use std::time::Duration;
-	use wallhack_core::client::client::Client;
-	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
-	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-	let client_config = build_quic_client_config(global, endpoint);
-	let mut retry_delay = INITIAL_RETRY_DELAY;
-
-	loop {
-		match async {
-			let mut client =
-				wallhack_core::client::quic::QuicClient::try_new(client_config.clone())?;
-			client.connect(NodeRole::Entry).await
-		}
-		.await
-		{
-			Ok(connect_result) => {
-				retry_delay = INITIAL_RETRY_DELAY;
-				run_entry_connected(connect_result, metrics, fast_mode, peer_addr).await?;
-				tracing::info!("Reconnecting in {RECONNECT_DELAY:?}...");
-				tokio::time::sleep(RECONNECT_DELAY).await;
-			}
-			Err(e) => {
-				if crate::is_nonretryable_error(&e) {
-					tracing::error!("Connection failed (not retrying): {e}");
-					return Err(NodeError::wrap(e));
-				}
-				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
-				tokio::time::sleep(retry_delay).await;
-				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-			}
-		}
-	}
-}
-
-#[cfg(feature = "websocket")]
-async fn run_entry_connect_ws(
-	global: &WallhackCli,
-	endpoint: std::net::SocketAddr,
-	peer_addr: &str,
-	metrics: &Arc<Metrics>,
-	fast_mode: bool,
-) -> Result<(), NodeError> {
-	use std::time::Duration;
-	use wallhack_core::client::ws::{WsClient, WsClientConfig};
-	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
-	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-	let client_config = WsClientConfig {
-		base: wallhack_core::client::config::ClientConfig {
-			addr: endpoint,
-			hostname: global.hostname.clone(),
-			mtls: None,
-			bind: endpoint.bind_addr(),
-			..Default::default()
-		},
-		path: "/ws".to_string(),
-		host_header: global.hostname.clone(),
-		use_tls: true,
-	};
-	let mut retry_delay = INITIAL_RETRY_DELAY;
-
-	loop {
-		match async {
-			let mut client = WsClient::new(client_config.clone())?;
-			client.connect(NodeRole::Entry).await
-		}
-		.await
-		{
-			Ok(connect_result) => {
-				retry_delay = INITIAL_RETRY_DELAY;
-				run_entry_connected(connect_result, metrics, fast_mode, peer_addr).await?;
-				tracing::info!("Reconnecting in {RECONNECT_DELAY:?}...");
-				tokio::time::sleep(RECONNECT_DELAY).await;
-			}
-			Err(e) => {
-				if crate::is_nonretryable_error(&e) {
-					tracing::error!("Connection failed (not retrying): {e}");
-					return Err(NodeError::wrap(e));
-				}
-				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
-				tokio::time::sleep(retry_delay).await;
-				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-			}
 		}
 	}
 }
@@ -668,8 +597,8 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 				// Connection ended
 				match result {
 					Ok(Ok(())) => {}
-					Ok(Err(e)) => return Err(NodeError::wrap(e)),
-					Err(e) => return Err(NodeError::Internal(e.into())),
+					Ok(Err(e)) => return Err(e.into()),
+					Err(e) => return Err(e.into())
 				}
 				break;
 			}
@@ -720,31 +649,6 @@ async fn send_ping(
 		.map_err(|_| NodeError::ChannelClosed)?;
 
 	Ok(start.elapsed().as_secs_f64() * 1000.0)
-}
-
-fn build_server_config(
-	global: &WallhackCli,
-	addr: std::net::SocketAddr,
-	psk: Option<String>,
-	max_peers: Option<usize>,
-) -> wallhack_core::server::config::ServerConfig {
-	ServerConfig {
-		listen: addr,
-		tls: build_tls_config(global),
-		psk,
-		max_peers,
-	}
-}
-
-fn build_tls_config(global: &WallhackCli) -> Option<wallhack_core::server::config::TlsConfig> {
-	match (&global.cert, &global.key) {
-		(Some(cert), Some(key)) => Some(wallhack_core::server::config::TlsConfig {
-			cert_pem_file: cert.clone(),
-			key_pem_file: key.clone(),
-			ca_roots: global.ca.clone(),
-		}),
-		_ => None,
-	}
 }
 
 /// Resolve API credentials, generating a random secret if not provided.
@@ -803,30 +707,6 @@ fn start_api(
 			tracing::error!("REST API error: {e}");
 		}
 	});
-}
-
-#[cfg(feature = "quic")]
-fn build_quic_client_config(
-	global: &WallhackCli,
-	endpoint: std::net::SocketAddr,
-) -> wallhack_core::client::config::ClientConfig {
-	let mtls = match (&global.cert, &global.key) {
-		(Some(cert), Some(key)) => Some(wallhack_core::client::config::MtlsConfig {
-			cert_pem_file: cert.clone(),
-			key_pem_file: key.clone(),
-			ca_roots: global.ca.clone(),
-		}),
-		_ => None,
-	};
-
-	wallhack_core::client::config::ClientConfig {
-		addr: endpoint,
-		hostname: global.hostname.clone(),
-		mtls,
-		psk: global.resolve_psk(),
-		bind: endpoint.bind_addr(),
-		..Default::default()
-	}
 }
 
 #[cfg(test)]
