@@ -9,4 +9,4 @@ pub mod session;
 pub mod session_key;
 pub mod sessions;
 
-pub use protobuf::SocketSet;
+pub use wallhack_wire::SocketSet;

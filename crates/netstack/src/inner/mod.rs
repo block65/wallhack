@@ -20,9 +20,9 @@ use crate::{config::StackConfig, error::Error};
 /// # Examples
 ///
 /// ```
-/// use netstack::inner::InnerStack;
-/// use netstack::inner::device::VecDevice;
-/// use netstack::config::StackConfig;
+/// use wallhack_netstack::inner::InnerStack;
+/// use wallhack_netstack::inner::device::VecDevice;
+/// use wallhack_netstack::config::StackConfig;
 /// use smoltcp::wire::{IpCidr, Ipv4Address};
 ///
 /// let config = StackConfig {
@@ -51,9 +51,9 @@ impl<D: Device> InnerStack<D> {
 	/// # Examples
 	///
 	/// ```
-	/// use netstack::inner::InnerStack;
-	/// use netstack::inner::device::VecDevice;
-	/// use netstack::config::StackConfig;
+	/// use wallhack_netstack::inner::InnerStack;
+	/// use wallhack_netstack::inner::device::VecDevice;
+	/// use wallhack_netstack::config::StackConfig;
 	/// use smoltcp::wire::{IpCidr, Ipv4Address};
 	///
 	/// let config = StackConfig {

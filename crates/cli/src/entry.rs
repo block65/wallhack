@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
-use wallhack::{
+use wallhack_core::{
 	NodeRole,
 	control::{
 		handler::HandlerConfig,
@@ -209,8 +209,10 @@ async fn run_entry_listen(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let server =
-					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+				let server = wallhack_core::server::quic::QuicServer::try_new(
+					server_config,
+					server_options,
+				)?;
 				start_entry_server(server, res, cmd, repl_rx, printer).await
 			}
 			#[cfg(not(feature = "quic"))]
@@ -222,7 +224,7 @@ async fn run_entry_listen(
 			#[cfg(feature = "websocket")]
 			{
 				let server =
-					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
 				start_entry_server(server, res, cmd, repl_rx, printer).await
 			}
 			#[cfg(not(feature = "websocket"))]
@@ -350,7 +352,7 @@ async fn run_entry_connect_quic(
 	printer: &Printer,
 ) -> Result<()> {
 	use std::time::Duration;
-	use wallhack::client::client::Client;
+	use wallhack_core::client::client::Client;
 	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
@@ -360,7 +362,7 @@ async fn run_entry_connect_quic(
 	loop {
 		tokio::select! {
 			result = async {
-				let mut client = wallhack::client::quic::QuicClient::try_new(client_config.clone())?;
+				let mut client = wallhack_core::client::quic::QuicClient::try_new(client_config.clone())?;
 				client.connect(NodeRole::Entry).await
 			} => {
 				match result {
@@ -407,12 +409,12 @@ async fn run_entry_connect_ws(
 	printer: &Printer,
 ) -> Result<()> {
 	use std::time::Duration;
-	use wallhack::client::ws::{WsClient, WsClientConfig};
+	use wallhack_core::client::ws::{WsClient, WsClientConfig};
 	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 	let client_config = WsClientConfig {
-		base: wallhack::client::config::ClientConfig {
+		base: wallhack_core::client::config::ClientConfig {
 			addr: endpoint,
 			hostname: global.hostname.clone(),
 			mtls: None,
@@ -468,8 +470,8 @@ async fn run_entry_connect_ws(
 ///
 /// Returns `true` if the user requested quit, `false` if the session ended
 /// normally and the caller should reconnect.
-async fn run_entry_connected<T: wallhack::transport::Transport + 'static>(
-	connect_result: wallhack::client::client::ConnectResult<T>,
+async fn run_entry_connected<T: wallhack_core::transport::Transport + 'static>(
+	connect_result: wallhack_core::client::client::ConnectResult<T>,
 	metrics: &Arc<Metrics>,
 	fast_mode: bool,
 	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
@@ -988,7 +990,7 @@ fn handle_route_add(
 	sessions: &SessionManager,
 	printer: &Printer,
 ) {
-	let parsed: wallhack::Cidr = match cidr.parse() {
+	let parsed: wallhack_core::Cidr = match cidr.parse() {
 		Ok(c) => c,
 		Err(e) => {
 			printer.print(format!("Invalid CIDR '{cidr}': {e}"));
@@ -1019,7 +1021,7 @@ fn handle_route_remove(
 	sessions: &SessionManager,
 	printer: &Printer,
 ) {
-	let parsed: wallhack::Cidr = match cidr.parse() {
+	let parsed: wallhack_core::Cidr = match cidr.parse() {
 		Ok(c) => c,
 		Err(e) => {
 			printer.print(format!("Invalid CIDR '{cidr}': {e}"));
@@ -1131,14 +1133,14 @@ fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 }
 
 // TODO: refactor into a ConnectionContext struct to reduce argument count
-#[allow(clippy::too_many_arguments)]
-async fn handle_connection<T: wallhack::transport::Transport + 'static>(
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 	metrics: Arc<Metrics>,
-	mut accept_result: wallhack::server::server::AcceptResult<T>,
+	mut accept_result: wallhack_core::server::server::AcceptResult<T>,
 	sessions: SessionManager,
-	ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack::control::peers::PingRequest>,
+	ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
 	transport: &Arc<T>,
-	peers: &Arc<wallhack::control::peers::Registry>,
+	peers: &Arc<wallhack_core::control::peers::Registry>,
 	server_psk: Option<String>,
 	fast_mode: bool,
 	peer_addr: String,
@@ -1175,7 +1177,7 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	tokio::spawn(async move {
 		match transport_data.accept_uni().await {
 			Ok(Some(mut recv)) => {
-				if let Err(e) = wallhack::transport::bridge::run_data_in(
+				if let Err(e) = wallhack_core::transport::bridge::run_data_in(
 					&mut recv,
 					&instructions_in,
 					&responses_in,
@@ -1198,9 +1200,11 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 	tokio::spawn(async move {
 		match transport_out.open_uni().await {
 			Ok(mut send) => {
-				if let Err(e) =
-					wallhack::transport::bridge::run_send_instructions(&mut send, instructions_rx)
-						.await
+				if let Err(e) = wallhack_core::transport::bridge::run_send_instructions(
+					&mut send,
+					instructions_rx,
+				)
+				.await
 				{
 					tracing::debug!("Send-instructions handler finished: {e}");
 				}
@@ -1267,9 +1271,9 @@ async fn handle_connection<T: wallhack::transport::Transport + 'static>(
 
 /// Send a ping via the control stream and measure round-trip time.
 async fn send_ping(
-	control_tx: &tokio::sync::mpsc::Sender<protobuf::control_v2::ControlMessage>,
+	control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control_v2::ControlMessage>,
 ) -> Result<f64> {
-	use protobuf::control_v2::{ControlMessage, control_message};
+	use wallhack_wire::control_v2::{ControlMessage, control_message};
 
 	#[allow(clippy::cast_possible_truncation)]
 	let ts = std::time::SystemTime::now()
@@ -1278,7 +1282,7 @@ async fn send_ping(
 		.as_millis() as u64;
 
 	let ping_msg = ControlMessage {
-		message: Some(control_message::Message::Ping(protobuf::v2::Ping {
+		message: Some(control_message::Message::Ping(wallhack_wire::v2::Ping {
 			timestamp_ms: ts,
 		})),
 	};
@@ -1303,7 +1307,7 @@ fn build_server_config(
 	addr: std::net::SocketAddr,
 	psk: Option<String>,
 	max_peers: Option<usize>,
-) -> wallhack::server::config::ServerConfig {
+) -> wallhack_core::server::config::ServerConfig {
 	ServerConfig {
 		listen: addr,
 		tls: build_tls_config(global),
@@ -1312,9 +1316,9 @@ fn build_server_config(
 	}
 }
 
-fn build_tls_config(global: &WallhackCli) -> Option<wallhack::server::config::TlsConfig> {
+fn build_tls_config(global: &WallhackCli) -> Option<wallhack_core::server::config::TlsConfig> {
 	match (&global.cert, &global.key) {
-		(Some(cert), Some(key)) => Some(wallhack::server::config::TlsConfig {
+		(Some(cert), Some(key)) => Some(wallhack_core::server::config::TlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
 			ca_roots: global.ca.clone(),
@@ -1359,11 +1363,11 @@ fn start_api(
 	metrics: &Arc<Metrics>,
 	peers: &Arc<Registry>,
 	routes: &SharedRouteTable,
-	tls_config: Option<wallhack::server::config::TlsConfig>,
+	tls_config: Option<wallhack_core::server::config::TlsConfig>,
 	username: String,
 	secret: String,
 ) {
-	use wallhack::api::{Auth, State as ApiState};
+	use wallhack_core::api::{Auth, State as ApiState};
 
 	let handler_config = HandlerConfig::new(NodeRole::Entry);
 	let auth = Auth::new(username, secret);
@@ -1376,7 +1380,7 @@ fn start_api(
 	);
 
 	tokio::spawn(async move {
-		if let Err(e) = wallhack::api::serve(api_addr, state, tls_config).await {
+		if let Err(e) = wallhack_core::api::serve(api_addr, state, tls_config).await {
 			tracing::error!("REST API error: {e}");
 		}
 	});
@@ -1386,9 +1390,9 @@ fn start_api(
 fn build_quic_client_config(
 	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
-) -> wallhack::client::config::ClientConfig {
+) -> wallhack_core::client::config::ClientConfig {
 	let mtls = match (&global.cert, &global.key) {
-		(Some(cert), Some(key)) => Some(wallhack::client::config::MtlsConfig {
+		(Some(cert), Some(key)) => Some(wallhack_core::client::config::MtlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
 			ca_roots: global.ca.clone(),
@@ -1396,7 +1400,7 @@ fn build_quic_client_config(
 		_ => None,
 	};
 
-	wallhack::client::config::ClientConfig {
+	wallhack_core::client::config::ClientConfig {
 		addr: endpoint,
 		hostname: global.hostname.clone(),
 		mtls,

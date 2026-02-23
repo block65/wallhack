@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use protobuf::{
+use wallhack_wire::{
 	SocketAddrPair,
 	v2::{
 		ExitNodeResponse, EntryNodeInstruction, IcmpSendInstruction, TcpCloseInstruction,

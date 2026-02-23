@@ -8,7 +8,7 @@ use std::{str::FromStr, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use tokio::sync::broadcast;
 
-use wallhack::{
+use wallhack_core::{
 	NodeRole,
 	client::client::{Client, ConnectResult},
 	control::{handler::HandlerConfig, metrics::Metrics},
@@ -16,7 +16,7 @@ use wallhack::{
 };
 
 #[cfg(feature = "quic")]
-use wallhack::{client, server};
+use wallhack_core::{client, server};
 
 use crate::{
 	WallhackCli,
@@ -139,8 +139,8 @@ async fn run_downstream(
 	listen_spec: &crate::cli::AddressSpec,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
-	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+	upstream_instr: broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
 ) -> Result<()> {
 	match listen_spec.protocol {
 		Protocol::Udp => {
@@ -168,10 +168,10 @@ async fn run_downstream(
 }
 
 /// Bridge a downstream connection to upstream channels.
-fn bridge_downstream<T: wallhack::transport::Transport>(
+fn bridge_downstream<T: wallhack_core::transport::Transport>(
 	accept_result: AcceptResult<T>,
-	upstream_instr: &broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
-	upstream_resp: &broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+	upstream_instr: &broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
+	upstream_resp: &broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
 ) {
 	crate::info!("Downstream connected: {}", accept_result.peer_addr());
 
@@ -227,7 +227,7 @@ async fn connect_quic_upstream(
 	addr: std::net::SocketAddr,
 	psk: Option<&str>,
 	accept_fingerprint: Option<&str>,
-) -> Result<ConnectResult<wallhack::transport::quic::QuicTransport>> {
+) -> Result<ConnectResult<wallhack_core::transport::quic::QuicTransport>> {
 	let client_config = client::config::ClientConfig {
 		addr,
 		hostname: global.hostname.clone(),
@@ -268,8 +268,8 @@ async fn connect_ws_upstream(
 	addr: std::net::SocketAddr,
 	psk: Option<&str>,
 	accept_fingerprint: Option<&str>,
-) -> Result<ConnectResult<wallhack::transport::ws::WsTransport>> {
-	use wallhack::client::{
+) -> Result<ConnectResult<wallhack_core::transport::ws::WsTransport>> {
+	use wallhack_core::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
 	};
@@ -318,8 +318,8 @@ async fn run_quic_downstream(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
-	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+	upstream_instr: broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
 ) -> Result<()> {
 	let server_config = build_server_config(global, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
@@ -348,10 +348,10 @@ async fn run_ws_downstream(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
-	upstream_instr: broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
-	upstream_resp: broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+	upstream_instr: broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
+	upstream_resp: broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
 ) -> Result<()> {
-	use wallhack::server::ws::WsServer;
+	use wallhack_core::server::ws::WsServer;
 
 	let server_config = build_server_config(global, addr);
 	let mut server = WsServer::try_new(server_config, server_options)?;

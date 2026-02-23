@@ -131,9 +131,9 @@ pub(crate) struct Shared<D: Device> {
 /// # Examples
 ///
 /// ```no_run
-/// use netstack::async_stack::Netstack;
-/// use netstack::inner::device::VecDevice;
-/// use netstack::config::StackConfig;
+/// use wallhack_netstack::async_stack::Netstack;
+/// use wallhack_netstack::inner::device::VecDevice;
+/// use wallhack_netstack::config::StackConfig;
 /// use smoltcp::wire::{IpCidr, Ipv4Address};
 ///
 /// # async fn example() {

@@ -1,5 +1,5 @@
 [package]
-name = "exit_adapter"
+name = "wallhack-exit-adapter"
 version = "0.1.1"
 edition = "2024"
 
@@ -10,7 +10,7 @@ tracing = ["tokio/tracing"]
 
 [dependencies]
 anyhow = "1"
-protobuf = { path = "../protobuf" }
+wallhack-wire = { path = "../wire" }
 smoltcp = { version = "0.12", default-features = false, features = [
   "proto-ipv4",
   "proto-ipv6",

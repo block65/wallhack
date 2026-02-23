@@ -13,7 +13,7 @@ use std::{
 use anyhow::Result;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use wallhack::{
+use wallhack_core::{
 	NodeRole,
 	client::client::{Client, ConnectResult},
 	control::metrics::Metrics,
@@ -26,7 +26,7 @@ use wallhack::{
 };
 
 #[cfg(feature = "quic")]
-use wallhack::client::{self, config::ClientConfig, config::MtlsConfig};
+use wallhack_core::client::{self, config::ClientConfig, config::MtlsConfig};
 
 use crate::{
 	WallhackCli,
@@ -332,7 +332,7 @@ async fn run_listen_mode(
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
 ) -> Result<ExitAction> {
-	use wallhack::{
+	use wallhack_core::{
 		control::handler::HandlerConfig,
 		server::server::{Server, ServerOptions},
 	};
@@ -352,8 +352,10 @@ async fn run_listen_mode(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let server =
-					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+				let server = wallhack_core::server::quic::QuicServer::try_new(
+					server_config,
+					server_options,
+				)?;
 				let bound = server.local_addr()?;
 				crate::route_info!(printer, "Listening on {bound} ({})", server.protocol_name());
 				run_listen_server_loop(server, metrics, repl_rx, printer, bound, node_name).await
@@ -365,7 +367,7 @@ async fn run_listen_mode(
 			#[cfg(feature = "websocket")]
 			{
 				let server =
-					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
 				let bound = server.local_addr()?;
 				crate::route_info!(printer, "Listening on {bound} ({})", server.protocol_name());
 				run_listen_server_loop(server, metrics, repl_rx, printer, bound, node_name).await
@@ -607,7 +609,7 @@ async fn run_idle_mode(
 ///
 /// Returns `None` when the connection drops (caller should reconnect),
 /// or `Some(action)` when the user requested a mode transition via REPL.
-async fn run_exit_loop<T: wallhack::transport::Transport + 'static>(
+async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
 	connect_result: ConnectResult<T>,
 	metrics: &Arc<Metrics>,
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
@@ -774,7 +776,7 @@ where
 }
 
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
-	let init = read_length_delimited::<protobuf::v2::SessionInit, _>(stream, SESSION_INIT_MTU)
+	let init = read_length_delimited::<wallhack_wire::v2::SessionInit, _>(stream, SESSION_INIT_MTU)
 		.await
 		.map_err(|e| anyhow::anyhow!(e))?;
 	tracing::trace!(target = %init.target_addr, source = %init.source_addr, protocol = init.protocol, "SessionInit received");
@@ -785,11 +787,11 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 		Some(init.source_addr.parse()?)
 	};
 	match init.protocol {
-		val if val == protobuf::v2::SessionProtocol::Tcp as i32 => {
+		val if val == wallhack_wire::v2::SessionProtocol::Tcp as i32 => {
 			match tokio::net::TcpStream::connect(target).await {
 				Ok(mut socket) => {
-					let status = protobuf::v2::SessionStatus {
-						status: protobuf::v2::ResponseStatus::Success.into(),
+					let status = wallhack_wire::v2::SessionStatus {
+						status: wallhack_wire::v2::ResponseStatus::Success.into(),
 						reason: String::new(),
 					};
 					write_length_delimited(&mut *stream, &status)
@@ -800,11 +802,11 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				Err(e) => {
 					let status_code = match e.kind() {
 						std::io::ErrorKind::ConnectionRefused => {
-							protobuf::v2::ResponseStatus::ConnectionRefused
+							wallhack_wire::v2::ResponseStatus::ConnectionRefused
 						}
-						_ => protobuf::v2::ResponseStatus::HostUnreachable,
+						_ => wallhack_wire::v2::ResponseStatus::HostUnreachable,
 					};
-					let status = protobuf::v2::SessionStatus {
+					let status = wallhack_wire::v2::SessionStatus {
 						status: status_code.into(),
 						reason: e.to_string(),
 					};
@@ -813,7 +815,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				}
 			}
 		}
-		val if val == protobuf::v2::SessionProtocol::Udp as i32 => {
+		val if val == wallhack_wire::v2::SessionProtocol::Udp as i32 => {
 			// Note: source address is informational only, we don't bind to it
 			// because it may not exist in our namespace (same as TCP)
 			tracing::trace!(target = %target, source = ?source, "Processing UDP session");
@@ -1047,7 +1049,7 @@ async fn run_ws_exit(
 	printer: Option<&Printer>,
 	security: &SecurityConfig,
 ) -> Result<ExitAction> {
-	use wallhack::client::{
+	use wallhack_core::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
 	};
@@ -1172,7 +1174,7 @@ async fn run_quic_relay_capability(
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
 ) -> Result<ExitAction> {
-	use wallhack::{
+	use wallhack_core::{
 		control::handler::HandlerConfig,
 		server::server::{Server, ServerOptions},
 	};
@@ -1196,7 +1198,8 @@ async fn run_quic_relay_capability(
 	};
 
 	let server_config = build_server_config(global, listen_addr);
-	let mut server = wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
+	let mut server =
+		wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)?;
 	let bound = server.local_addr()?;
 	let proto = server.protocol_name();
 
@@ -1321,7 +1324,7 @@ async fn run_ws_relay_capability(
 	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
 	printer: Option<&Printer>,
 ) -> Result<ExitAction> {
-	use wallhack::{
+	use wallhack_core::{
 		client::{
 			config::ClientConfig,
 			ws::{WsClient, WsClientConfig},
@@ -1363,7 +1366,7 @@ async fn run_ws_relay_capability(
 	};
 
 	let server_config = build_server_config(global, listen_addr);
-	let mut server = wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
+	let mut server = wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
 	let bound = server.local_addr()?;
 	let proto = server.protocol_name();
 
@@ -1478,10 +1481,10 @@ async fn run_ws_relay_capability(
 }
 
 /// Bridge a peer connection to relay broadcast channels.
-fn bridge_peer<T: wallhack::transport::Transport>(
-	accept_result: wallhack::server::server::AcceptResult<T>,
-	relay_instr: &tokio::sync::broadcast::Sender<protobuf::v2::EntryNodeInstruction>,
-	relay_resp: &tokio::sync::broadcast::Sender<protobuf::v2::ExitNodeResponse>,
+fn bridge_peer<T: wallhack_core::transport::Transport>(
+	accept_result: wallhack_core::server::server::AcceptResult<T>,
+	relay_instr: &tokio::sync::broadcast::Sender<wallhack_wire::v2::EntryNodeInstruction>,
+	relay_resp: &tokio::sync::broadcast::Sender<wallhack_wire::v2::ExitNodeResponse>,
 ) {
 	tracing::debug!("Bridging peer connection: {}", accept_result.peer_addr());
 
@@ -1534,9 +1537,9 @@ fn bridge_peer<T: wallhack::transport::Transport>(
 fn build_server_config(
 	global: &WallhackCli,
 	addr: std::net::SocketAddr,
-) -> wallhack::server::config::ServerConfig {
+) -> wallhack_core::server::config::ServerConfig {
 	let tls = match (&global.cert, &global.key) {
-		(Some(cert), Some(key)) => Some(wallhack::server::config::TlsConfig {
+		(Some(cert), Some(key)) => Some(wallhack_core::server::config::TlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
 			ca_roots: global.ca.clone(),
@@ -1544,7 +1547,7 @@ fn build_server_config(
 		_ => None,
 	};
 
-	wallhack::server::config::ServerConfig {
+	wallhack_core::server::config::ServerConfig {
 		listen: addr,
 		tls,
 		psk: global.resolve_psk(),
@@ -1571,7 +1574,7 @@ fn parse_exit_repl_command(line: &str) -> ExitReplCommand {
 			),
 		},
 		"listen" => {
-			let default_listen = format!(":{}", wallhack::server::config::DEFAULT_LISTEN_PORT);
+			let default_listen = format!(":{}", wallhack_core::server::config::DEFAULT_LISTEN_PORT);
 			let addr = parts.next().map_or(default_listen, str::to_string);
 			ExitReplCommand::Listen(addr)
 		}
@@ -1594,7 +1597,7 @@ fn exit_peer_row(role: &str, addr: &str, uptime: &str) -> PeerRow {
 	}
 }
 
-fn print_exit_stats(metrics: &wallhack::control::metrics::Metrics, printer: &Printer) {
+fn print_exit_stats(metrics: &wallhack_core::control::metrics::Metrics, printer: &Printer) {
 	printer.print("Traffic Statistics:");
 	printer.print(format!(
 		"  Bytes In:     {}",

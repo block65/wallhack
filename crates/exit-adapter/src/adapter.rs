@@ -1,4 +1,4 @@
-use protobuf::{
+use wallhack_wire::{
 	SocketSet,
 	v2::{
 		self, RuntimeErrorResponse, TcpConnectionClosedResponse, TcpConnectionRefusedResponse,
@@ -31,7 +31,7 @@ pub enum RuntimeError {
 	InternalTimeout(#[from] tokio::time::error::Elapsed),
 
 	#[error("conversion error")]
-	ProtobufConversion(#[from] protobuf::ConversionError),
+	ProtobufConversion(#[from] wallhack_wire::ConversionError),
 	// #[error("smoltcp wire error")]
 	// SmoltcpWire(#[from] smoltcp::wire::Error),
 }

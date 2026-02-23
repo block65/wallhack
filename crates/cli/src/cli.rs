@@ -218,7 +218,7 @@ impl EntryCommand {
 			(Some(addr), None) => Ok(TransportDir::Listen(AddressSpec::parse(addr))),
 			(None, Some(addr)) => Ok(TransportDir::Connect(AddressSpec::parse(addr))),
 			(None, None) => {
-				let default_port = wallhack::server::config::DEFAULT_LISTEN_PORT;
+				let default_port = wallhack_core::server::config::DEFAULT_LISTEN_PORT;
 				Ok(TransportDir::Listen(AddressSpec::parse(&format!(
 					":{default_port}"
 				))))
@@ -499,7 +499,11 @@ impl AddressSpec {
 		if has_port {
 			addr.to_string()
 		} else {
-			format!("{}:{}", addr, wallhack::server::config::DEFAULT_LISTEN_PORT)
+			format!(
+				"{}:{}",
+				addr,
+				wallhack_core::server::config::DEFAULT_LISTEN_PORT
+			)
 		}
 	}
 }
@@ -520,7 +524,10 @@ mod tests {
 		let spec = AddressSpec::parse("attacker");
 		assert_eq!(
 			spec.addr,
-			format!("attacker:{}", wallhack::server::config::DEFAULT_LISTEN_PORT)
+			format!(
+				"attacker:{}",
+				wallhack_core::server::config::DEFAULT_LISTEN_PORT
+			)
 		);
 		assert_eq!(spec.protocol, Protocol::Udp);
 	}
@@ -544,7 +551,10 @@ mod tests {
 		let spec = AddressSpec::parse("host/tcp");
 		assert_eq!(
 			spec.addr,
-			format!("host:{}", wallhack::server::config::DEFAULT_LISTEN_PORT)
+			format!(
+				"host:{}",
+				wallhack_core::server::config::DEFAULT_LISTEN_PORT
+			)
 		);
 		assert_eq!(spec.protocol, Protocol::Tcp);
 	}
@@ -554,7 +564,10 @@ mod tests {
 		let spec = AddressSpec::parse("[::1]");
 		assert_eq!(
 			spec.addr,
-			format!("[::1]:{}", wallhack::server::config::DEFAULT_LISTEN_PORT)
+			format!(
+				"[::1]:{}",
+				wallhack_core::server::config::DEFAULT_LISTEN_PORT
+			)
 		);
 		assert_eq!(spec.protocol, Protocol::Udp);
 	}
