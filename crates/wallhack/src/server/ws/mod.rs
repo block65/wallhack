@@ -293,6 +293,10 @@ impl Server for WsServer {
 		Ok(())
 	}
 
+	fn protocol_name(&self) -> &'static str {
+		"WebSocket"
+	}
+
 	fn fingerprint(&self) -> &str {
 		&self.fingerprint
 	}

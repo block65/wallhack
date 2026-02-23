@@ -219,6 +219,10 @@ impl Server for QuicServer {
 		Ok(())
 	}
 
+	fn protocol_name(&self) -> &'static str {
+		"QUIC"
+	}
+
 	fn fingerprint(&self) -> &str {
 		&self.fingerprint
 	}
