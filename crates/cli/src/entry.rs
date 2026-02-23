@@ -37,6 +37,14 @@ use crate::{
 	net::{SocketAddrExt, parse_listen_addr},
 };
 
+/// Shared node resources passed through the entry server call stack.
+struct EntryResources {
+	metrics: Arc<Metrics>,
+	peers: Arc<Registry>,
+	routes: SharedRouteTable,
+	sessions: SessionManager,
+}
+
 /// Manages TUN sessions for connected exit nodes.
 ///
 /// Keeps TUN adapters alive between reconnections so exit nodes can reconnect
@@ -120,10 +128,12 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 		crate::version::built_info::PKG_VERSION
 	);
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
-	let sessions = SessionManager::default();
-	let metrics = Arc::new(Metrics::default());
-	let peers = Arc::new(Registry::new());
-	let routes = RouteTable::shared();
+	let res = EntryResources {
+		sessions: SessionManager::default(),
+		metrics: Arc::new(Metrics::default()),
+		peers: Arc::new(Registry::new()),
+		routes: RouteTable::shared(),
+	};
 
 	// Set up REPL once — shared across listen and connect modes.
 	let (repl_tx, repl_rx) = mpsc::channel::<ReplCommand>(16);
@@ -153,21 +163,10 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 			anyhow::bail!("Entry nodes do not support both --connect and --listen simultaneously")
 		}
 		TransportDir::Listen(spec) => {
-			run_entry_listen(
-				global,
-				cmd,
-				&spec,
-				metrics,
-				peers,
-				routes,
-				sessions,
-				&mut repl_rx,
-				&printer,
-			)
-			.await
+			run_entry_listen(global, cmd, &spec, res, &mut repl_rx, &printer).await
 		}
 		TransportDir::Connect(spec) => {
-			run_entry_connect(global, cmd, &spec, metrics, &mut repl_rx, &printer).await
+			run_entry_connect(global, cmd, &spec, res.metrics, &mut repl_rx, &printer).await
 		}
 	}
 }
@@ -177,10 +176,7 @@ async fn run_entry_listen(
 	global: &WallhackCli,
 	cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
-	metrics: Arc<Metrics>,
-	peers: Arc<Registry>,
-	routes: SharedRouteTable,
-	sessions: SessionManager,
+	res: EntryResources,
 	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
 	printer: &Printer,
 ) -> Result<()> {
@@ -188,9 +184,9 @@ async fn run_entry_listen(
 	let psk = global.resolve_psk();
 	let server_options = ServerOptions {
 		handler_config: HandlerConfig::new(NodeRole::Entry),
-		metrics: Some(Arc::clone(&metrics)),
-		peers: Some(Arc::clone(&peers)),
-		routes: Some(Arc::clone(&routes)),
+		metrics: Some(Arc::clone(&res.metrics)),
+		peers: Some(Arc::clone(&res.peers)),
+		routes: Some(Arc::clone(&res.routes)),
 	};
 	let server_config = build_server_config(global, addr, psk, cmd.max_peers);
 
@@ -200,9 +196,9 @@ async fn run_entry_listen(
 		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
 		start_api(
 			api_addr,
-			&metrics,
-			&peers,
-			&routes,
+			&res.metrics,
+			&res.peers,
+			&res.routes,
 			server_config.tls.clone(),
 			api_user,
 			api_secret,
@@ -215,10 +211,7 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
-				start_entry_server(
-					server, metrics, peers, routes, sessions, cmd, repl_rx, printer,
-				)
-				.await
+				start_entry_server(server, res, cmd, repl_rx, printer).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -230,10 +223,7 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
-				start_entry_server(
-					server, metrics, peers, routes, sessions, cmd, repl_rx, printer,
-				)
-				.await
+				start_entry_server(server, res, cmd, repl_rx, printer).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -248,10 +238,7 @@ async fn run_entry_listen(
 /// Announce the server and run the entry server loop.
 async fn start_entry_server<S: Server>(
 	server: S,
-	metrics: Arc<Metrics>,
-	peers: Arc<Registry>,
-	routes: SharedRouteTable,
-	sessions: SessionManager,
+	res: EntryResources,
 	cmd: &EntryCommand,
 	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
 	printer: &Printer,
@@ -262,17 +249,14 @@ where
 {
 	let local_addr = server.local_addr()?;
 	let proto = server.protocol_name();
-	crate::info!("Listening on {local_addr} ({proto})");
-	crate::info!("Certificate fingerprint: {}", server.fingerprint());
+	printer.info(format!("Listening on {local_addr} ({proto})"));
+	printer.info(format!("Certificate fingerprint: {}", server.fingerprint()));
 	if server.psk().is_none() {
-		crate::warn!("No authentication configured. Use --psk <SECRET> to require authentication.");
+		printer.warn("No authentication configured. Use --psk <SECRET> to require authentication.");
 	}
 	run_entry_server(
 		server,
-		metrics,
-		peers,
-		routes,
-		sessions,
+		res,
 		EntryListenOptions {
 			max_peers: cmd.max_peers,
 			fast_mode: cmd.fast,
@@ -644,10 +628,7 @@ struct EntryListenOptions {
 #[allow(clippy::too_many_lines)]
 async fn run_entry_server<S: Server>(
 	mut server: S,
-	metrics: Arc<Metrics>,
-	peers: Arc<Registry>,
-	routes: SharedRouteTable,
-	sessions: SessionManager,
+	res: EntryResources,
 	options: EntryListenOptions,
 	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
 	printer: &Printer,
@@ -656,6 +637,12 @@ where
 	S::Error: std::error::Error + Send + Sync + 'static,
 	S::Transport: Send + Sync + 'static,
 {
+	let EntryResources {
+		metrics,
+		peers,
+		routes,
+		sessions,
+	} = res;
 	let EntryListenOptions {
 		max_peers,
 		fast_mode,
