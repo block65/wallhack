@@ -6,7 +6,6 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use subtle::ConstantTimeEq;
 
@@ -26,7 +25,7 @@ use wallhack_core::{
 use wallhack_core::control::routes::RouteTable;
 
 use crate::{
-	WallhackCli,
+	NodeError, WallhackCli,
 	cli::{EntryCommand, Protocol, TransportDir},
 	net::{SocketAddrExt, parse_listen_addr},
 };
@@ -82,7 +81,7 @@ impl SessionManager {
 
 /// Create a TUN device, retrying on EBUSY to handle the race where the
 /// previous connection's `TunActor` hasn't been fully dropped yet.
-async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
+async fn create_tun_with_retry(name: String) -> Result<TunActor, NodeError> {
 	let mut attempts = 0;
 	loop {
 		match TunActor::new(Some(name.clone())) {
@@ -92,7 +91,7 @@ async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
 				tracing::debug!("TUN creation attempt {attempts} failed: {e}, retrying...");
 				tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 			}
-			Err(e) => return Err(e.into()),
+			Err(e) => return Err(NodeError::wrap(e)),
 		}
 	}
 }
@@ -114,13 +113,13 @@ pub async fn run(
 	metrics: Arc<Metrics>,
 	peers: Arc<Registry>,
 	routes: SharedRouteTable,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	let name = cmd.name();
 	tracing::info!(
 		"wallhack {}  {name}",
 		crate::version::built_info::PKG_VERSION
 	);
-	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
+	let transport = cmd.transport().map_err(NodeError::Config)?;
 	let res = EntryResources {
 		sessions: SessionManager::default(),
 		metrics,
@@ -129,9 +128,9 @@ pub async fn run(
 	};
 
 	match transport {
-		TransportDir::Both { .. } => {
-			anyhow::bail!("Entry nodes do not support both --connect and --listen simultaneously")
-		}
+		TransportDir::Both { .. } => Err(NodeError::Config(
+			"entry nodes do not support both --connect and --listen simultaneously".into(),
+		)),
 		TransportDir::Listen(spec) => run_entry_listen(global, cmd, &spec, res).await,
 		TransportDir::Connect(spec) => run_entry_connect(global, cmd, &spec, res.metrics).await,
 	}
@@ -143,7 +142,7 @@ async fn run_entry_listen(
 	cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
 	res: EntryResources,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	let addr = parse_listen_addr(&spec.addr)?;
 	let psk = global.resolve_psk();
 	let server_options = ServerOptions {
@@ -173,29 +172,27 @@ async fn run_entry_listen(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let server = wallhack_core::server::quic::QuicServer::try_new(
-					server_config,
-					server_options,
-				)?;
+				let server =
+					wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
+						.map_err(NodeError::wrap)?;
 				start_entry_server(server, res, cmd).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
-				anyhow::bail!("QUIC transport not available (compile with --features quic)");
+				Err(NodeError::TransportUnavailable("quic"))
 			}
 		}
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
 				let server =
-					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
+					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)
+						.map_err(NodeError::wrap)?;
 				start_entry_server(server, res, cmd).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
-				anyhow::bail!(
-					"WebSocket transport not available (compile with --features websocket)"
-				);
+				Err(NodeError::TransportUnavailable("websocket"))
 			}
 		}
 	}
@@ -206,7 +203,7 @@ async fn start_entry_server<S: Server>(
 	server: S,
 	res: EntryResources,
 	cmd: &EntryCommand,
-) -> Result<()>
+) -> Result<(), NodeError>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
 	S::Transport: Send + Sync + 'static,
@@ -239,17 +236,21 @@ async fn run_entry_connect(
 	cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
 	metrics: Arc<Metrics>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use std::str::FromStr;
 
 	tracing::info!("Connecting to {}...", spec.addr);
-	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
+	let resolvable =
+		crate::dns::ResolvableAddress::from_str(&spec.addr).map_err(NodeError::wrap)?;
 	let dns_server = global
 		.dns
 		.as_ref()
 		.map(|s| crate::dns::parse_str_to_addr(s))
-		.transpose()?;
-	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
+		.transpose()
+		.map_err(NodeError::wrap)?;
+	let endpoint = crate::dns::resolve(resolvable, dns_server)
+		.await
+		.map_err(NodeError::wrap)?;
 
 	// Start REST API if enabled (peers registry is unused in connect mode)
 	#[cfg(feature = "http-api")]
@@ -272,7 +273,7 @@ async fn run_entry_connect(
 				run_entry_connect_quic(global, endpoint, &peer_addr, &metrics, cmd.fast).await
 			}
 			#[cfg(not(feature = "quic"))]
-			anyhow::bail!("QUIC transport not available (compile with --features quic)")
+			Err(NodeError::TransportUnavailable("quic"))
 		}
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
@@ -280,7 +281,7 @@ async fn run_entry_connect(
 				run_entry_connect_ws(global, endpoint, &peer_addr, &metrics, cmd.fast).await
 			}
 			#[cfg(not(feature = "websocket"))]
-			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
+			Err(NodeError::TransportUnavailable("websocket"))
 		}
 	}
 }
@@ -292,7 +293,7 @@ async fn run_entry_connect_quic(
 	peer_addr: &str,
 	metrics: &Arc<Metrics>,
 	fast_mode: bool,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use std::time::Duration;
 	use wallhack_core::client::client::Client;
 	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -316,8 +317,9 @@ async fn run_entry_connect_quic(
 				tokio::time::sleep(RECONNECT_DELAY).await;
 			}
 			Err(e) => {
-				if is_nonretryable_error(&e) {
-					return Err(e).context("connection failed, not retrying");
+				if crate::is_nonretryable_error(&e) {
+					tracing::error!("Connection failed (not retrying): {e}");
+					return Err(NodeError::wrap(e));
 				}
 				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
@@ -334,7 +336,7 @@ async fn run_entry_connect_ws(
 	peer_addr: &str,
 	metrics: &Arc<Metrics>,
 	fast_mode: bool,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use std::time::Duration;
 	use wallhack_core::client::ws::{WsClient, WsClientConfig};
 	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -368,8 +370,9 @@ async fn run_entry_connect_ws(
 				tokio::time::sleep(RECONNECT_DELAY).await;
 			}
 			Err(e) => {
-				if is_nonretryable_error(&e) {
-					return Err(e).context("connection failed, not retrying");
+				if crate::is_nonretryable_error(&e) {
+					tracing::error!("Connection failed (not retrying): {e}");
+					return Err(NodeError::wrap(e));
 				}
 				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
@@ -385,7 +388,7 @@ async fn run_entry_connected<T: wallhack_core::transport::Transport + 'static>(
 	metrics: &Arc<Metrics>,
 	fast_mode: bool,
 	peer_addr: &str,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	tracing::info!("Connected to {peer_addr}");
 
 	let transport = connect_result.transport();
@@ -426,7 +429,7 @@ async fn run_entry_server<S: Server>(
 	mut server: S,
 	res: EntryResources,
 	options: EntryListenOptions,
-) -> Result<()>
+) -> Result<(), NodeError>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
 	S::Transport: Send + Sync + 'static,
@@ -555,7 +558,7 @@ pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 }
 
 // TODO: refactor into a ConnectionContext struct to reduce argument count
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 	metrics: Arc<Metrics>,
 	mut accept_result: wallhack_core::server::server::AcceptResult<T>,
@@ -566,7 +569,7 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 	server_psk: Option<String>,
 	fast_mode: bool,
 	peer_addr: String,
-) -> Result<String> {
+) -> Result<String, NodeError> {
 	// Get ExitNodeHello directly from accept result (already read during accept)
 	let peer = if let Some(hello) = accept_result.take_exit_hello() {
 		// Validate PSK if configured
@@ -577,7 +580,7 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 				|| !bool::from(token_bytes.ct_eq(expected_bytes))
 			{
 				tracing::warn!("Peer {} failed PSK authentication, dropping", hello.name);
-				anyhow::bail!("PSK authentication failed for peer {}", hello.name);
+				return Err(NodeError::PskAuth(hello.name));
 			}
 		}
 
@@ -663,7 +666,11 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 		tokio::select! {
 			result = &mut manager_handle => {
 				// Connection ended
-				result??;
+				match result {
+					Ok(Ok(())) => {}
+					Ok(Err(e)) => return Err(NodeError::wrap(e)),
+					Err(e) => return Err(NodeError::Internal(e.into())),
+				}
 				break;
 			}
 			Some(result_tx) = ping_rx.recv() => {
@@ -689,7 +696,7 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
 /// Send a ping via the control stream and measure round-trip time.
 async fn send_ping(
 	control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-) -> Result<f64> {
+) -> Result<f64, NodeError> {
 	use wallhack_wire::control::{ControlMessage, control_message};
 
 	#[allow(clippy::cast_possible_truncation)]
@@ -710,7 +717,7 @@ async fn send_ping(
 	control_tx
 		.send(ping_msg)
 		.await
-		.map_err(|_| anyhow::anyhow!("Control channel closed"))?;
+		.map_err(|_| NodeError::ChannelClosed)?;
 
 	Ok(start.elapsed().as_secs_f64() * 1000.0)
 }
@@ -820,16 +827,6 @@ fn build_quic_client_config(
 		bind: endpoint.bind_addr(),
 		..Default::default()
 	}
-}
-
-/// Check if an error is terminal and should not be retried.
-fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
-	let msg = err.to_string();
-	msg.contains("Fingerprint mismatch")
-		|| msg.contains("PSK authentication failed")
-		|| msg.contains("certificate")
-		|| msg.contains("CertificateRequired")
-		|| msg.contains("HandshakeFailure")
 }
 
 #[cfg(test)]

@@ -6,7 +6,6 @@
 
 use std::{str::FromStr, sync::Arc, time::Duration};
 
-use anyhow::Result;
 use tokio::io::AsyncWriteExt;
 
 use wallhack_core::{
@@ -25,7 +24,7 @@ use wallhack_core::{
 use wallhack_core::client::{self, config::ClientConfig, config::MtlsConfig};
 
 use crate::{
-	WallhackCli,
+	NodeError, WallhackCli,
 	cli::{ExitCommand, Protocol, TransportDir},
 	net::{SocketAddrExt, parse_listen_addr},
 };
@@ -53,8 +52,12 @@ struct SecurityConfig {
 /// # Errors
 ///
 /// Returns error if orchestrator fails (connection errors are retried).
-pub async fn run(global: &WallhackCli, cmd: &ExitCommand, metrics: Arc<Metrics>) -> Result<()> {
-	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
+pub async fn run(
+	global: &WallhackCli,
+	cmd: &ExitCommand,
+	metrics: Arc<Metrics>,
+) -> Result<(), NodeError> {
+	let transport = cmd.transport().map_err(NodeError::Config)?;
 	let name = cmd.name();
 	tracing::info!(
 		"wallhack {}  {name}",
@@ -83,17 +86,21 @@ async fn run_connect_mode(
 	spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
 	security: &SecurityConfig,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	tracing::info!("Connecting to {}...", spec.addr);
 
-	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
+	let resolvable =
+		crate::dns::ResolvableAddress::from_str(&spec.addr).map_err(NodeError::wrap)?;
 	let dns_server = global
 		.dns
 		.as_ref()
 		.map(|s| crate::dns::parse_str_to_addr(s))
-		.transpose()?;
+		.transpose()
+		.map_err(NodeError::wrap)?;
 
-	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
+	let endpoint = crate::dns::resolve(resolvable, dns_server)
+		.await
+		.map_err(NodeError::wrap)?;
 
 	match spec.protocol {
 		Protocol::Udp => {
@@ -103,7 +110,7 @@ async fn run_connect_mode(
 			}
 			#[cfg(not(feature = "quic"))]
 			{
-				anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
+				Err(NodeError::TransportUnavailable("quic"))
 			}
 		}
 		Protocol::Tcp => {
@@ -113,7 +120,7 @@ async fn run_connect_mode(
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
-				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
+				Err(NodeError::TransportUnavailable("websocket"))
 			}
 		}
 	}
@@ -126,16 +133,20 @@ async fn run_relay_capability_mode(
 	connect_spec: &crate::cli::AddressSpec,
 	listen_spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	tracing::info!("Connecting to {}...", connect_spec.addr);
-	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
+	let resolvable =
+		crate::dns::ResolvableAddress::from_str(&connect_spec.addr).map_err(NodeError::wrap)?;
 	let dns_server = global
 		.dns
 		.as_ref()
 		.map(|s| crate::dns::parse_str_to_addr(s))
-		.transpose()?;
+		.transpose()
+		.map_err(NodeError::wrap)?;
 
-	let peer_addr = crate::dns::resolve(resolvable, dns_server).await?;
+	let peer_addr = crate::dns::resolve(resolvable, dns_server)
+		.await
+		.map_err(NodeError::wrap)?;
 
 	let listen_addr = parse_listen_addr(&listen_spec.addr)?;
 
@@ -147,7 +158,7 @@ async fn run_relay_capability_mode(
 			}
 			#[cfg(not(feature = "quic"))]
 			{
-				anyhow::bail!("QUIC support not compiled in (enable 'quic' feature)")
+				Err(NodeError::TransportUnavailable("quic"))
 			}
 		}
 		Protocol::Tcp => {
@@ -157,7 +168,7 @@ async fn run_relay_capability_mode(
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
-				anyhow::bail!("WebSocket support not compiled in (enable 'websocket' feature)")
+				Err(NodeError::TransportUnavailable("websocket"))
 			}
 		}
 	}
@@ -169,7 +180,7 @@ async fn run_listen_mode(
 	_node_name: &str,
 	spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
 
 	let addr = parse_listen_addr(&spec.addr)?;
@@ -187,34 +198,37 @@ async fn run_listen_mode(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let server = wallhack_core::server::quic::QuicServer::try_new(
-					server_config,
-					server_options,
-				)?;
+				let server =
+					wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
+						.map_err(NodeError::wrap)?;
 				let bound = server.local_addr()?;
 				tracing::info!("Listening on {bound} ({})", server.protocol_name());
 				run_listen_server_loop(server, metrics).await
 			}
 			#[cfg(not(feature = "quic"))]
-			anyhow::bail!("QUIC transport not available (compile with --features quic)")
+			Err(NodeError::TransportUnavailable("quic"))
 		}
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
 				let server =
-					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
+					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)
+						.map_err(NodeError::wrap)?;
 				let bound = server.local_addr()?;
 				tracing::info!("Listening on {bound} ({})", server.protocol_name());
 				run_listen_server_loop(server, metrics).await
 			}
 			#[cfg(not(feature = "websocket"))]
-			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
+			Err(NodeError::TransportUnavailable("websocket"))
 		}
 	}
 }
 
 /// Server accept loop for listen-only mode.
-async fn run_listen_server_loop<S: Server>(mut server: S, metrics: &Arc<Metrics>) -> Result<()>
+async fn run_listen_server_loop<S: Server>(
+	mut server: S,
+	metrics: &Arc<Metrics>,
+) -> Result<(), NodeError>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
 	S::Transport: Send + Sync + 'static,
@@ -265,7 +279,7 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
 	connect_result: ConnectResult<T>,
 	metrics: &Arc<Metrics>,
 	peer_addr: &str,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	tracing::info!("Connected to {peer_addr}");
 
 	// Create syscall adapter for local network access
@@ -305,13 +319,13 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
 	Ok(())
 }
 
-async fn run_stream_listener<T: Transport>(transport: std::sync::Arc<T>) -> Result<()>
+async fn run_stream_listener<T: Transport>(transport: std::sync::Arc<T>) -> Result<(), NodeError>
 where
 	T::BiStream: 'static,
 {
 	tracing::trace!("Stream listener started");
 	loop {
-		let Some(mut stream) = transport.accept_bi().await? else {
+		let Some(mut stream) = transport.accept_bi().await.map_err(NodeError::wrap)? else {
 			return Ok(());
 		};
 		tracing::trace!("Accepted bi-stream from entry");
@@ -323,11 +337,11 @@ where
 	}
 }
 
-async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
+async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
 	let init =
 		read_length_delimited::<wallhack_wire::data::SessionInit, _>(stream, SESSION_INIT_MTU)
 			.await
-			.map_err(|e| anyhow::anyhow!(e))?;
+			.map_err(|e| NodeError::Internal(e.into()))?;
 	tracing::trace!(target = %init.target_addr, source = %init.source_addr, protocol = init.protocol, "SessionInit received");
 	let target: std::net::SocketAddr = init.target_addr.parse()?;
 	let source: Option<std::net::SocketAddr> = if init.source_addr.is_empty() {
@@ -345,7 +359,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 					};
 					write_length_delimited(&mut *stream, &status)
 						.await
-						.map_err(|e| anyhow::anyhow!(e))?;
+						.map_err(|e| NodeError::Internal(e.into()))?;
 					let _ = tokio::io::copy_bidirectional(&mut *stream, &mut socket).await?;
 				}
 				Err(e) => {
@@ -360,7 +374,9 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 						reason: e.to_string(),
 					};
 					let _ = write_length_delimited(&mut *stream, &status).await;
-					return Err(anyhow::anyhow!("connect to {target} failed: {e}"));
+					return Err(
+						std::io::Error::new(e.kind(), format!("connect to {target}: {e}")).into(),
+					);
 				}
 			}
 		}
@@ -408,7 +424,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 						tracing::trace!("UDP recv timeout");
 					}
 				}
-				stream.finish().await?;
+				stream.finish().await.map_err(NodeError::wrap)?;
 			}
 		}
 		_ => {
@@ -425,7 +441,7 @@ async fn run_quic_exit(
 	name: &str,
 	metrics: &Arc<Metrics>,
 	security: &SecurityConfig,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	let client_config = build_quic_client_config(
 		global,
 		endpoint,
@@ -452,7 +468,7 @@ async fn run_quic_exit(
 				retry_delay = INITIAL_RETRY_DELAY;
 			}
 			Err(e) => {
-				if is_nonretryable_error(&e) {
+				if crate::is_nonretryable_error(&e) {
 					tracing::warn!("Connection failed (not retrying): {e}");
 					return Ok(());
 				}
@@ -472,7 +488,7 @@ async fn run_ws_exit(
 	name: &str,
 	metrics: &Arc<Metrics>,
 	security: &SecurityConfig,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use wallhack_core::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
@@ -510,7 +526,7 @@ async fn run_ws_exit(
 				retry_delay = INITIAL_RETRY_DELAY;
 			}
 			Err(e) => {
-				if is_nonretryable_error(&e) {
+				if crate::is_nonretryable_error(&e) {
 					tracing::warn!("Connection failed (not retrying): {e}");
 					return Ok(());
 				}
@@ -558,14 +574,17 @@ async fn run_quic_relay_capability(
 	listen_addr: std::net::SocketAddr,
 	_node_name: &str,
 	metrics: &Arc<Metrics>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
 
 	// Connect to peer
 	let psk = global.resolve_psk();
 	let client_config = build_quic_client_config(global, peer_addr, String::new(), psk, None);
-	let mut client = client::quic::QuicClient::try_new(client_config)?;
-	let connect_result = client.connect(NodeRole::Exit).await?;
+	let mut client = client::quic::QuicClient::try_new(client_config).map_err(NodeError::wrap)?;
+	let connect_result = client
+		.connect(NodeRole::Exit)
+		.await
+		.map_err(NodeError::wrap)?;
 
 	tracing::info!("Connected to peer {peer_addr}");
 
@@ -581,7 +600,8 @@ async fn run_quic_relay_capability(
 
 	let server_config = build_server_config(global, listen_addr);
 	let mut server =
-		wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)?;
+		wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
+			.map_err(NodeError::wrap)?;
 	let bound = server.local_addr()?;
 	let proto = server.protocol_name();
 
@@ -616,7 +636,7 @@ async fn run_ws_relay_capability(
 	listen_addr: std::net::SocketAddr,
 	node_name: &str,
 	metrics: &Arc<Metrics>,
-) -> Result<()> {
+) -> Result<(), NodeError> {
 	use wallhack_core::{
 		client::{
 			config::ClientConfig,
@@ -643,8 +663,11 @@ async fn run_ws_relay_capability(
 		use_tls: true,
 	};
 
-	let mut client = WsClient::new(client_config)?;
-	let connect_result = client.connect(NodeRole::Exit).await?;
+	let mut client = WsClient::new(client_config).map_err(NodeError::wrap)?;
+	let connect_result = client
+		.connect(NodeRole::Exit)
+		.await
+		.map_err(NodeError::wrap)?;
 
 	tracing::info!("Connected to peer {peer_addr}");
 
@@ -659,7 +682,8 @@ async fn run_ws_relay_capability(
 	};
 
 	let server_config = build_server_config(global, listen_addr);
-	let mut server = wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
+	let mut server = wallhack_core::server::ws::WsServer::try_new(server_config, server_options)
+		.map_err(NodeError::wrap)?;
 	let bound = server.local_addr()?;
 	let proto = server.protocol_name();
 
@@ -760,14 +784,4 @@ fn build_server_config(
 		psk: global.resolve_psk(),
 		max_peers: None,
 	}
-}
-
-/// Check if an error is terminal and should not be retried.
-fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
-	let msg = err.to_string();
-	msg.contains("Fingerprint mismatch")
-		|| msg.contains("PSK authentication failed")
-		|| msg.contains("certificate")
-		|| msg.contains("CertificateRequired")
-		|| msg.contains("HandshakeFailure")
 }

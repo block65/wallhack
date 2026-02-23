@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
-use anyhow::{Context, Result};
+use crate::NodeError;
 
 /// Extension trait for `SocketAddr` providing address-family utilities.
 pub(crate) trait SocketAddrExt {
@@ -26,7 +26,7 @@ impl SocketAddrExt for SocketAddr {
 /// A bare `:port` is expanded to a full wildcard address: `[::]` on kernels
 /// with IPv6 support (dual-stack), `0.0.0.0` on IPv4-only kernels. Explicit
 /// addresses (IP literals or `hostname:port`) are resolved via DNS.
-pub(crate) fn parse_listen_addr(addr: &str) -> Result<SocketAddr> {
+pub(crate) fn parse_listen_addr(addr: &str) -> Result<SocketAddr, NodeError> {
 	let full_addr = if let Some(port) = addr.strip_prefix(':') {
 		// Bare port: probe IPv6 availability and pick the right wildcard.
 		if wallhack_core::client::config::ipv6_supported() {
@@ -40,7 +40,7 @@ pub(crate) fn parse_listen_addr(addr: &str) -> Result<SocketAddr> {
 
 	full_addr
 		.to_socket_addrs()
-		.with_context(|| format!("Invalid listen address: {full_addr}"))?
+		.map_err(|e| NodeError::Config(format!("invalid listen address {full_addr}: {e}")))?
 		.next()
-		.ok_or_else(|| anyhow::anyhow!("No addresses resolved for: {full_addr}"))
+		.ok_or_else(|| NodeError::NoAddresses(full_addr))
 }
