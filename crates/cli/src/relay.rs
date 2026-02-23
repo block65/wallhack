@@ -38,6 +38,13 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 ///
 /// Returns error if server fails (connection errors are retried).
 pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
+	crate::repl_common::mark_started();
+	let name = cmd.name();
+	crate::info!(
+		"wallhack {}  {name}",
+		crate::version::built_info::PKG_VERSION
+	);
+
 	let (connect_spec, listen_spec) = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 
 	// Parse listen address
@@ -54,22 +61,20 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 		routes: None,
 	};
 
-	// Resolve upstream target
-	crate::info!("Resolving upstream: {}", connect_spec.addr);
+	crate::info!("Connecting to {}...", connect_spec.addr);
 	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
+	tracing::debug!("Resolving {}...", connect_spec.addr);
 	let dns_server = global
 		.dns
 		.as_ref()
 		.map(|s| crate::dns::parse_str_to_addr(s))
 		.transpose()?;
 
+	let is_hostname = resolvable.hostname.parse::<std::net::IpAddr>().is_err();
 	let upstream_addr = crate::dns::resolve(resolvable, dns_server).await?;
-
-	crate::info!(
-		"Connecting to upstream: {} ({:?})",
-		upstream_addr,
-		connect_spec.protocol
-	);
+	if is_hostname {
+		crate::info!("Resolved {} as {}", connect_spec.addr, upstream_addr);
+	}
 
 	let psk = global.resolve_psk();
 
@@ -85,7 +90,6 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 				)
 				.await?;
 				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
-				crate::info!("Connected to upstream (QUIC)");
 				run_downstream(
 					global,
 					&listen_spec,
@@ -112,7 +116,6 @@ pub async fn run(global: &WallhackCli, cmd: &RelayCommand) -> Result<()> {
 				)
 				.await?;
 				let (upstream_instr, upstream_resp) = upstream_client.channels().clone();
-				crate::info!("Connected to upstream (WebSocket)");
 				run_downstream(
 					global,
 					&listen_spec,
@@ -251,7 +254,7 @@ async fn connect_quic_upstream(
 					e,
 					retry_delay
 				);
-				crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				crate::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
@@ -302,7 +305,7 @@ async fn connect_ws_upstream(
 					e,
 					retry_delay
 				);
-				crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				crate::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
@@ -320,7 +323,7 @@ async fn run_quic_downstream(
 ) -> Result<()> {
 	let server_config = build_server_config(global, addr);
 	let mut server = server::quic::QuicServer::try_new(server_config, server_options)?;
-	crate::info!("Listening on {} (QUIC/UDP)", server.local_addr()?);
+	crate::info!("Listening on {} (QUIC)", server.local_addr()?);
 
 	loop {
 		match server.accept(NodeRole::Relay).await {
@@ -352,7 +355,7 @@ async fn run_ws_downstream(
 
 	let server_config = build_server_config(global, addr);
 	let mut server = WsServer::try_new(server_config, server_options)?;
-	crate::info!("Listening on {} (WebSocket/TCP)", server.local_addr()?);
+	crate::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
 	loop {
 		match server.accept(NodeRole::Relay).await {
