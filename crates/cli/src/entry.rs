@@ -2,7 +2,7 @@
 //!
 //! The entry node creates a TUN interface and accepts connections from exit or
 //! relay nodes. It can either listen for incoming connections (default) or
-//! connect to a remote peer (reverse tunnel). Includes an interactive REPL
+//! connect to a remote peer. Includes an interactive REPL
 //! when stdin is a TTY.
 
 use std::{
@@ -114,7 +114,7 @@ const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(50
 /// Run as an entry node with interactive REPL.
 ///
 /// Creates TUN interface and either listens for downstream connections or
-/// connects to a remote peer (reverse tunnel). Runs an interactive REPL for
+/// connects to a remote peer. Runs an interactive REPL for
 /// control commands when stdin is a TTY.
 ///
 /// # Errors
@@ -249,10 +249,17 @@ where
 {
 	let local_addr = server.local_addr()?;
 	let proto = server.protocol_name();
-	printer.info(format!("Listening on {local_addr} ({proto})"));
-	printer.info(format!("Certificate fingerprint: {}", server.fingerprint()));
+	crate::route_info!(Some(printer), "Listening on {local_addr} ({proto})");
+	crate::route_info!(
+		Some(printer),
+		"Certificate fingerprint: {}",
+		server.fingerprint()
+	);
 	if server.psk().is_none() {
-		printer.warn("No authentication configured. Use --psk <SECRET> to require authentication.");
+		crate::route_warn!(
+			Some(printer),
+			"No authentication configured. Use --psk <SECRET> to require authentication."
+		);
 	}
 	run_entry_server(
 		server,

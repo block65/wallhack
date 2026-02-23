@@ -2,7 +2,7 @@
 //!
 //! The exit node processes incoming instructions by making syscalls to the
 //! local network. It can either connect to an upstream peer (default) or
-//! listen for incoming connections (reverse tunnel).
+//! listen for incoming connections.
 
 use std::{
 	str::FromStr,
@@ -323,7 +323,7 @@ async fn run_relay_capability_mode(
 	}
 }
 
-/// Run in listen-only mode (reverse tunnel) with REPL.
+/// Run in listen mode with REPL.
 async fn run_listen_mode(
 	global: &WallhackCli,
 	node_name: &str,

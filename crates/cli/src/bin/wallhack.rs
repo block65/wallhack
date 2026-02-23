@@ -1,12 +1,12 @@
 //! Wallhack binary entry point.
 //!
 //! Usage:
-//!   wallhack                                              # Entry, listen default port
-//!   wallhack entry --listen :6565                         # Entry, listen
-//!   wallhack entry --connect host:443                     # Entry, reverse tunnel
-//!   wallhack exit --connect host:6565                     # Exit, connect
-//!   wallhack exit --listen :443                           # Exit, reverse tunnel
-//!   wallhack relay --connect upstream:443 --listen :6565  # Relay
+//!   wallhack
+//!   wallhack entry --listen :6565
+//!   wallhack entry --connect host:443
+//!   wallhack exit --connect host:6565
+//!   wallhack exit --listen :443
+//!   wallhack relay --connect upstream:443 --listen :6565
 
 use std::io::IsTerminal;
 
