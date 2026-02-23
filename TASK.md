@@ -6,8 +6,8 @@
 ## Scope
 `crates/cli/` — `Cargo.toml`, `src/entry.rs`, `src/exit.rs`, `src/repl_common.rs`
 
-The `#[cfg(not(feature = "readline"))]` non-readline path must continue to work unchanged.
-The feature flag itself (`readline`) should be preserved with the same name.
+The `#[cfg(not(feature = "repl"))]` non-REPL path must continue to work unchanged.
+The feature flag is named `repl` (renamed from `readline` as part of this branch).
 
 ## Out of scope
 Core wallhack logic, transports, netstack, protobuf, website, bench.
@@ -92,10 +92,10 @@ Currently one `Printer` is used for both REPL command responses and background a
 events. With reedline's model, it may be necessary or desirable to separate these two
 concerns so each can be routed differently.
 
-### Readline feature gate
-The `readline` feature is referenced in `Cargo.toml` and guarded with
-`#[cfg(feature = "readline")]` in `entry.rs` and `exit.rs`. reedline must slot into
-the same feature gate — the `readline` name must not change.
+### REPL feature gate
+The `repl` feature (renamed from `readline` in this branch) is referenced in `Cargo.toml`
+and guarded with `#[cfg(feature = "repl")]` in `entry.rs` and `exit.rs`. reedline must
+slot into the same feature gate.
 
 ### Blocking thread model
 The readline loop runs in a `spawn_blocking` thread to avoid blocking the async runtime.
