@@ -1367,20 +1367,21 @@ fn start_api(
 	username: String,
 	secret: String,
 ) {
-	use wallhack_core::api::{Auth, State as ApiState};
+	use wallhack_api::{Auth, State as ApiState};
+	use wallhack_core::control::handler::Handler;
 
 	let handler_config = HandlerConfig::new(NodeRole::Entry);
-	let auth = Auth::new(username, secret);
-	let state = ApiState::new(
+	let handler = Handler::new(
 		handler_config,
 		Arc::clone(metrics),
 		Arc::clone(peers),
 		Arc::clone(routes),
-		auth,
 	);
+	let auth = Auth::new(username, secret);
+	let state = ApiState::new(Arc::new(handler), auth);
 
 	tokio::spawn(async move {
-		if let Err(e) = wallhack_core::api::serve(api_addr, state, tls_config).await {
+		if let Err(e) = wallhack_api::serve(api_addr, state, tls_config).await {
 			tracing::error!("REST API error: {e}");
 		}
 	});

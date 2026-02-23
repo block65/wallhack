@@ -15,8 +15,8 @@ dns-resolver = ["dep:hickory-resolver"]
 quic = ["wallhack-core/quic"]
 websocket = ["wallhack-core/websocket"]
 
-# REST API feature (forwarded to wallhack-core)
-http-api = ["wallhack-core/http-api"]
+# REST API feature
+http-api = ["dep:wallhack-api"]
 
 [dependencies]
 anstyle = "1"
@@ -38,6 +38,7 @@ thiserror = "2"
 tokio.workspace = true
 tracing.workspace = true
 wallhack-core = { path = "../core", default-features = false }
+wallhack-api = { path = "../api", optional = true }
 subtle = "2"
 console-subscriber = { workspace = true, optional = true }
 rand = { version = "0.9", default-features = false, features = [

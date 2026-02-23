@@ -246,21 +246,20 @@ impl Handler {
 	}
 }
 
-#[cfg(feature = "http-api")]
-impl crate::api::node_api::NodeApi for Handler {
-	fn peers(&self) -> Vec<crate::api::node_api::PeerInfo> {
+impl crate::node_api::NodeApi for Handler {
+	fn peers(&self) -> Vec<crate::node_api::PeerInfo> {
 		self.peers
 			.list()
 			.into_iter()
-			.map(|p| crate::api::node_api::PeerInfo {
+			.map(|p| crate::node_api::PeerInfo {
 				name: p.name,
 				addr: p.addr,
 				capability: if p.has_relay_capability {
-					crate::api::node_api::NodeCapability::Relay
+					crate::node_api::NodeCapability::Relay
 				} else {
-					crate::api::node_api::NodeCapability::Exit
+					crate::node_api::NodeCapability::Exit
 				},
-				status: crate::api::node_api::PeerStatus::Connected,
+				status: crate::node_api::PeerStatus::Connected,
 				connected_at_secs: p.connected_at.elapsed().as_secs(),
 				bytes_transferred: p.bytes_transferred,
 				latency_ms: p.latency_ms,
@@ -268,12 +267,12 @@ impl crate::api::node_api::NodeApi for Handler {
 			.collect()
 	}
 
-	fn routes(&self) -> crate::api::node_api::Result<Vec<crate::api::node_api::RouteEntry>> {
+	fn routes(&self) -> crate::node_api::Result<Vec<crate::node_api::RouteEntry>> {
 		Ok(self
 			.routes
 			.list()
 			.into_iter()
-			.map(|r| crate::api::node_api::RouteEntry {
+			.map(|r| crate::node_api::RouteEntry {
 				cidr: r.cidr,
 				peer: r.peer,
 				added_at: r.added_at,
@@ -281,8 +280,8 @@ impl crate::api::node_api::NodeApi for Handler {
 			.collect())
 	}
 
-	fn metrics(&self) -> crate::api::node_api::Metrics {
-		crate::api::node_api::Metrics {
+	fn metrics(&self) -> crate::node_api::Metrics {
+		crate::node_api::Metrics {
 			bytes_in: self.metrics.bytes_in.load(Ordering::Relaxed),
 			bytes_out: self.metrics.bytes_out.load(Ordering::Relaxed),
 			packets_in: self.metrics.packets_in.load(Ordering::Relaxed),
@@ -293,8 +292,8 @@ impl crate::api::node_api::NodeApi for Handler {
 		}
 	}
 
-	fn status(&self) -> crate::api::node_api::NodeStatus {
-		crate::api::node_api::NodeStatus {
+	fn status(&self) -> crate::node_api::NodeStatus {
+		crate::node_api::NodeStatus {
 			role: self.config.node_role,
 			connected: false,
 			peer_addr: None,
@@ -305,40 +304,40 @@ impl crate::api::node_api::NodeApi for Handler {
 		}
 	}
 
-	fn connect(&self, _addr: std::net::SocketAddr) -> crate::api::node_api::Result<()> {
-		Err(crate::api::node_api::NodeApiError::NotSupported)
+	fn connect(&self, _addr: std::net::SocketAddr) -> crate::node_api::Result<()> {
+		Err(crate::node_api::NodeApiError::NotSupported)
 	}
 
-	fn listen(&self, _addr: std::net::SocketAddr) -> crate::api::node_api::Result<()> {
-		Err(crate::api::node_api::NodeApiError::NotSupported)
+	fn listen(&self, _addr: std::net::SocketAddr) -> crate::node_api::Result<()> {
+		Err(crate::node_api::NodeApiError::NotSupported)
 	}
 
-	fn disconnect(&self) -> crate::api::node_api::Result<()> {
-		Err(crate::api::node_api::NodeApiError::NotSupported)
+	fn disconnect(&self) -> crate::node_api::Result<()> {
+		Err(crate::node_api::NodeApiError::NotSupported)
 	}
 
-	fn add_route(&self, cidr: crate::Cidr, peer: String) -> crate::api::node_api::Result<()> {
+	fn add_route(&self, cidr: crate::Cidr, peer: String) -> crate::node_api::Result<()> {
 		// Check if peer exists
 		if self.peers.get(&peer).is_none() {
-			return Err(crate::api::node_api::NodeApiError::PeerNotFound(peer));
+			return Err(crate::node_api::NodeApiError::PeerNotFound(peer));
 		}
 
 		self.routes.add(cidr, peer);
 		Ok(())
 	}
 
-	fn remove_route(&self, cidr: &crate::Cidr) -> crate::api::node_api::Result<()> {
+	fn remove_route(&self, cidr: &crate::Cidr) -> crate::node_api::Result<()> {
 		self.routes
 			.remove(cidr)
 			.map(|_| ())
-			.ok_or(crate::api::node_api::NodeApiError::RouteNotFound(*cidr))
+			.ok_or(crate::node_api::NodeApiError::RouteNotFound(*cidr))
 	}
 
-	fn disconnect_peer(&self, peer: String) -> crate::api::node_api::Result<()> {
+	fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
 		self.peers
 			.unregister(&peer)
 			.map(|_| ())
-			.ok_or(crate::api::node_api::NodeApiError::PeerNotFound(peer))
+			.ok_or(crate::node_api::NodeApiError::PeerNotFound(peer))
 	}
 }
 

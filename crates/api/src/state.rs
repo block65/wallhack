@@ -4,15 +4,9 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tokio::sync::broadcast;
+use wallhack_core::node_api::NodeApi;
 
-use crate::control::{
-	handler::{Handler, HandlerConfig},
-	metrics::SharedMetrics,
-	peers::SharedRegistry,
-	routes::SharedRouteTable,
-};
-
-use super::{auth::Auth, node_api::NodeApi};
+use super::auth::Auth;
 
 /// Event types for SSE stream.
 #[derive(Debug, Clone, Serialize)]
@@ -49,18 +43,12 @@ pub struct State {
 }
 
 impl State {
-	/// Create API state with handler and optional auth.
+	/// Create API state with a `NodeApi` implementation and optional auth.
 	#[must_use]
-	pub fn new(
-		handler_config: HandlerConfig,
-		metrics: SharedMetrics,
-		peers: SharedRegistry,
-		routes: SharedRouteTable,
-		auth: Auth,
-	) -> Self {
+	pub fn new(node_api: Arc<dyn NodeApi>, auth: Auth) -> Self {
 		let (events_tx, _) = broadcast::channel(256);
 		Self {
-			node_api: Arc::new(Handler::new(handler_config, metrics, peers, routes)),
+			node_api,
 			events_tx,
 			auth,
 		}
