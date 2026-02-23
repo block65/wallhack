@@ -8,6 +8,8 @@
 //!   wallhack exit --listen :443                           # Exit, reverse tunnel
 //!   wallhack relay --connect upstream:443 --listen :6565  # Relay
 
+use std::io::IsTerminal;
+
 use anyhow::Result;
 use cli::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
 use tracing::level_filters::LevelFilter;
@@ -16,9 +18,20 @@ use tracing::level_filters::LevelFilter;
 async fn main() -> Result<()> {
 	let cli = parse_cli();
 
+	// Initialize output config: enable colour only when stderr is a terminal.
+	cli::output::initialize_output_config(
+		cli::output::OutputFormat::Plain,
+		cli::OutputStyles::default(),
+		std::io::stderr().is_terminal(),
+	);
+
 	// Handle --version flag
 	if cli.version {
-		cli::version::print_version();
+		if cli.verbose {
+			cli::version::print_version_verbose();
+		} else {
+			cli::version::print_version_short();
+		}
 		return Ok(());
 	}
 
@@ -28,21 +41,13 @@ async fn main() -> Result<()> {
 	check_entropy_ready();
 
 	match &cli.command {
-		Some(Command::Entry(cmd)) => {
-			cli::info!("Starting as entry node");
-			run_entry(&cli, cmd).await
-		}
-		Some(Command::Relay(cmd)) => {
-			cli::info!("Starting as relay node");
-			run_relay(&cli, cmd).await
-		}
-		Some(Command::Exit(cmd)) => {
-			cli::info!("Starting as exit node");
-			run_exit(&cli, cmd).await
-		}
+		Some(Command::Entry(cmd)) => run_entry(&cli, cmd).await,
+		Some(Command::Relay(cmd)) => run_relay(&cli, cmd).await,
+		Some(Command::Exit(cmd)) => run_exit(&cli, cmd).await,
 		None => {
 			// Default: entry node listening on default port
 			let cmd = EntryCommand {
+				name: None,
 				listen: None,
 				connect: None,
 				api: None,
