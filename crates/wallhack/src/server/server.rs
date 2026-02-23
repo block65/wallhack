@@ -150,6 +150,9 @@ pub trait Server {
 	) -> impl std::future::Future<Output = Result<Option<AcceptResult<Self::Transport>>, Self::Error>>
 	+ Send;
 
+	/// Returns the human-readable protocol name (e.g. "QUIC", "WebSocket").
+	fn protocol_name(&self) -> &'static str;
+
 	/// Returns the certificate fingerprint for this server.
 	fn fingerprint(&self) -> &str;
 
