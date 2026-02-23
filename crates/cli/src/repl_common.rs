@@ -1,14 +1,45 @@
 //! Shared REPL infrastructure for all node types.
 
 use std::{
-	io::{IsTerminal, Write},
+	io::{BufRead, IsTerminal, Write},
 	time::Instant,
 };
 
 use tokio::sync::mpsc;
 
+#[cfg(feature = "repl")]
+use reedline::{
+	DefaultPrompt, DefaultPromptSegment, ExternalPrinter, FileBackedHistory, Reedline, Signal,
+};
+
 /// Node start time for uptime reporting (shared across node types).
 static NODE_STARTED_AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Global sink for tracing output when the interactive REPL is active.
+///
+/// When set, the tracing subscriber routes log lines through this channel
+/// instead of writing directly to stderr, preventing terminal corruption.
+static LOG_SINK: std::sync::OnceLock<mpsc::UnboundedSender<PrintMsg>> = std::sync::OnceLock::new();
+
+/// Install the global log sink. Call once when entering interactive REPL mode.
+///
+/// After this is called, [`emit_log`] routes messages through the channel
+/// instead of writing to stderr.
+pub fn install_log_sink(tx: mpsc::UnboundedSender<PrintMsg>) {
+	let _ = LOG_SINK.set(tx);
+}
+
+/// Emit a log line. Routes through the REPL printer if active, otherwise stderr.
+///
+/// Called by the tracing subscriber so log output goes through reedline's
+/// `ExternalPrinter` rather than writing raw bytes to the terminal.
+pub fn emit_log(line: String) {
+	if let Some(tx) = LOG_SINK.get() {
+		let _ = tx.send(PrintMsg::Text(line));
+	} else {
+		eprintln!("{line}");
+	}
+}
 
 /// Record the node start time. Call once at startup.
 pub fn mark_started() {
@@ -68,7 +99,7 @@ pub fn print_help(printer: &Printer) {
 	}
 }
 
-/// Wrapper for printing to terminal without disrupting readline.
+/// Wrapper for printing to terminal without disrupting reedline.
 #[derive(Clone)]
 pub struct Printer {
 	tx: mpsc::UnboundedSender<PrintMsg>,
@@ -88,23 +119,23 @@ impl Printer {
 
 	/// Signal that the current REPL command has finished producing output.
 	///
-	/// This is consumed by the readline thread to know all responses are queued
-	/// in `ExternalPrinter` before it draws the next prompt.
+	/// This is consumed by the reedline thread to know all responses are queued
+	/// before it draws the next prompt.
 	pub fn done(&self) {
 		let _ = self.tx.send(PrintMsg::Done);
 	}
 
-	/// Print an error message using the standard output formatting (readline-safe).
+	/// Print an error message using the standard output formatting (reedline-safe).
 	pub fn error(&self, msg: impl Into<String>) {
 		self.print_level(crate::output::Level::Error, msg);
 	}
 
-	/// Print a warning message using the standard output formatting (readline-safe).
+	/// Print a warning message using the standard output formatting (reedline-safe).
 	pub fn warn(&self, msg: impl Into<String>) {
 		self.print_level(crate::output::Level::Warn, msg);
 	}
 
-	/// Print an info message using the standard output formatting (readline-safe).
+	/// Print an info message using the standard output formatting (reedline-safe).
 	pub fn info(&self, msg: impl Into<String>) {
 		self.print_level(crate::output::Level::Info, msg);
 	}
@@ -123,7 +154,7 @@ impl Printer {
 ///
 /// Place at the top of each REPL command dispatch arm so that `continue`,
 /// `break`, and early `return` all reliably signal command completion to the
-/// readline thread.
+/// reedline thread.
 pub struct DoneGuard<'a>(pub &'a Printer);
 
 impl Drop for DoneGuard<'_> {
@@ -246,5 +277,125 @@ pub fn format_bytes(bytes: u64) -> String {
 		format!("{} {}", bytes, units[0])
 	} else {
 		format!("{:.2} {}", value, units[i])
+	}
+}
+
+/// Run the REPL input loop in a blocking thread.
+///
+/// If `repl` feature is enabled and stdin is a TTY, uses `reedline` for a rich
+/// interactive experience. Otherwise falls back to simple stdin reading.
+pub fn run_repl_input<T, F>(
+	prompt_name: &str,
+	tx: &mpsc::Sender<T>,
+	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,
+	parser: F,
+	is_quit: impl Fn(&T) -> bool,
+) where
+	T: Send + 'static,
+	F: Fn(&str) -> T + Send + 'static,
+{
+	#[cfg(feature = "repl")]
+	if is_interactive() {
+		let external_printer = ExternalPrinter::default();
+		let ep = external_printer.clone();
+
+		// Print thread: relay Text messages into reedline's ExternalPrinter.
+		std::thread::spawn(move || {
+			while let Some(msg) = print_rx.blocking_recv() {
+				match msg {
+					PrintMsg::Text(s) => {
+						let _ = ep.print(s);
+					}
+					PrintMsg::Done => {
+						// reedline flushes ExternalPrinter at the start of
+						// each read_line() call; the Done sentinel is not needed here.
+					}
+				}
+			}
+		});
+
+		let mut rl = Reedline::create().with_external_printer(external_printer);
+		if let Some(history) = std::env::var("HOME").ok().and_then(|home| {
+			FileBackedHistory::with_file(1000, (home + "/.wallhack_history").into()).ok()
+		}) {
+			rl = rl.with_history(Box::new(history));
+		}
+		let mut line_editor = rl;
+
+		let prompt = DefaultPrompt::new(
+			DefaultPromptSegment::Basic(prompt_name.to_string()),
+			DefaultPromptSegment::Empty,
+		);
+
+		loop {
+			match line_editor.read_line(&prompt) {
+				Ok(Signal::Success(line)) => {
+					let line = line.trim();
+					if line.is_empty() {
+						continue;
+					}
+					let cmd = parser(line);
+					let quit = is_quit(&cmd);
+					if tx.blocking_send(cmd).is_err() || quit {
+						break;
+					}
+				}
+				Ok(Signal::CtrlC) => {}
+				Ok(Signal::CtrlD) => {
+					let cmd = parser("quit");
+					let _ = tx.blocking_send(cmd);
+					break;
+				}
+				Err(e) => {
+					tracing::debug!("Readline error: {e}");
+					let cmd = parser("quit");
+					let _ = tx.blocking_send(cmd);
+					break;
+				}
+			}
+		}
+		return;
+	}
+
+	// Fallback/Headless mode: simple stdin reading
+	let stdin = std::io::stdin();
+	let mut stdout = std::io::stdout();
+
+	loop {
+		// In headless mode, we still need to process PrintMsg to avoid channel overflow
+		// and to know when a command is finished.
+		if is_interactive() {
+			print!("{prompt_name}> ");
+			let _ = stdout.flush();
+		}
+
+		let mut line = String::new();
+		match stdin.lock().read_line(&mut line) {
+			Ok(0) | Err(_) => {
+				let cmd = parser("quit");
+				let _ = tx.blocking_send(cmd);
+				break;
+			}
+			Ok(_) => {
+				let line = line.trim();
+				if line.is_empty() {
+					continue;
+				}
+
+				let cmd = parser(line);
+				let quit = is_quit(&cmd);
+				if tx.blocking_send(cmd).is_err() || quit {
+					break;
+				}
+
+				// Wait for the command to finish printing before showing the next prompt
+				while let Some(msg) = print_rx.blocking_recv() {
+					match msg {
+						PrintMsg::Text(s) => println!("{s}"),
+						PrintMsg::Done => break,
+					}
+				}
+			}
+		}
 	}
 }

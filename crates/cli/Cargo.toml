@@ -7,7 +7,7 @@ edition = "2024"
 default = ["quic", "websocket", "color", "repl", "http-api"]
 slim = ["quic", "websocket", "color"]
 color = []
-repl = ["dep:rustyline"]                             # Interactive REPL (history, completion)
+repl = ["dep:reedline"]                              # Interactive REPL (history, completion)
 tokio-console = ["dep:console-subscriber"]
 dns-resolver = ["dep:hickory-resolver"]
 
@@ -32,7 +32,7 @@ quinn = { version = "0.11", default-features = false, features = [
   "runtime-tokio",
   "rustls-ring",
 ] }
-rustyline = { version = "16", features = ["derive"], optional = true }
+reedline = { version = "0.45", default-features = false, features = ["external_printer"], optional = true }
 shlex = "1"
 thiserror = "2"
 tokio.workspace = true

@@ -70,7 +70,18 @@ reedline (the Nushell readline library) uses a fundamentally different model:
 4. Background async events (peer connect/disconnect) print cleanly without corrupting
    the prompt line.
 5. The non-REPL (`#[cfg(not(feature = "repl"))]`) path is unchanged.
-6. Document the binary size delta in this file once measured.
+6. Document the binary size delta in this file once measured. ✓
+
+## Binary size delta (measured 2026-02-23)
+
+| Variant | rustyline | reedline | delta |
+|---------|-----------|----------|-------|
+| default-glibc | 6,453,664 B (6.15M) | 6,606,736 B (6.30M) | +153,072 B (+2.37%) |
+| slim-glibc    | 4,950,144 B (4.72M) | 4,950,144 B (4.72M) | 0 (reedline not compiled) |
+
+The increase comes from reedline's `external_printer` feature pulling in crossbeam channel
+primitives. `default-features = false` is used; only `external_printer` is enabled.
+The slim build is unaffected (reedline is gated behind the `repl` feature, excluded from slim).
 
 ## Known challenges
 
