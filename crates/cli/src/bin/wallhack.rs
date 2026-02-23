@@ -2,19 +2,19 @@
 //!
 //! Communicates with a running `wallhackd` over a Unix domain socket.
 
-use wallhack_ctl::{
+use wallhack_cli::{
 	cli::{CtlCommand, RouteAction},
 	ipc, output,
 };
 use wallhack_wire::management::{
-	AddRouteRequest, ConnectRequest, DisconnectRequest, ListenRequest,
-	PeersRequest, PingRequest, RemoveRouteRequest, RoutesRequest, ShutdownRequest, StatsRequest,
-	StatusRequest, management_request,
+	AddRouteRequest, ConnectRequest, DisconnectRequest, ListenRequest, PeersRequest, PingRequest,
+	RemoveRouteRequest, RoutesRequest, ShutdownRequest, StatsRequest, StatusRequest,
+	management_request,
 };
 
 #[tokio::main]
 async fn main() {
-	let cli: wallhack_ctl::cli::Cli = argh::from_env();
+	let cli: wallhack_cli::cli::Cli = argh::from_env();
 
 	if let Err(e) = run(cli).await {
 		eprintln!("error: {e}");
@@ -22,7 +22,7 @@ async fn main() {
 	}
 }
 
-async fn run(cli: wallhack_ctl::cli::Cli) -> Result<(), output::CtlError> {
+async fn run(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlError> {
 	let mut stream = ipc::connect().await.map_err(ipc::IpcError::from)?;
 
 	let request = match cli.command {
