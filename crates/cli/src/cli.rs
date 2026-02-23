@@ -97,6 +97,10 @@ pub enum Command {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "entry")]
 pub struct EntryCommand {
+	/// name for this node; used for identification (random if omitted)
+	#[argh(option, short = 'n')]
+	pub name: Option<String>,
+
 	/// listen address for incoming connections (e.g. ":6565")
 	#[argh(option, short = 'l')]
 	pub listen: Option<String>,
@@ -151,6 +155,10 @@ pub struct ExitCommand {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "relay")]
 pub struct RelayCommand {
+	/// node name (default: random 8-char hex)
+	#[argh(option, short = 'n')]
+	pub name: Option<String>,
+
 	/// listen address for relay connections (e.g. ":6565")
 	#[argh(option, short = 'l')]
 	pub listen: Option<String>,
@@ -162,6 +170,14 @@ pub struct RelayCommand {
 	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
 	#[argh(option)]
 	pub accept_fingerprint: Option<String>,
+}
+
+/// Generate a random node name (8-character hex ID).
+fn generate_node_name() -> String {
+	use rand::Rng;
+	let mut rng = rand::rng();
+	let id: u32 = rng.random();
+	format!("{id:08x}")
 }
 
 // ============================================================================
@@ -183,6 +199,12 @@ pub enum TransportDir {
 }
 
 impl EntryCommand {
+	/// Returns the node name, generating a random one if not specified.
+	#[must_use]
+	pub fn name(&self) -> String {
+		self.name.clone().unwrap_or_else(generate_node_name)
+	}
+
 	/// Resolve the transport direction.
 	///
 	/// Defaults to listening on the default port when neither flag is provided.
@@ -238,16 +260,17 @@ impl ExitCommand {
 	/// Returns the peer name, generating a random one if not specified.
 	#[must_use]
 	pub fn name(&self) -> String {
-		self.name.clone().unwrap_or_else(|| {
-			use rand::Rng;
-			let mut rng = rand::rng();
-			let id: u32 = rng.random();
-			format!("{id:08x}")
-		})
+		self.name.clone().unwrap_or_else(generate_node_name)
 	}
 }
 
 impl RelayCommand {
+	/// Returns the node name, generating a random one if not specified.
+	#[must_use]
+	pub fn name(&self) -> String {
+		self.name.clone().unwrap_or_else(generate_node_name)
+	}
+
 	/// Resolve both transport directions.
 	///
 	/// Relay requires **both** `--listen` and `--connect`.
