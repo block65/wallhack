@@ -6,8 +6,13 @@ pub mod built_info {
 	include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-/// Print version information and exit.
-pub fn print_version() {
+/// Print short version string and exit (`wallhack <version>`).
+pub fn print_version_short() {
+	println!("wallhack {}", built_info::PKG_VERSION);
+}
+
+/// Print full version information with build metadata.
+pub fn print_version_verbose() {
 	println!("wallhack {}", built_info::PKG_VERSION);
 	println!("Built: {}", built_info::BUILT_TIME_UTC);
 
