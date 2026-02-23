@@ -6,12 +6,12 @@
 //! # Examples
 //!
 //! ```text
-//! wallhack                                         # entry, listen default port
-//! wallhack entry --listen :6565                    # entry, listen
-//! wallhack entry --connect host:443                # entry, reverse tunnel
-//! wallhack exit --connect host:6565                # exit, connect
-//! wallhack exit --listen :443                      # exit, reverse tunnel
-//! wallhack relay --connect up:443 --listen :6565   # relay, both required
+//! wallhack
+//! wallhack entry --listen :6565
+//! wallhack entry --connect host:443
+//! wallhack exit --connect host:6565
+//! wallhack exit --listen :443
+//! wallhack relay --connect up:443 --listen :6565
 //! ```
 
 use std::path::PathBuf;
@@ -105,7 +105,7 @@ pub struct EntryCommand {
 	#[argh(option, short = 'l')]
 	pub listen: Option<String>,
 
-	/// connect to a peer (e.g. "host:6565") for reverse tunnels
+	/// connect to a peer (e.g. "host:6565")
 	#[argh(option, short = 'c')]
 	pub connect: Option<String>,
 
@@ -134,7 +134,7 @@ pub struct EntryCommand {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "exit")]
 pub struct ExitCommand {
-	/// listen address for incoming connections (e.g. ":443") for reverse tunnels
+	/// listen address for incoming connections (e.g. ":443")
 	#[argh(option, short = 'l')]
 	pub listen: Option<String>,
 

@@ -63,6 +63,11 @@ Follow the rules in `./website/WRITING.md`
   peer-to-peer domain logic, do not use host, client, server, upstream,
   downstream, in, out, up, down, send, receive, local, or remote to describe
   data flows.
+- Prohibited terms (Concepts): Do not use "reverse tunnel", "connect mode", or
+  "listen mode". A node is not in a "mode" based on transport direction — it
+  simply has a transport direction: `--connect` (dial a peer) or `--listen`
+  (accept peers). Both are valid for any node role. The direction of the
+  transport connection is irrelevant to the topology.
 - Required terminology (Vectors): Describe mesh data flows using absolute paths
   (source, destination, target) and concrete entities (peer, tun, device).
 - Explicit identifiers: Code and logs must use explicit, fixed IDs (e.g., peer1,
