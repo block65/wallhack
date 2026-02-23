@@ -12,7 +12,7 @@ Before starting any work, read the following standards from the `standards/` sub
 - `crates/wallhack` — core logic
 - `crates/exit-adapter` — exit node adapter trait + sessions
 - `crates/transport`, `crates/netstack`, `crates/protobuf` — supporting crates
-- Slim build: `--no-default-features --features slim` (quic + websocket, no readline, no http-api)
+- Slim build: `--no-default-features --features slim` (quic + websocket, no repl, no http-api)
 - Default build: all features including `http-api` (axum REST API)
 - `wallhack` dep in `crates/cli` must have `default-features = false` for feature isolation to work
 - ICMP is `#[cfg(unix)]` only
@@ -37,12 +37,7 @@ Make decisions based on proof, not theory.
 
 ## Quality checks
 
-Run `just check` from the repo root before opening a PR. It covers:
-- `cargo fmt --check`
-- `cargo clippy --all-features`
-- cargo build (slim + default profiles)
-- `cargo test --all`
-- website lint (`biome check`) and build (`astro build`)
+Run `just check` from the repo root after finishing a task.
 
 ## OpenAPI spec
 
@@ -59,16 +54,11 @@ Follow the rules in `./website/WRITING.md`
   is allowed and expected when strictly interacting with underlying transport
   layers or standard APIs (e.g., initializing a QUIC connection, WebSocket
   servers, HTTP APIs).
-- Prohibited terms (Domain Logic): When writing mesh topology, routing, or
+- Prohibited terms (Domain Logic): When writing topology, routing, or
   peer-to-peer domain logic, do not use host, client, server, upstream,
-  downstream, in, out, up, down, send, receive, local, or remote to describe
+  downstream, in, out, up, down, send, receive, reverse, or forward to describe
   data flows.
-- Prohibited terms (Concepts): Do not use "reverse tunnel", "connect mode", or
-  "listen mode". A node is not in a "mode" based on transport direction — it
-  simply has a transport direction: `--connect` (dial a peer) or `--listen`
-  (accept peers). Both are valid for any node role. The direction of the
-  transport connection is irrelevant to the topology.
-- Required terminology (Vectors): Describe mesh data flows using absolute paths
+- Required terminology (Vectors): Describe data flows using absolute paths
   (source, destination, target) and concrete entities (peer, tun, device).
 - Explicit identifiers: Code and logs must use explicit, fixed IDs (e.g., peer1,
   dmz1, nodeA). Do not use network roles as variable names.
