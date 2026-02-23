@@ -7,7 +7,7 @@
 
 use std::{
 	collections::HashMap,
-	io::{IsTerminal, Write},
+	io::Write,
 	sync::{Arc, atomic::Ordering},
 };
 
@@ -95,13 +95,13 @@ async fn create_tun_with_retry(name: String) -> anyhow::Result<TunActor> {
 	}
 }
 
-#[cfg(feature = "repl")]
-use rustyline::ExternalPrinter;
-
 use crate::repl_common::{
 	DoneGuard, PeerRow, PrintMsg, Printer, format_duration, print_peer_table, print_version_info,
 	uptime,
 };
+
+/// Delay before reconnecting after an established session drops (entry connect mode).
+const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Run as an entry node with interactive REPL.
 ///
@@ -125,15 +125,49 @@ pub async fn run(global: &WallhackCli, cmd: &EntryCommand) -> Result<()> {
 	let peers = Arc::new(Registry::new());
 	let routes = RouteTable::shared();
 
+	// Set up REPL once — shared across listen and connect modes.
+	let (repl_tx, repl_rx) = mpsc::channel::<ReplCommand>(16);
+	let (print_tx, print_rx) = mpsc::unbounded_channel::<PrintMsg>();
+	let printer = Printer::new(print_tx.clone());
+
+	// Route tracing output through the printer when in interactive mode so
+	// reedline can flush it cleanly before drawing each prompt.
+	if crate::repl_common::is_interactive() {
+		crate::repl_common::install_log_sink(print_tx);
+	}
+
+	crate::info!("Type 'help' for commands, 'quit' to exit.");
+	std::thread::spawn(move || {
+		crate::repl_common::run_repl_input(
+			"wallhack",
+			&repl_tx,
+			print_rx,
+			parse_repl_command,
+			|cmd| matches!(cmd, ReplCommand::Quit),
+		);
+	});
+	let mut repl_rx = Some(repl_rx);
+
 	match transport {
 		TransportDir::Both { .. } => {
 			anyhow::bail!("Entry nodes do not support both --connect and --listen simultaneously")
 		}
 		TransportDir::Listen(spec) => {
-			run_entry_listen(global, cmd, &spec, metrics, peers, routes, sessions).await
+			run_entry_listen(
+				global,
+				cmd,
+				&spec,
+				metrics,
+				peers,
+				routes,
+				sessions,
+				&mut repl_rx,
+				&printer,
+			)
+			.await
 		}
 		TransportDir::Connect(spec) => {
-			run_entry_connect(global, cmd, &spec, metrics, peers, sessions).await
+			run_entry_connect(global, cmd, &spec, metrics, &mut repl_rx, &printer).await
 		}
 	}
 }
@@ -147,6 +181,8 @@ async fn run_entry_listen(
 	peers: Arc<Registry>,
 	routes: SharedRouteTable,
 	sessions: SessionManager,
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
 ) -> Result<()> {
 	let addr = parse_listen_addr(&spec.addr)?;
 	let psk = global.resolve_psk();
@@ -179,7 +215,10 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack::server::quic::QuicServer::try_new(server_config, server_options)?;
-				start_entry_server(server, metrics, peers, routes, sessions, cmd).await
+				start_entry_server(
+					server, metrics, peers, routes, sessions, cmd, repl_rx, printer,
+				)
+				.await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -191,7 +230,10 @@ async fn run_entry_listen(
 			{
 				let server =
 					wallhack::server::ws::WsServer::try_new(server_config, server_options)?;
-				start_entry_server(server, metrics, peers, routes, sessions, cmd).await
+				start_entry_server(
+					server, metrics, peers, routes, sessions, cmd, repl_rx, printer,
+				)
+				.await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -211,6 +253,8 @@ async fn start_entry_server<S: Server>(
 	routes: SharedRouteTable,
 	sessions: SessionManager,
 	cmd: &EntryCommand,
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
 ) -> Result<()>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
@@ -234,31 +278,28 @@ where
 			fast_mode: cmd.fast,
 			listen_info: format!("role:     entry\nlisten:   {local_addr} ({proto})"),
 		},
+		repl_rx,
+		printer,
 	)
 	.await
 }
 
-/// Run entry node in connect mode (reverse tunnel).
+/// Run entry node in connect mode with REPL support.
 ///
-/// Entry connects to a remote peer but still creates TUN and runs REPL.
+/// Mirrors exit.rs: DNS resolve once, then loop with `tokio::select!` between
+/// the connection attempt and REPL commands. Once connected, `run_entry_connected`
+/// handles both the live session and REPL via a nested `select!`.
 async fn run_entry_connect(
 	global: &WallhackCli,
 	cmd: &EntryCommand,
 	spec: &crate::cli::AddressSpec,
 	metrics: Arc<Metrics>,
-	peers: Arc<Registry>,
-	_sessions: SessionManager,
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
 ) -> Result<()> {
-	use std::{str::FromStr, time::Duration};
-	use wallhack::client::client::Client;
+	use std::str::FromStr;
 
-	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
-	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-	// Used only with the `api` feature.
-	let _ = (&cmd, &peers);
-
-	crate::info!("Connecting to {}...", spec.addr);
+	printer.info(format!("Connecting to {}...", spec.addr));
 	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
 	let dns_server = global
 		.dns
@@ -267,10 +308,11 @@ async fn run_entry_connect(
 		.transpose()?;
 	let endpoint = crate::dns::resolve(resolvable, dns_server).await?;
 
-	// Start REST API if enabled
+	// Start REST API if enabled (peers registry is unused in connect mode)
 	#[cfg(feature = "http-api")]
 	if let Some(api_addr) = cmd.api_addr() {
 		let tls = build_tls_config(global);
+		let peers = Arc::new(Registry::new());
 		let routes = RouteTable::shared();
 		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
 		start_api(
@@ -278,32 +320,16 @@ async fn run_entry_connect(
 		);
 	}
 
+	let peer_addr = endpoint.to_string();
+
 	match spec.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				let client_config = build_quic_client_config(global, endpoint);
-				let mut retry_delay = INITIAL_RETRY_DELAY;
-
-				loop {
-					let mut client =
-						wallhack::client::quic::QuicClient::try_new(client_config.clone())?;
-					match client.connect(NodeRole::Entry).await {
-						Ok(connect_result) => {
-							retry_delay = INITIAL_RETRY_DELAY;
-							handle_entry_connect_result(connect_result, &metrics, cmd.fast).await?;
-						}
-						Err(e) => {
-							if crate::repl_common::is_nonretryable_error(&e) {
-								return Err(e).context("connection failed, not retrying");
-							}
-							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
-							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
-							tokio::time::sleep(retry_delay).await;
-							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-						}
-					}
-				}
+				run_entry_connect_quic(
+					global, endpoint, &peer_addr, &metrics, cmd.fast, repl_rx, printer,
+				)
+				.await
 			}
 			#[cfg(not(feature = "quic"))]
 			anyhow::bail!("QUIC transport not available (compile with --features quic)")
@@ -311,40 +337,10 @@ async fn run_entry_connect(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				use wallhack::client::ws::{WsClient, WsClientConfig};
-
-				let client_config = WsClientConfig {
-					base: wallhack::client::config::ClientConfig {
-						addr: endpoint,
-						hostname: global.hostname.clone(),
-						mtls: None,
-						bind: endpoint.bind_addr(),
-						..Default::default()
-					},
-					path: "/ws".to_string(),
-					host_header: global.hostname.clone(),
-					use_tls: true,
-				};
-				let mut retry_delay = INITIAL_RETRY_DELAY;
-
-				loop {
-					let mut client = WsClient::new(client_config.clone())?;
-					match client.connect(NodeRole::Entry).await {
-						Ok(connect_result) => {
-							retry_delay = INITIAL_RETRY_DELAY;
-							handle_entry_connect_result(connect_result, &metrics, cmd.fast).await?;
-						}
-						Err(e) => {
-							if crate::repl_common::is_nonretryable_error(&e) {
-								return Err(e).context("connection failed, not retrying");
-							}
-							tracing::debug!("Connection failed: {e}, retrying in {retry_delay:?}");
-							crate::info!("Connection failed: {e}, retrying in {retry_delay:?}...");
-							tokio::time::sleep(retry_delay).await;
-							retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-						}
-					}
-				}
+				run_entry_connect_ws(
+					global, endpoint, &peer_addr, &metrics, cmd.fast, repl_rx, printer,
+				)
+				.await
 			}
 			#[cfg(not(feature = "websocket"))]
 			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
@@ -352,22 +348,153 @@ async fn run_entry_connect(
 	}
 }
 
-/// Handle a successful entry-side connect result by creating TUN + bridge.
-async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static>(
+#[cfg(feature = "quic")]
+async fn run_entry_connect_quic(
+	global: &WallhackCli,
+	endpoint: std::net::SocketAddr,
+	peer_addr: &str,
+	metrics: &Arc<Metrics>,
+	fast_mode: bool,
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
+) -> Result<()> {
+	use std::time::Duration;
+	use wallhack::client::client::Client;
+	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+	let client_config = build_quic_client_config(global, endpoint);
+	let mut retry_delay = INITIAL_RETRY_DELAY;
+
+	loop {
+		tokio::select! {
+			result = async {
+				let mut client = wallhack::client::quic::QuicClient::try_new(client_config.clone())?;
+				client.connect(NodeRole::Entry).await
+			} => {
+				match result {
+					Ok(connect_result) => {
+						retry_delay = INITIAL_RETRY_DELAY;
+						let quit = run_entry_connected(connect_result, metrics, fast_mode, repl_rx, printer, peer_addr).await?;
+						if quit { return Ok(()); }
+						printer.info(format!("Reconnecting in {RECONNECT_DELAY:?}..."));
+						tokio::time::sleep(RECONNECT_DELAY).await;
+					}
+					Err(e) => {
+						if crate::repl_common::is_nonretryable_error(&e) {
+							return Err(e).context("connection failed, not retrying");
+						}
+						printer.warn(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
+						tokio::time::sleep(retry_delay).await;
+						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+					}
+				}
+			}
+			cmd = async {
+				match repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				let _done = DoneGuard(printer);
+				if handle_connecting_repl_cmd(cmd, printer, metrics, peer_addr) {
+					return Ok(());
+				}
+			}
+		}
+	}
+}
+
+#[cfg(feature = "websocket")]
+async fn run_entry_connect_ws(
+	global: &WallhackCli,
+	endpoint: std::net::SocketAddr,
+	peer_addr: &str,
+	metrics: &Arc<Metrics>,
+	fast_mode: bool,
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
+) -> Result<()> {
+	use std::time::Duration;
+	use wallhack::client::ws::{WsClient, WsClientConfig};
+	const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+	const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+	let client_config = WsClientConfig {
+		base: wallhack::client::config::ClientConfig {
+			addr: endpoint,
+			hostname: global.hostname.clone(),
+			mtls: None,
+			bind: endpoint.bind_addr(),
+			..Default::default()
+		},
+		path: "/ws".to_string(),
+		host_header: global.hostname.clone(),
+		use_tls: true,
+	};
+	let mut retry_delay = INITIAL_RETRY_DELAY;
+
+	loop {
+		tokio::select! {
+			result = async {
+				let mut client = WsClient::new(client_config.clone())?;
+				client.connect(NodeRole::Entry).await
+			} => {
+				match result {
+					Ok(connect_result) => {
+						retry_delay = INITIAL_RETRY_DELAY;
+						let quit = run_entry_connected(connect_result, metrics, fast_mode, repl_rx, printer, peer_addr).await?;
+						if quit { return Ok(()); }
+						printer.info(format!("Reconnecting in {RECONNECT_DELAY:?}..."));
+						tokio::time::sleep(RECONNECT_DELAY).await;
+					}
+					Err(e) => {
+						if crate::repl_common::is_nonretryable_error(&e) {
+							return Err(e).context("connection failed, not retrying");
+						}
+						printer.warn(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
+						tokio::time::sleep(retry_delay).await;
+						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+					}
+				}
+			}
+			cmd = async {
+				match repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				let _done = DoneGuard(printer);
+				if handle_connecting_repl_cmd(cmd, printer, metrics, peer_addr) {
+					return Ok(());
+				}
+			}
+		}
+	}
+}
+
+/// Run the entry node session once connected, with REPL integration.
+///
+/// Returns `true` if the user requested quit, `false` if the session ended
+/// normally and the caller should reconnect.
+async fn run_entry_connected<T: wallhack::transport::Transport + 'static>(
 	connect_result: wallhack::client::client::ConnectResult<T>,
 	metrics: &Arc<Metrics>,
 	fast_mode: bool,
-) -> Result<()> {
-	crate::info!("Connected to {}", connect_result.peer_addr());
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
+	peer_addr: &str,
+) -> Result<bool> {
+	printer.info(format!("Connected to {peer_addr}"));
 
 	let transport = connect_result.transport();
 	let (instructions_tx, responses_tx) = connect_result.channels().clone();
 	let responses_rx = responses_tx.subscribe();
 	drop(responses_tx);
-	drop(connect_result); // releases channels.1 sender; background tasks hold their own clones
+	drop(connect_result);
 
 	let name = SessionManager::create_anonymous();
-	let actor = create_tun_with_retry(name.clone()).await?;
+	let actor = create_tun_with_retry(name).await?;
 	let (manager, _syn_proxy_state) = ConnectionManager::new(
 		actor,
 		transport,
@@ -376,9 +503,135 @@ async fn handle_entry_connect_result<T: wallhack::transport::Transport + 'static
 		instructions_tx,
 		responses_rx,
 	);
-	manager.run().await?;
 
-	Ok(())
+	let connected_at = std::time::Instant::now();
+	let mut manager_handle = tokio::spawn(async move { manager.run().await });
+
+	loop {
+		tokio::select! {
+			result = &mut manager_handle => {
+				match result {
+					Ok(Ok(())) => printer.info("Connection closed."),
+					Ok(Err(e)) => printer.warn(format!("Connection error: {e}")),
+					Err(e) => printer.warn(format!("Connection task failed: {e}")),
+				}
+				return Ok(false);
+			}
+			cmd = async {
+				match repl_rx {
+					Some(rx) => rx.recv().await,
+					None => std::future::pending().await,
+				}
+			} => {
+				let _done = DoneGuard(printer);
+				match cmd {
+					Some(ReplCommand::Quit) | None => {
+						manager_handle.abort();
+						return Ok(true);
+					}
+					Some(ReplCommand::Version) => print_version_info(printer),
+					Some(ReplCommand::Info) => {
+						printer.print("role:     entry (connect)");
+						printer.print(format!("connect:  {peer_addr}"));
+						printer.print(format!("uptime:   {}", uptime()));
+					}
+					Some(ReplCommand::Stats) => print_stats(metrics, printer),
+					Some(ReplCommand::Peers) => {
+						let row = PeerRow {
+							name: peer_addr.to_string(),
+							role: "exit".to_string(),
+							addr: peer_addr.to_string(),
+							latency: "N/A".to_string(),
+							uptime: format_duration(connected_at.elapsed()),
+							device: None,
+						};
+						print_peer_table(printer, &[row]);
+					}
+					Some(ReplCommand::Help) => crate::repl_common::print_help(printer),
+					Some(ReplCommand::NotApplicable(msg)) => printer.print(msg),
+					Some(ReplCommand::Ping(_) | ReplCommand::Disconnect(_)) => {
+						printer.print("Not available in connect mode.");
+					}
+					Some(
+						ReplCommand::RouteAdd(..)
+						| ReplCommand::RouteRemove(_)
+						| ReplCommand::RouteList,
+					) => {
+						printer.print("Route management requires listen mode.");
+					}
+					Some(ReplCommand::Unknown(cmd)) => {
+						printer.print(format!(
+							"Unknown command: {cmd}. Type 'help' for available commands."
+						));
+					}
+				}
+			}
+		}
+	}
+}
+
+/// Handle a REPL command while attempting to connect (not yet connected).
+///
+/// Returns `true` if quit was requested.
+fn handle_connecting_repl_cmd(
+	cmd: Option<ReplCommand>,
+	printer: &Printer,
+	metrics: &Arc<Metrics>,
+	peer_addr: &str,
+) -> bool {
+	match cmd {
+		Some(ReplCommand::Quit) | None => true,
+		Some(ReplCommand::Version) => {
+			print_version_info(printer);
+			false
+		}
+		Some(ReplCommand::Info) => {
+			printer.print("role:     entry (connect)");
+			printer.print(format!("connect:  {peer_addr} (connecting...)"));
+			printer.print(format!("uptime:   {}", uptime()));
+			false
+		}
+		Some(ReplCommand::Stats) => {
+			print_stats(metrics, printer);
+			false
+		}
+		Some(ReplCommand::Peers) => {
+			let row = PeerRow {
+				name: peer_addr.to_string(),
+				role: "exit".to_string(),
+				addr: peer_addr.to_string(),
+				latency: "N/A".to_string(),
+				uptime: "connecting...".to_string(),
+				device: None,
+			};
+			print_peer_table(printer, &[row]);
+			false
+		}
+		Some(ReplCommand::Help) => {
+			crate::repl_common::print_help(printer);
+			false
+		}
+		Some(ReplCommand::NotApplicable(msg)) => {
+			printer.print(msg);
+			false
+		}
+		Some(
+			ReplCommand::Ping(_)
+			| ReplCommand::Disconnect(_)
+			| ReplCommand::RouteAdd(..)
+			| ReplCommand::RouteRemove(_)
+			| ReplCommand::RouteList,
+		) => {
+			printer.print("Not connected yet.");
+			false
+		}
+		Some(ReplCommand::Unknown(cmd)) => {
+			printer.print(format!(
+				"Unknown command: {cmd}. Type 'help' for available commands."
+			));
+			false
+		}
+	}
 }
 
 struct EntryListenOptions {
@@ -396,6 +649,8 @@ async fn run_entry_server<S: Server>(
 	routes: SharedRouteTable,
 	sessions: SessionManager,
 	options: EntryListenOptions,
+	repl_rx: &mut Option<mpsc::Receiver<ReplCommand>>,
+	printer: &Printer,
 ) -> Result<()>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
@@ -410,29 +665,6 @@ where
 	let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(
 		max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
 	));
-
-	// Channel for REPL commands (input thread -> async loop)
-	let (repl_tx, repl_rx) = mpsc::channel::<ReplCommand>(16);
-
-	// Channel for async prints (async loop -> input thread)
-	let (print_tx, print_rx) = mpsc::unbounded_channel::<PrintMsg>();
-	let printer = Printer::new(print_tx);
-
-	// Only spawn REPL if stdin is a terminal (skip in headless/Docker mode)
-	let interactive = std::io::stdin().is_terminal();
-	let mut repl_rx = if interactive {
-		crate::info!("Type 'help' for commands, 'quit' to exit.");
-		let repl_metrics = Arc::clone(&metrics);
-		std::thread::spawn(move || {
-			run_repl_input(&repl_tx, repl_metrics, print_rx);
-		});
-		Some(repl_rx)
-	} else {
-		// Headless mode — drop REPL channels so senders don't block
-		drop(repl_tx);
-		drop(print_rx);
-		None
-	};
 
 	// Main loop: handle both server accepts and REPL commands
 	loop {
@@ -508,19 +740,19 @@ where
 
 			// Handle REPL commands (only if interactive)
 			cmd = async {
-				match &mut repl_rx {
+				match repl_rx {
 					Some(rx) => rx.recv().await,
 					None => std::future::pending().await,
 				}
 			} => {
-				let _done = DoneGuard(&printer);
+				let _done = DoneGuard(printer);
 				match cmd {
 					Some(ReplCommand::Quit) | None => {
 						printer.print("Shutting down...");
 						break;
 					}
 					Some(ReplCommand::Version) => {
-						print_version_info(&printer);
+						print_version_info(printer);
 					}
 					Some(ReplCommand::Info) => {
 						for line in listen_info.lines() {
@@ -562,10 +794,10 @@ where
 						}
 					}
 					Some(ReplCommand::Stats) => {
-						print_stats(&metrics, &printer);
+						print_stats(&metrics, printer);
 					}
 					Some(ReplCommand::Peers) => {
-						print_peers(&peers, &sessions, &printer);
+						print_peers(&peers, &sessions, printer);
 					}
 					Some(ReplCommand::NotApplicable(msg)) => {
 						printer.print(msg);
@@ -587,13 +819,13 @@ where
 								continue;
 							}
 						};
-						handle_route_add(&cidr, &peer, &routes, &sessions, &printer);
+						handle_route_add(&cidr, &peer, &routes, &sessions, printer);
 					}
 					Some(ReplCommand::RouteRemove(cidr)) => {
-						handle_route_remove(&cidr, &routes, &sessions, &printer);
+						handle_route_remove(&cidr, &routes, &sessions, printer);
 					}
 					Some(ReplCommand::RouteList) => {
-						handle_route_list(&routes, &sessions, &printer);
+						handle_route_list(&routes, &sessions, printer);
 					}
 					Some(ReplCommand::Disconnect(peer_opt)) => {
 						let peer_names = peers.peer_names();
@@ -609,10 +841,10 @@ where
 								continue;
 							}
 						};
-						handle_disconnect(&peer, &peers, &printer);
+						handle_disconnect(&peer, &peers, printer);
 					}
 					Some(ReplCommand::Help) => {
-						crate::repl_common::print_help(&printer);
+						crate::repl_common::print_help(printer);
 					}
 					Some(ReplCommand::Unknown(cmd)) => {
 						printer.print(format!(
@@ -645,121 +877,6 @@ enum ReplCommand {
 	Unknown(String),
 }
 
-/// Run the REPL input loop in a blocking thread (with rustyline).
-#[cfg(feature = "repl")]
-fn run_repl_input(
-	tx: &mpsc::Sender<ReplCommand>,
-	_metrics: Arc<Metrics>,
-	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,
-) {
-	let mut rl = match rustyline::DefaultEditor::new() {
-		Ok(rl) => rl,
-		Err(e) => {
-			crate::error!("Failed to initialize readline: {e}");
-			let _ = tx.blocking_send(ReplCommand::Quit);
-			return;
-		}
-	};
-
-	// External printer: used to display messages above the active prompt.
-	let mut ep = rl.create_external_printer().ok();
-
-	// done channel: print thread signals readline thread once each command's
-	// output has been queued in ExternalPrinter.
-	let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-
-	// Print thread: receives Text messages (queues into ExternalPrinter so they
-	// appear above the prompt) and Done messages (signals readline thread).
-	std::thread::spawn(move || {
-		while let Some(msg) = print_rx.blocking_recv() {
-			match msg {
-				PrintMsg::Text(s) => {
-					if let Some(ref mut p) = ep {
-						let _ = p.print(s);
-					} else {
-						println!("{s}");
-					}
-				}
-				PrintMsg::Done => {
-					let _ = done_tx.send(());
-				}
-			}
-		}
-	});
-
-	loop {
-		match rl.readline("wallhack> ") {
-			Ok(line) => {
-				let line = line.trim();
-				if line.is_empty() {
-					continue;
-				}
-
-				let _ = rl.add_history_entry(line);
-
-				let cmd = parse_repl_command(line);
-				let is_quit = matches!(cmd, ReplCommand::Quit);
-				if tx.blocking_send(cmd).is_err() || is_quit {
-					break;
-				}
-				// Wait for DoneGuard signal: all command response Text messages
-				// are now queued in ExternalPrinter. readline() will display them
-				// before drawing the next prompt.
-				let _ = done_rx.recv_timeout(std::time::Duration::from_millis(500));
-			}
-			Err(rustyline::error::ReadlineError::Interrupted) => {
-				// continue;
-			}
-			Err(rustyline::error::ReadlineError::Eof | _) => {
-				let _ = tx.blocking_send(ReplCommand::Quit);
-				break;
-			}
-		}
-	}
-}
-
-/// Run the REPL input loop in a blocking thread (simple stdin, no readline).
-#[cfg(not(feature = "repl"))]
-fn run_repl_input(
-	tx: &mpsc::Sender<ReplCommand>,
-	_metrics: Arc<Metrics>,
-	mut print_rx: mpsc::UnboundedReceiver<PrintMsg>,
-) {
-	use std::io::{BufRead, Write};
-
-	let stdin = std::io::stdin();
-	let mut stdout = std::io::stdout();
-
-	loop {
-		print!("wallhack> ");
-		let _ = stdout.flush();
-
-		let mut line = String::new();
-		match stdin.lock().read_line(&mut line) {
-			Ok(0) | Err(_) => {
-				let _ = tx.blocking_send(ReplCommand::Quit);
-				break;
-			}
-			Ok(_) => {
-				let line = line.trim();
-				if line.is_empty() {
-					continue;
-				}
-
-				let cmd = parse_repl_command(line);
-				let is_quit = matches!(cmd, ReplCommand::Quit);
-				if tx.blocking_send(cmd).is_err() || is_quit {
-					break;
-				}
-				// Drain response messages synchronously before showing next prompt.
-				while let Some(PrintMsg::Text(s)) = print_rx.blocking_recv() {
-					println!("{s}");
-				}
-			}
-		}
-	}
-}
-
 /// Parse a line into a REPL command.
 fn parse_repl_command(line: &str) -> ReplCommand {
 	let mut parts = line.split_whitespace();
@@ -775,12 +892,12 @@ fn parse_repl_command(line: &str) -> ReplCommand {
 		"peers" => ReplCommand::Peers,
 		"route" => parse_route_subcommand(arg.as_deref(), &mut parts),
 		"disconnect" => ReplCommand::Disconnect(arg),
-		"connect" => {
-			ReplCommand::NotApplicable("connect is only available for exit and relay nodes.")
-		}
-		"listen" => {
-			ReplCommand::NotApplicable("listen is only available for exit and relay nodes.")
-		}
+		"connect" => ReplCommand::NotApplicable(
+			"connect: use --connect <addr> at startup to set the target peer.",
+		),
+		"listen" => ReplCommand::NotApplicable(
+			"listen: use --listen <addr> at startup to set the bind address.",
+		),
 		"help" => ReplCommand::Help,
 		_ => ReplCommand::Unknown(line.to_string()),
 	}
