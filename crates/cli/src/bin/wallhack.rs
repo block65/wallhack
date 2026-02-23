@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 
 use anyhow::Result;
 use tracing::level_filters::LevelFilter;
-use wallhack_cli::{Command, EntryCommand, parse_cli, run_entry, run_exit, run_relay};
+use wallhack_cli::{Command, EntryCommand, parse_cli, start_entry, start_exit, start_relay};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -40,10 +40,10 @@ async fn main() -> Result<()> {
 	#[cfg(target_os = "linux")]
 	check_entropy_ready();
 
-	match &cli.command {
-		Some(Command::Entry(cmd)) => run_entry(&cli, cmd).await,
-		Some(Command::Relay(cmd)) => run_relay(&cli, cmd).await,
-		Some(Command::Exit(cmd)) => run_exit(&cli, cmd).await,
+	let handle = match &cli.command {
+		Some(Command::Entry(cmd)) => start_entry(&cli, cmd)?,
+		Some(Command::Relay(cmd)) => start_relay(&cli, cmd)?,
+		Some(Command::Exit(cmd)) => start_exit(&cli, cmd)?,
 		None => {
 			// Default: entry node listening on default port
 			let cmd = EntryCommand {
@@ -56,9 +56,11 @@ async fn main() -> Result<()> {
 				max_peers: None,
 				fast: false,
 			};
-			run_entry(&cli, &cmd).await
+			start_entry(&cli, &cmd)?
 		}
-	}
+	};
+
+	handle.wait().await
 }
 
 /// Warn if the kernel entropy pool isn't seeded yet.

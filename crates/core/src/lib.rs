@@ -13,6 +13,7 @@ pub mod types;
 // public
 pub mod client;
 pub mod control;
+pub mod daemon;
 pub mod entry;
 pub mod exit;
 pub mod node_api;

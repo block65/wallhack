@@ -1,121 +1,98 @@
-# Migrate readline from rustyline to reedline
+# Wallhack: Thin Client / Daemon Architecture Refactoring
 
 ## Branch
-`feat/reedline` — based on `feat/version-and-startup-ux`
+`refactor/rename-crates`
 
-## Scope
-`crates/cli/` — `Cargo.toml`, `src/entry.rs`, `src/exit.rs`, `src/repl_common.rs`
+> NOTE: you can ignore existing clippy problems that will benefit from the
+> refactor like "too many lines" or "too many arguments" just dont suppress
+> them, ignore them                   
+>
+> You may also omit any `just check` to avoid benchmarks
 
-The `#[cfg(not(feature = "repl"))]` non-REPL path must continue to work unchanged.
-The feature flag is named `repl` (renamed from `readline` as part of this branch).
+## Source plan
 
-## Out of scope
-Core wallhack logic, transports, netstack, protobuf, website, bench.
-Do not change command parsing, REPL command set, or output formatting.
+`/home/mholman/.claude/plans/adaptive-enchanting-sundae.md`
 
-## Why
+## Completed
+- **Phase 0a**: Rename all crates to `wallhack-*` prefix + move directories ✅
+- **Phase 0b**: Extract `wallhack_core::api` → `wallhack-api` crate ✅
+- **Phase 1a**: Define management protocol (`management.proto`) ✅
+- **Phase 1b+1c**: `DaemonHandle` + refactor node startup ✅
 
-### Problems with the current rustyline implementation
+### Crate layout (current)
+```
+crates/
+├── core/              name = "wallhack-core"           use wallhack_core::
+├── wire/              name = "wallhack-wire"            use wallhack_wire::
+├── transport/         name = "wallhack-transport"       use wallhack_transport::
+├── exit-adapter/      name = "wallhack-exit-adapter"    use wallhack_exit_adapter::
+├── netstack/          name = "wallhack-netstack"        use wallhack_netstack::
+├── api/               name = "wallhack-api"             ← Phase 0b (new crate)
+└── cli/               name = "wallhack-cli"             use wallhack_cli::
+```
 
-The current readline implementation is broken. No REPL commands produce visible output.
-The root cause is architectural: rustyline's `ExternalPrinter` only works correctly while
-`rl.readline()` is actively blocking for input. Command responses are generated *after*
-`readline()` returns (the command is sent to an async task, which processes it and sends
-responses back through the print channel). By that point, `readline()` is no longer active,
-so `ExternalPrinter` buffers the responses and only flushes them when `readline()` is called
-again for the next prompt — after the prompt has already been drawn.
+---
 
-Concrete symptoms observed:
-- Commands such as `peers`, `info`, `stats` produce no visible output
-- Connection event messages (`[+] Peer connected: ...`) interleave with command responses
-  in unpredictable order
-- The prompt appears before command responses, making the terminal look broken
+## Phase 0b: Extract `wallhack_core::api` → `wallhack-api` crate
 
-### The workaround that was attempted and failed
+Move `crates/core/src/api/` → `crates/api/src/` as a new crate.
 
-A `Done` sentinel (`PrintMsg::Done`) was introduced to signal command completion.
-The readline thread waits with `done_rx.recv_timeout(500ms)` after sending a command,
-hoping all response messages are queued in `ExternalPrinter` before the next
-`readline()` call draws the prompt. This does not fix the problem because:
+**What moves to `wallhack-api`:**
+- `mod.rs` → `lib.rs` (router, `serve()`, security middleware)
+- `handlers.rs` (axum route handlers)
+- `auth.rs` (auth middleware)
+- `state.rs` (`State`, `Event` types)
+- `validation.rs` (host header validation)
 
-- `ExternalPrinter` still buffers when `readline()` is not active — messages arrive
-  during the 500ms window but are not printed until the *next* `readline()` call
-- The 500ms is a heuristic; fast commands signal `Done` before the user sees anything
-- Background async events (peer connect/disconnect) arrive independently and race
-  against the command response window
-- The `DoneGuard` / `done_rx` machinery adds complexity and latency for zero benefit
+**What stays in `wallhack-core`:**
+- `node_api.rs` → moves to `crates/core/src/node_api.rs` (top-level module). This is the trait — it belongs in the core crate so both `wallhack-api` and direct library consumers can use it.
 
-### Why reedline fixes this
+**New crate dependencies:**
+- `wallhack-api` depends on: `wallhack-core` (for `NodeApi` trait + types), `axum`, `axum-server`, `tokio`, `tracing`
+- `wallhack-core` drops: `axum`, `axum-server` deps and the `http-api` feature flag
+- `wallhack-cli` depends on: `wallhack-api` (for REST, optional) and `wallhack-core` (for core types)
 
-reedline (the Nushell readline library) uses a fundamentally different model:
+**Verification:** `cargo fmt --all && cargo check --workspace`
 
-- At the start of each `read_line()` call, reedline **flushes all pending
-  `ExternalPrinter` messages before drawing the prompt**. This means command responses
-  sent to the printer after `read_line()` returned will always appear correctly above the
-  next prompt, regardless of async timing.
-- The `ExternalPrinter` channel is decoupled from the event loop — messages sent at any
-  time are buffered and printed at the correct moment.
-- Designed explicitly for async-friendly REPLs (Nushell is async throughout).
-- Signal handling (`Ctrl-C`, `Ctrl-D`) is first-class with a typed `Signal` return value.
-- Active development; rustyline is comparatively stagnant.
+---
 
-## Goals
+## Phase 1a: Define management protocol
 
-1. **Binary size check first — before any other work.** Measure the size delta of
-   adding reedline vs rustyline. If the delta is unacceptable the migration may be
-   abandoned or a lighter alternative chosen. Do not proceed to goal 2 until this
-   is confirmed acceptable.
-2. Replace rustyline with reedline in the `repl` feature path.
-3. All existing REPL commands produce correct output in the correct order.
-4. Background async events (peer connect/disconnect) print cleanly without corrupting
-   the prompt line.
-5. The non-REPL (`#[cfg(not(feature = "repl"))]`) path is unchanged.
-6. Document the binary size delta in this file once measured. ✓
+New file: `crates/wire/proto/management.proto`
 
-## Binary size delta (measured 2026-02-23)
+Length-delimited protobuf over Unix socket / named pipe. Bidirectional:
+- Consumers send `ManagementRequest` (with `request_id`)
+- Daemon sends `DaemonMessage` containing either a correlated `ManagementResponse` or an unsolicited `DaemonNotification`
 
-| Variant | rustyline | reedline | delta |
-|---------|-----------|----------|-------|
-| default-glibc | 6,453,664 B (6.15M) | 6,606,736 B (6.30M) | +153,072 B (+2.37%) |
-| slim-glibc    | 4,950,144 B (4.72M) | 4,950,144 B (4.72M) | 0 (reedline not compiled) |
+Key messages: Ping, Status, Stats, Peers, Routes, AddRoute, RemoveRoute, Connect, Listen, Disconnect, Shutdown.
 
-The increase comes from reedline's `external_printer` feature pulling in crossbeam channel
-primitives. `default-features = false` is used; only `external_printer` is enabled.
-The slim build is unaffected (reedline is gated behind the `repl` feature, excluded from slim).
+---
 
-## Known challenges
+## Phase 1b+1c: `DaemonHandle` + refactor node startup
 
-### Binary size
-reedline pulls in more dependencies than rustyline. The slim build (`--features slim`,
-no readline) must be unaffected. The full build will grow; the question is how much.
-`cargo bloat --release --crates` can give per-crate size breakdown.
+Create `crates/core/src/daemon.rs` with `DaemonHandle` struct.
+Refactor entry/exit `run()` to spawn into a task and return the handle instead of blocking.
 
-### PrintMsg / DoneGuard compatibility
-The current `PrintMsg { Text(String), Done }` enum and `DoneGuard` RAII were designed
-as a rustyline workaround. With reedline the `Done` sentinel may become unnecessary for
-command responses. However, the non-readline path also uses `PrintMsg` and must continue
-to work. Changing `PrintMsg` affects both paths.
+---
 
-### Printer channel type
-`Printer` wraps `mpsc::UnboundedSender<PrintMsg>`. reedline's `ExternalPrinter` accepts
-`String` not `PrintMsg`. The channel and `Printer` abstraction will need to bridge these.
+## Phase 1d: IPC listener
 
-### Single vs two printers
-Currently one `Printer` is used for both REPL command responses and background async
-events. With reedline's model, it may be necessary or desirable to separate these two
-concerns so each can be routed differently.
+`crates/core/src/ipc.rs` — accepts connections on Unix domain socket, reads `ManagementRequest`, dispatches to `NodeApi`, writes `ManagementResponse`.
 
-### REPL feature gate
-The `repl` feature (renamed from `readline` in this branch) is referenced in `Cargo.toml`
-and guarded with `#[cfg(feature = "repl")]` in `entry.rs` and `exit.rs`. reedline must
-slot into the same feature gate.
+Socket path: `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock` (fallback `/tmp/wallhack-$UID/wallhackd.sock`)
 
-### Blocking thread model
-The readline loop runs in a `spawn_blocking` thread to avoid blocking the async runtime.
-reedline's `read_line()` is synchronous, so this model is preserved. Verify that
-reedline does not spawn its own tokio runtime or conflict with the existing one.
+---
 
-### History, completions, hints
-rustyline history (`add_history_entry`) is used today. reedline has its own history API.
-Completions and hints are not implemented today — preserve the same capability gap; do
-not add them as part of this migration.
+## Phase 2: Daemon binary + thin CLI
+
+- `wallhackd` daemon: parses args → calls library → gets `DaemonHandle` → starts IPC listener → optionally starts REST API → runs until signal
+- `wallhack` thin CLI: parse command → connect to Unix socket → send `ManagementRequest` → read `ManagementResponse` → display. Auto-start `wallhackd` if socket not found.
+
+CLI depends only on `wallhack-wire` + `tokio`. No axum, no HTTP deps.
+
+---
+
+## Naming convention
+- "client/server" only for things that are objectively servers (QUIC, WebSocket)
+- Daemon/CLI relationship uses "daemon" and "CLI" or "REST API" terminology - avoid "client" when possible. Stop and ask if unsure.
+- No Cargo aliases — `use wallhack_wire::` everywhere

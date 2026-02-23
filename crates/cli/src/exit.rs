@@ -126,7 +126,7 @@ fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer
 /// # Errors
 ///
 /// Returns error if orchestrator fails (connection errors are retried).
-pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
+pub async fn run(global: &WallhackCli, cmd: &ExitCommand, metrics: Arc<Metrics>) -> Result<()> {
 	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let name = cmd.name();
@@ -134,7 +134,6 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand) -> Result<()> {
 		"wallhack {}  {name}",
 		crate::version::built_info::PKG_VERSION
 	);
-	let metrics = Arc::new(Metrics::default());
 	let security = SecurityConfig {
 		psk: global.resolve_psk(),
 		accept_fingerprint: cmd.accept_fingerprint.clone(),

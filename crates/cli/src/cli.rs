@@ -22,7 +22,7 @@ use argh::FromArgs;
 ///
 /// Defaults to entry mode listening on the default port when invoked without a subcommand.
 #[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
-#[derive(FromArgs, Debug)]
+#[derive(FromArgs, Debug, Clone)]
 pub struct WallhackCli {
 	/// TLS certificate file
 	#[argh(option)]
@@ -85,7 +85,7 @@ pub struct WallhackCli {
 }
 
 /// Subcommand that determines the node role.
-#[derive(FromArgs, Debug)]
+#[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand)]
 pub enum Command {
 	Entry(EntryCommand),
@@ -94,7 +94,7 @@ pub enum Command {
 }
 
 /// Entry node: creates TUN interface, routes traffic, runs interactive REPL.
-#[derive(FromArgs, Debug)]
+#[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand, name = "entry")]
 pub struct EntryCommand {
 	/// name for this node; used for identification (random if omitted)
@@ -131,7 +131,7 @@ pub struct EntryCommand {
 }
 
 /// Exit node: makes syscalls to the local network on behalf of the tunnel.
-#[derive(FromArgs, Debug)]
+#[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand, name = "exit")]
 pub struct ExitCommand {
 	/// listen address for incoming connections (e.g. ":443")
@@ -152,7 +152,7 @@ pub struct ExitCommand {
 }
 
 /// Relay node: forwards traffic between peers.
-#[derive(FromArgs, Debug)]
+#[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand, name = "relay")]
 pub struct RelayCommand {
 	/// node name (default: random 8-char hex)
