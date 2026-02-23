@@ -8,8 +8,6 @@
 //!   wallhackd exit --listen :443
 //!   wallhackd relay --connect upstream:443 --listen :6565
 
-use std::io::IsTerminal;
-
 use anyhow::Result;
 use tracing::level_filters::LevelFilter;
 use wallhackd::{Command, EntryCommand, parse_cli, start_entry, start_exit, start_relay};
@@ -17,13 +15,6 @@ use wallhackd::{Command, EntryCommand, parse_cli, start_entry, start_exit, start
 #[tokio::main]
 async fn main() -> Result<()> {
 	let cli = parse_cli();
-
-	// Initialize output config: enable colour only when stderr is a terminal.
-	wallhackd::output::initialize_output_config(
-		wallhackd::output::OutputFormat::Plain,
-		wallhackd::OutputStyles::default(),
-		std::io::stderr().is_terminal(),
-	);
 
 	// Handle --version flag
 	if cli.version {
@@ -78,16 +69,10 @@ async fn main() -> Result<()> {
 }
 
 /// Warn if the kernel entropy pool isn't seeded yet.
-///
-/// `getrandom(2)` blocks until the CRNG has 256 bits of entropy, which can take a
-/// long time on systems with limited entropy sources — causing silent hangs in crypto
-/// startup code. Probing once here makes the wait visible.
 #[cfg(target_os = "linux")]
 fn check_entropy_ready() {
 	use std::{io::Read, os::unix::fs::OpenOptionsExt};
 
-	// O_NONBLOCK (0x800) on the /dev/random fd is the same CRNG-readiness check
-	// that getrandom(GRND_NONBLOCK) uses internally, with no unsafe required.
 	let Ok(mut f) = std::fs::OpenOptions::new()
 		.read(true)
 		.custom_flags(0x800)
@@ -100,7 +85,7 @@ fn check_entropy_ready() {
 	if let Err(e) = f.read(&mut buf)
 		&& e.kind() == std::io::ErrorKind::WouldBlock
 	{
-		wallhackd::warn!("Entropy pool not yet seeded — startup may stall.");
+		tracing::warn!("Entropy pool not yet seeded — startup may stall.");
 	}
 }
 
@@ -116,7 +101,7 @@ fn setup_tracing(cli: &wallhackd::WallhackCli) {
 			cli.debug_filter.as_deref().unwrap_or(""),
 		)
 	} else {
-		// No internal tracing by default — user-facing output uses wallhackd::info!/error!
+		// No internal tracing by default
 		(LevelFilter::OFF, "")
 	};
 

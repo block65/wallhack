@@ -66,7 +66,7 @@ impl Subscriber for SimpleSubscriber {
 			Level::DEBUG => "DEBUG",
 			Level::TRACE => "TRACE",
 		};
-		crate::repl_common::emit_log(format!("[{tag}] {module}: {}", visitor.0));
+		eprintln!("[{tag}] {module}: {}", visitor.0);
 	}
 
 	fn enter(&self, _span: &tracing::span::Id) {}

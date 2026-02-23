@@ -2,8 +2,6 @@
 
 pub mod cli;
 pub mod dns;
-pub mod output;
-pub mod repl_common;
 pub mod subscriber;
 pub mod version;
 
@@ -12,10 +10,7 @@ mod exit;
 mod net;
 mod relay;
 
-mod styles;
-
 pub use cli::{Command, EntryCommand, ExitCommand, RelayCommand, WallhackCli, parse_cli};
-pub use styles::OutputStyles;
 
 use std::sync::Arc;
 
@@ -31,6 +26,20 @@ use wallhack_core::{
 	daemon::DaemonHandle,
 	node_api::NodeApi,
 };
+
+/// Check if an error is terminal and should not be retried.
+///
+/// Authentication failures and certificate mismatches indicate a configuration
+/// problem — retrying won't help and just creates noise.
+#[must_use]
+pub fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
+	let msg = err.to_string();
+	msg.contains("Fingerprint mismatch")
+		|| msg.contains("PSK authentication failed")
+		|| msg.contains("certificate")
+		|| msg.contains("CertificateRequired")
+		|| msg.contains("HandshakeFailure")
+}
 
 // ============================================================================
 // Daemon handle constructors

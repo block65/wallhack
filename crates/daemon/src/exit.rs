@@ -2,16 +2,12 @@
 //!
 //! The exit node processes incoming instructions by making syscalls to the
 //! local network. It can either connect to an upstream peer (default) or
-//! listen for incoming connections.
+//! listen for incoming connections. The daemon is headless — no REPL, no TTY.
 
-use std::{
-	str::FromStr,
-	sync::{Arc, atomic::Ordering},
-	time::{Duration, Instant},
-};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::io::AsyncWriteExt;
 
 use wallhack_core::{
 	NodeRole,
@@ -37,46 +33,11 @@ use crate::{
 /// Initial retry delay for connection attempts (peer not yet listening).
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(50);
 /// Delay before reconnecting after an established session drops.
-/// Separate from `INITIAL_RETRY_DELAY` to provide storm protection without
-/// penalising the initial connect race.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// Maximum retry delay (caps exponential backoff).
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// Timeout for UDP response after forwarding packet.
-///
-/// Each UDP packet opens a QUIC bi-stream and waits for a response.
-/// Without a timeout, streams accumulate indefinitely when targets don't
-/// respond (common for UDP), eventually hitting QUIC's stream limit.
-///
-/// 500ms is aggressive but sufficient for:
-/// - LAN responses (< 10ms typical)
-/// - DNS queries (< 100ms typical)
-/// - Most interactive UDP protocols
-///
-/// For slower protocols, streams queue on entry node (backpressure).
 const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
-
-use crate::repl_common::{
-	DoneGuard, PeerRow, PrintMsg, Printer, format_duration, print_peer_table, print_version_info,
-	uptime,
-};
-
-/// REPL commands for exit nodes.
-enum ExitReplCommand {
-	Quit,
-	Version,
-	Info,
-	Ping,
-	Stats,
-	Peers,
-	Connect(String),
-	Listen(String),
-	Disconnect,
-	/// Route commands — not applicable to exit nodes.
-	RouteCmd,
-	Help,
-	Unknown(String),
-}
 
 /// Security-related connection parameters.
 struct SecurityConfig {
@@ -84,53 +45,18 @@ struct SecurityConfig {
 	accept_fingerprint: Option<String>,
 }
 
-/// Action returned from exit loop functions to trigger mode transitions.
-enum ExitAction {
-	/// User requested quit.
-	Quit,
-	/// Start listening for peer connections (address spec string).
-	StartListen(String),
-	/// Start connecting to a peer (address spec string).
-	StartConnect(String),
-	/// Disconnect from peer.
-	StopConnect,
-}
-
-/// Setup the REPL once (shared across mode transitions).
-fn setup_exit_repl() -> (Option<mpsc::Receiver<ExitReplCommand>>, Option<Printer>) {
-	let (tx, rx) = mpsc::channel::<ExitReplCommand>(16);
-	let (print_tx, print_rx) = mpsc::unbounded_channel::<PrintMsg>();
-	let printer = Printer::new(print_tx);
-
-	crate::info!("Type 'help' for commands, 'quit' to exit.");
-
-	std::thread::spawn(move || {
-		crate::repl_common::run_repl_input(
-			"wallhack",
-			&tx,
-			print_rx,
-			parse_exit_repl_command,
-			|cmd| matches!(cmd, ExitReplCommand::Quit),
-		);
-	});
-
-	(Some(rx), Some(printer))
-}
-
-/// Run as an exit node.
+/// Run as an exit node (headless daemon).
 ///
-/// Creates a REPL once and runs a state loop that dispatches to mode-specific
-/// functions based on the current connect/listen configuration. REPL commands
-/// can trigger mode transitions (e.g. adding listen to enable relay capability).
+/// State machine dispatches to mode-specific functions based on the current
+/// connect/listen configuration.
 ///
 /// # Errors
 ///
 /// Returns error if orchestrator fails (connection errors are retried).
 pub async fn run(global: &WallhackCli, cmd: &ExitCommand, metrics: Arc<Metrics>) -> Result<()> {
-	crate::repl_common::mark_started();
 	let transport = cmd.transport().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let name = cmd.name();
-	crate::info!(
+	tracing::info!(
 		"wallhack {}  {name}",
 		crate::version::built_info::PKG_VERSION
 	);
@@ -139,78 +65,15 @@ pub async fn run(global: &WallhackCli, cmd: &ExitCommand, metrics: Arc<Metrics>)
 		accept_fingerprint: cmd.accept_fingerprint.clone(),
 	};
 
-	// Parse initial transport config
-	let (mut connect_spec, mut listen_spec) = match transport {
-		TransportDir::Both { connect, listen } => (Some(connect), Some(listen)),
-		TransportDir::Connect(spec) => (Some(spec), None),
-		TransportDir::Listen(spec) => (None, Some(spec)),
-	};
-
-	// Setup REPL once — shared across mode transitions
-	let (mut repl_rx, printer) = setup_exit_repl();
-
-	loop {
-		let result = match (&connect_spec, &listen_spec) {
-			(Some(c), Some(l)) => {
-				run_relay_capability_mode(
-					global,
-					&name,
-					c,
-					l,
-					&metrics,
-					&mut repl_rx,
-					printer.as_ref(),
-				)
-				.await
-			}
-			(Some(c), None) => {
-				run_connect_mode(
-					global,
-					&name,
-					c,
-					&metrics,
-					&mut repl_rx,
-					printer.as_ref(),
-					&security,
-				)
-				.await
-			}
-			(None, Some(l)) => {
-				run_listen_mode(global, &name, l, &metrics, &mut repl_rx, printer.as_ref()).await
-			}
-			(None, None) => run_idle_mode(&name, &metrics, &mut repl_rx, printer.as_ref()).await,
-		};
-
-		let action = match result {
-			Ok(action) => action,
-			Err(e) => {
-				if let Some(p) = printer.as_ref() {
-					p.error(e.to_string());
-				} else {
-					crate::error!("{e}");
-				}
-				// Reset to idle so the user can try again
-				connect_spec = None;
-				listen_spec = None;
-				continue;
-			}
-		};
-
-		match action {
-			ExitAction::Quit => break,
-			ExitAction::StartListen(addr) => {
-				listen_spec = Some(crate::cli::AddressSpec::parse(&addr));
-			}
-			ExitAction::StartConnect(addr) => {
-				connect_spec = Some(crate::cli::AddressSpec::parse(&addr));
-			}
-			ExitAction::StopConnect => {
-				connect_spec = None;
-			}
+	match transport {
+		TransportDir::Both { connect, listen } => {
+			run_relay_capability_mode(global, &name, &connect, &listen, &metrics).await
 		}
+		TransportDir::Connect(spec) => {
+			run_connect_mode(global, &name, &spec, &metrics, &security).await
+		}
+		TransportDir::Listen(spec) => run_listen_mode(global, &name, &spec, &metrics).await,
 	}
-
-	Ok(())
 }
 
 /// Run in connect-only mode (standard exit).
@@ -219,11 +82,9 @@ async fn run_connect_mode(
 	name: &str,
 	spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
 	security: &SecurityConfig,
-) -> Result<ExitAction> {
-	crate::route_info!(printer, "Connecting to {}...", spec.addr);
+) -> Result<()> {
+	tracing::info!("Connecting to {}...", spec.addr);
 
 	let resolvable = crate::dns::ResolvableAddress::from_str(&spec.addr)?;
 	let dns_server = global
@@ -238,7 +99,7 @@ async fn run_connect_mode(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_exit(global, endpoint, name, metrics, repl_rx, printer, security).await
+				run_quic_exit(global, endpoint, name, metrics, security).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -248,7 +109,7 @@ async fn run_connect_mode(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_exit(global, endpoint, name, metrics, repl_rx, printer, security).await
+				run_ws_exit(global, endpoint, name, metrics, security).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -265,10 +126,8 @@ async fn run_relay_capability_mode(
 	connect_spec: &crate::cli::AddressSpec,
 	listen_spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
-) -> Result<ExitAction> {
-	crate::route_info!(printer, "Connecting to {}...", connect_spec.addr);
+) -> Result<()> {
+	tracing::info!("Connecting to {}...", connect_spec.addr);
 	let resolvable = crate::dns::ResolvableAddress::from_str(&connect_spec.addr)?;
 	let dns_server = global
 		.dns
@@ -284,16 +143,7 @@ async fn run_relay_capability_mode(
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
-				run_quic_relay_capability(
-					global,
-					peer_addr,
-					listen_addr,
-					name,
-					metrics,
-					repl_rx,
-					printer,
-				)
-				.await
+				run_quic_relay_capability(global, peer_addr, listen_addr, name, metrics).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -303,16 +153,7 @@ async fn run_relay_capability_mode(
 		Protocol::Tcp => {
 			#[cfg(feature = "websocket")]
 			{
-				run_ws_relay_capability(
-					global,
-					peer_addr,
-					listen_addr,
-					name,
-					metrics,
-					repl_rx,
-					printer,
-				)
-				.await
+				run_ws_relay_capability(global, peer_addr, listen_addr, name, metrics).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -322,19 +163,14 @@ async fn run_relay_capability_mode(
 	}
 }
 
-/// Run in listen mode with REPL.
+/// Run in listen mode.
 async fn run_listen_mode(
 	global: &WallhackCli,
-	node_name: &str,
+	_node_name: &str,
 	spec: &crate::cli::AddressSpec,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
-) -> Result<ExitAction> {
-	use wallhack_core::{
-		control::handler::HandlerConfig,
-		server::server::{Server, ServerOptions},
-	};
+) -> Result<()> {
+	use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
 
 	let addr = parse_listen_addr(&spec.addr)?;
 
@@ -356,8 +192,8 @@ async fn run_listen_mode(
 					server_options,
 				)?;
 				let bound = server.local_addr()?;
-				crate::route_info!(printer, "Listening on {bound} ({})", server.protocol_name());
-				run_listen_server_loop(server, metrics, repl_rx, printer, bound, node_name).await
+				tracing::info!("Listening on {bound} ({})", server.protocol_name());
+				run_listen_server_loop(server, metrics).await
 			}
 			#[cfg(not(feature = "quic"))]
 			anyhow::bail!("QUIC transport not available (compile with --features quic)")
@@ -368,8 +204,8 @@ async fn run_listen_mode(
 				let server =
 					wallhack_core::server::ws::WsServer::try_new(server_config, server_options)?;
 				let bound = server.local_addr()?;
-				crate::route_info!(printer, "Listening on {bound} ({})", server.protocol_name());
-				run_listen_server_loop(server, metrics, repl_rx, printer, bound, node_name).await
+				tracing::info!("Listening on {bound} ({})", server.protocol_name());
+				run_listen_server_loop(server, metrics).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			anyhow::bail!("WebSocket transport not available (compile with --features websocket)")
@@ -377,248 +213,60 @@ async fn run_listen_mode(
 	}
 }
 
-/// Handle a REPL command while in listen mode.
-///
-/// Returns `Some(action)` if the command triggers a mode transition, `None` to continue.
-fn handle_listen_repl_cmd(
-	cmd: Option<ExitReplCommand>,
-	printer: Option<&Printer>,
-	listen_addr: std::net::SocketAddr,
-	node_name: &str,
-	metrics: &Arc<Metrics>,
-) -> Option<ExitAction> {
-	match cmd {
-		Some(ExitReplCommand::Quit) | None => Some(ExitAction::Quit),
-		Some(ExitReplCommand::Version) => {
-			if let Some(p) = printer {
-				print_version_info(p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Info) => {
-			if let Some(p) = printer {
-				p.print(format!("role:     exit ({node_name})"));
-				p.print(format!("listen:   {listen_addr}"));
-				p.print(format!("uptime:   {}", uptime()));
-			}
-			None
-		}
-		Some(ExitReplCommand::Connect(addr)) => Some(ExitAction::StartConnect(addr)),
-		Some(ExitReplCommand::Listen(_)) => {
-			if let Some(p) = printer {
-				p.print(format!("Already listening on {listen_addr}."));
-			}
-			None
-		}
-		Some(ExitReplCommand::Disconnect) => {
-			if let Some(p) = printer {
-				p.print("No connected peers.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Ping) => {
-			if let Some(p) = printer {
-				p.print("Ping not available: no peers connected.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Stats) => {
-			if let Some(p) = printer {
-				print_exit_stats(metrics, p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Peers) => {
-			if let Some(p) = printer {
-				print_peer_table(p, &[]);
-			}
-			None
-		}
-		Some(ExitReplCommand::RouteCmd) => {
-			if let Some(p) = printer {
-				p.print("route commands are only available for entry nodes.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Help) => {
-			if let Some(p) = printer {
-				crate::repl_common::print_help(p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Unknown(cmd)) => {
-			if let Some(p) = printer {
-				p.print(format!(
-					"Unknown command: {cmd}. Type 'help' for available commands."
-				));
-			}
-			None
-		}
-	}
-}
-
-/// Server accept loop with REPL integration for listen-only mode.
-async fn run_listen_server_loop<S: Server>(
-	mut server: S,
-	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
-	listen_addr: std::net::SocketAddr,
-	node_name: &str,
-) -> Result<ExitAction>
+/// Server accept loop for listen-only mode.
+async fn run_listen_server_loop<S: Server>(mut server: S, metrics: &Arc<Metrics>) -> Result<()>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
 	S::Transport: Send + Sync + 'static,
 {
 	loop {
-		tokio::select! {
-			result = server.accept(NodeRole::Exit) => {
-				match result {
-					Ok(Some(accept_result)) => {
-						crate::route_info!(printer, "Peer connected: {}", accept_result.peer_addr());
-						let transport = accept_result.transport();
-						let adapter = SyscallExitAdapter::new();
-						let _reaper = adapter.start_reaper(
-							std::time::Duration::from_mins(1),
-							std::time::Duration::from_mins(5),
-						);
-						let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
-						let stream_fut = run_stream_listener(transport);
-						let ((instr, resp), control_tx) = accept_result.channels();
-						tokio::spawn(async move {
-							let _keep_alive = control_tx;
-							tokio::select! {
-								result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
-									if let Err(e) = result {
-										tracing::error!("Orchestrator error: {e}");
-									}
-								}
-								result = stream_fut => {
-									if let Err(e) = result {
-										tracing::error!("Stream handler error: {e}");
-									}
-								}
+		match server.accept(NodeRole::Exit).await {
+			Ok(Some(accept_result)) => {
+				tracing::info!("Peer connected: {}", accept_result.peer_addr());
+				let transport = accept_result.transport();
+				let adapter = SyscallExitAdapter::new();
+				let _reaper = adapter.start_reaper(
+					std::time::Duration::from_mins(1),
+					std::time::Duration::from_mins(5),
+				);
+				let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
+				let stream_fut = run_stream_listener(transport);
+				let ((instr, resp), control_tx) = accept_result.channels();
+				tokio::spawn(async move {
+					let _keep_alive = control_tx;
+					tokio::select! {
+						result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
+							if let Err(e) = result {
+								tracing::error!("Orchestrator error: {e}");
 							}
-						});
+						}
+						result = stream_fut => {
+							if let Err(e) = result {
+								tracing::error!("Stream handler error: {e}");
+							}
+						}
 					}
-					Ok(None) => break,
-					Err(e) => {
-						crate::error!("Accept error: {e}");
-					}
-				}
+				});
 			}
-
-			cmd = async {
-				match repl_rx {
-					Some(rx) => rx.recv().await,
-					None => std::future::pending().await,
-				}
-			} => {
-				let _done = printer.map(DoneGuard);
-				if let Some(action) =
-					handle_listen_repl_cmd(cmd, printer, listen_addr, node_name, metrics)
-				{
-					return Ok(action);
-				}
+			Ok(None) => break,
+			Err(e) => {
+				tracing::warn!("Accept error: {e}");
 			}
 		}
 	}
 
-	Ok(ExitAction::Quit)
-}
-
-/// Run in idle mode (no connection, no listener).
-async fn run_idle_mode(
-	node_name: &str,
-	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
-) -> Result<ExitAction> {
-	if let Some(p) = printer {
-		p.print("Node idle. Use 'connect <addr>' or 'listen <addr>' to start.");
-	}
-
-	loop {
-		let cmd = match repl_rx {
-			Some(rx) => rx.recv().await,
-			None => {
-				// Headless and idle - nothing to do
-				std::future::pending::<Option<ExitReplCommand>>().await
-			}
-		};
-
-		let _done = printer.map(DoneGuard);
-		match cmd {
-			Some(ExitReplCommand::Quit) | None => return Ok(ExitAction::Quit),
-			Some(ExitReplCommand::Version) => {
-				if let Some(p) = printer {
-					print_version_info(p);
-				}
-			}
-			Some(ExitReplCommand::Info) => {
-				if let Some(p) = printer {
-					p.print(format!("role:     exit ({node_name})"));
-					p.print(format!("uptime:   {}", uptime()));
-				}
-			}
-			Some(ExitReplCommand::Connect(addr)) => return Ok(ExitAction::StartConnect(addr)),
-			Some(ExitReplCommand::Listen(addr)) => return Ok(ExitAction::StartListen(addr)),
-			Some(ExitReplCommand::Disconnect) => {
-				if let Some(p) = printer {
-					p.print("No connected peers.");
-				}
-			}
-			Some(ExitReplCommand::Ping) => {
-				if let Some(p) = printer {
-					p.print("Ping not available: no peers connected.");
-				}
-			}
-			Some(ExitReplCommand::Stats) => {
-				if let Some(p) = printer {
-					print_exit_stats(metrics, p);
-				}
-			}
-			Some(ExitReplCommand::Peers) => {
-				if let Some(p) = printer {
-					print_peer_table(p, &[]);
-				}
-			}
-			Some(ExitReplCommand::RouteCmd) => {
-				if let Some(p) = printer {
-					p.print("route commands are only available for entry nodes.");
-				}
-			}
-			Some(ExitReplCommand::Help) => {
-				if let Some(p) = printer {
-					crate::repl_common::print_help(p);
-				}
-			}
-			Some(ExitReplCommand::Unknown(cmd)) => {
-				if let Some(p) = printer {
-					p.print(format!(
-						"Unknown command: {cmd}. Type 'help' for available commands."
-					));
-				}
-			}
-		}
-	}
+	Ok(())
 }
 
 /// Drive the exit node orchestrator with a connected client.
 ///
-/// Returns `None` when the connection drops (caller should reconnect),
-/// or `Some(action)` when the user requested a mode transition via REPL.
+/// Returns when the connection drops (caller should reconnect).
 async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
 	connect_result: ConnectResult<T>,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
 	peer_addr: &str,
-	node_name: &str,
-) -> Result<Option<ExitAction>> {
-	crate::route_info!(printer, "Connected to {peer_addr}");
-
-	let connected_at = Instant::now();
+) -> Result<()> {
+	tracing::info!("Connected to {peer_addr}");
 
 	// Create syscall adapter for local network access
 	let adapter = SyscallExitAdapter::new();
@@ -633,127 +281,28 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
 	let stream_fut = run_stream_listener(transport);
 	let disconnect_fut = tasks.wait_for_disconnect();
 
-	// Pin the long-running futures so we can select over them + REPL
+	// Pin the long-running futures so we can select over them
 	tokio::pin!(stream_fut);
 	tokio::pin!(disconnect_fut);
 	let drive_fut = orchestrator.drive(resp, instr.subscribe());
 	tokio::pin!(drive_fut);
 
-	loop {
-		tokio::select! {
-			result = &mut drive_fut => {
-				let msg = match result {
-					Ok(()) => { tracing::debug!("Connection closed cleanly"); "Connection closed, reconnecting...".into() }
-					Err(e) => { tracing::debug!("Orchestrator error: {}", e); format!("Connection error: {e}, reconnecting...") }
-				};
-				if let Some(p) = printer { p.warn(msg); } else { crate::warn!("{msg}"); }
-				return Ok(None);
-			}
-			result = &mut stream_fut => {
-				if let Err(e) = result { crate::error!("Stream handler error: {e}"); }
-				return Ok(None);
-			}
-			() = &mut disconnect_fut => {
-				tracing::debug!("Connection tasks died - transport disconnected");
-				let msg = "Transport disconnected, reconnecting...";
-				if let Some(p) = printer { p.warn(msg); } else { crate::warn!("{msg}"); }
-				return Ok(None);
-			}
-			cmd = async {
-				match repl_rx {
-					Some(rx) => rx.recv().await,
-					None => std::future::pending().await,
-				}
-			} => {
-				let _done = printer.map(DoneGuard);
-				if let Some(action) = handle_connected_repl_cmd(
-					cmd, printer, peer_addr, node_name, metrics, connected_at,
-				) {
-					return Ok(Some(action));
-				}
+	tokio::select! {
+		result = &mut drive_fut => {
+			match result {
+				Ok(()) => tracing::debug!("Connection closed cleanly"),
+				Err(e) => tracing::debug!("Orchestrator error: {e}"),
 			}
 		}
+		result = &mut stream_fut => {
+			if let Err(e) = result { tracing::warn!("Stream handler error: {e}"); }
+		}
+		() = &mut disconnect_fut => {
+			tracing::debug!("Connection tasks died - transport disconnected");
+		}
 	}
-}
 
-/// Handle a REPL command while connected to an entry node.
-///
-/// Returns `Some(action)` if the command triggers a mode transition, `None` to continue.
-fn handle_connected_repl_cmd(
-	cmd: Option<ExitReplCommand>,
-	printer: Option<&Printer>,
-	peer_addr: &str,
-	node_name: &str,
-	metrics: &Arc<Metrics>,
-	connected_at: Instant,
-) -> Option<ExitAction> {
-	match cmd {
-		Some(ExitReplCommand::Quit) | None => Some(ExitAction::Quit),
-		Some(ExitReplCommand::Version) => {
-			if let Some(p) = printer {
-				print_version_info(p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Info) => {
-			if let Some(p) = printer {
-				p.print(format!("role:     exit ({node_name})"));
-				p.print(format!("connect:  {peer_addr}"));
-				p.print(format!("uptime:   {}", uptime()));
-			}
-			None
-		}
-		Some(ExitReplCommand::Listen(addr)) => Some(ExitAction::StartListen(addr)),
-		Some(ExitReplCommand::Connect(_)) => {
-			if let Some(p) = printer {
-				p.print(format!(
-					"Already connected to {peer_addr}. Use 'disconnect' first."
-				));
-			}
-			None
-		}
-		Some(ExitReplCommand::Disconnect) => Some(ExitAction::StopConnect),
-		Some(ExitReplCommand::Peers) => {
-			if let Some(p) = printer {
-				let row =
-					exit_peer_row("entry", peer_addr, &format_duration(connected_at.elapsed()));
-				print_peer_table(p, &[row]);
-			}
-			None
-		}
-		Some(ExitReplCommand::Ping) => {
-			if let Some(p) = printer {
-				p.print("Ping not implemented for exit nodes.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Stats) => {
-			if let Some(p) = printer {
-				print_exit_stats(metrics, p);
-			}
-			None
-		}
-		Some(ExitReplCommand::RouteCmd) => {
-			if let Some(p) = printer {
-				p.print("route commands are only available for entry nodes.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Help) => {
-			if let Some(p) = printer {
-				crate::repl_common::print_help(p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Unknown(cmd)) => {
-			if let Some(p) = printer {
-				p.print(format!(
-					"Unknown command: {cmd}. Type 'help' for available commands."
-				));
-			}
-			None
-		}
-	}
+	Ok(())
 }
 
 async fn run_stream_listener<T: Transport>(transport: std::sync::Arc<T>) -> Result<()>
@@ -816,8 +365,6 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 			}
 		}
 		val if val == wallhack_wire::data::SessionProtocol::Udp as i32 => {
-			// Note: source address is informational only, we don't bind to it
-			// because it may not exist in our namespace (same as TCP)
 			tracing::trace!(target = %target, source = ?source, "Processing UDP session");
 			let socket = tokio::net::UdpSocket::bind(match target {
 				std::net::SocketAddr::V4(_) => {
@@ -828,7 +375,6 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				}
 			})
 			.await?;
-			// Connect so the kernel delivers ICMP errors to this socket
 			socket.connect(target).await?;
 			let mut buf = Vec::new();
 			tokio::io::AsyncReadExt::read_to_end(stream, &mut buf).await?;
@@ -838,9 +384,6 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 				socket.send(&buf).await?;
 				let mut recv_buf = vec![0u8; 65535];
 				tracing::trace!("Waiting for UDP response...");
-				// Use timeout to avoid hanging streams that accumulate
-				// Status prefix: 0x00=success, 0x01=port unreachable,
-				// 0x02=host unreachable, 0x03=network unreachable
 				match tokio::time::timeout(UDP_RESPONSE_TIMEOUT, socket.recv(&mut recv_buf)).await {
 					Ok(Ok(size)) => {
 						tracing::trace!(size, "Received UDP response");
@@ -863,7 +406,6 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 					}
 					Err(_) => {
 						tracing::trace!("UDP recv timeout");
-						// No bytes = timeout (empty stream)
 					}
 				}
 				stream.finish().await?;
@@ -876,94 +418,14 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<()> {
 	Ok(())
 }
 
-/// Handle a REPL command during the connecting/retrying phase.
-///
-/// Returns `Some(action)` if the command triggers a mode transition, `None` to continue.
-fn handle_connecting_repl_cmd(
-	cmd: Option<ExitReplCommand>,
-	printer: Option<&Printer>,
-	metrics: &Arc<Metrics>,
-	peer_addr: &str,
-	node_name: &str,
-) -> Option<ExitAction> {
-	match cmd {
-		Some(ExitReplCommand::Quit) | None => Some(ExitAction::Quit),
-		Some(ExitReplCommand::Version) => {
-			if let Some(p) = printer {
-				print_version_info(p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Info) => {
-			if let Some(p) = printer {
-				p.print(format!("role:     exit ({node_name})"));
-				p.print(format!("connect:  {peer_addr} (connecting...)"));
-				p.print(format!("uptime:   {}", uptime()));
-			}
-			None
-		}
-		Some(ExitReplCommand::Listen(addr)) => Some(ExitAction::StartListen(addr)),
-		Some(ExitReplCommand::Connect(_)) => {
-			if let Some(p) = printer {
-				p.print(format!(
-					"Already connecting to {peer_addr}. Use 'disconnect' first."
-				));
-			}
-			None
-		}
-		Some(ExitReplCommand::Disconnect) => Some(ExitAction::StopConnect),
-		Some(ExitReplCommand::Peers) => {
-			if let Some(p) = printer {
-				let row = exit_peer_row("entry", peer_addr, "connecting...");
-				print_peer_table(p, &[row]);
-			}
-			None
-		}
-		Some(ExitReplCommand::Ping) => {
-			if let Some(p) = printer {
-				p.print("Ping not available: not yet connected.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Stats) => {
-			if let Some(p) = printer {
-				print_exit_stats(metrics, p);
-			}
-			None
-		}
-		Some(ExitReplCommand::RouteCmd) => {
-			if let Some(p) = printer {
-				p.print("route commands are only available for entry nodes.");
-			}
-			None
-		}
-		Some(ExitReplCommand::Help) => {
-			if let Some(p) = printer {
-				crate::repl_common::print_help(p);
-			}
-			None
-		}
-		Some(ExitReplCommand::Unknown(cmd)) => {
-			if let Some(p) = printer {
-				p.print(format!(
-					"Unknown command: {cmd}. Type 'help' for available commands."
-				));
-			}
-			None
-		}
-	}
-}
-
 #[cfg(feature = "quic")]
 async fn run_quic_exit(
 	global: &WallhackCli,
 	endpoint: std::net::SocketAddr,
 	name: &str,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
 	security: &SecurityConfig,
-) -> Result<ExitAction> {
+) -> Result<()> {
 	let client_config = build_quic_client_config(
 		global,
 		endpoint,
@@ -977,63 +439,27 @@ async fn run_quic_exit(
 	let peer_addr = endpoint.to_string();
 
 	loop {
-		tokio::select! {
-			// Handle connection attempts
-			result = async {
-				let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
-				client.connect(NodeRole::Exit).await
-			} => {
-				match result {
-					Ok(connect_result) => {
-						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr, name).await? {
-							return Ok(action);
-						}
-						// Session dropped — fixed reconnect delay for storm protection,
-						// then reset backoff so the next failure sequence starts fresh.
-						// NOTE: Keep this in sync with the WebSocket equivalent
-						// in run_ws_exit below.
-						let msg = format!("Connection dropped, reconnecting in {RECONNECT_DELAY:?}...");
-						if let Some(p) = printer {
-							p.warn(msg);
-						} else {
-							crate::warn!("{msg}");
-						}
-						tokio::time::sleep(RECONNECT_DELAY).await;
-						retry_delay = INITIAL_RETRY_DELAY;
-					}
-					Err(e) => {
-						if crate::repl_common::is_nonretryable_error(&e) {
-							let msg = format!("Connection failed (not retrying): {e}");
-							if let Some(p) = printer {
-								p.warn(msg);
-							} else {
-								crate::warn!("{msg}");
-							}
-							return Ok(ExitAction::StopConnect);
-						}
-						tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
-						if let Some(p) = printer {
-							p.warn(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
-						} else {
-							crate::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
-						}
-						tokio::time::sleep(retry_delay).await;
-						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-					}
-				}
+		match async {
+			let mut client = client::quic::QuicClient::try_new(client_config.clone())?;
+			client.connect(NodeRole::Exit).await
+		}
+		.await
+		{
+			Ok(connect_result) => {
+				run_exit_loop(connect_result, metrics, &peer_addr).await?;
+				tracing::warn!("Connection dropped, reconnecting in {RECONNECT_DELAY:?}...");
+				tokio::time::sleep(RECONNECT_DELAY).await;
+				retry_delay = INITIAL_RETRY_DELAY;
 			}
-
-			// Handle REPL commands (only fires while connecting/retrying)
-			cmd = async {
-				match repl_rx {
-					Some(rx) => rx.recv().await,
-					None => std::future::pending().await,
+			Err(e) => {
+				if is_nonretryable_error(&e) {
+					tracing::warn!("Connection failed (not retrying): {e}");
+					return Ok(());
 				}
-			} => {
-				let _done = printer.map(DoneGuard);
-				if let Some(action) = handle_connecting_repl_cmd(cmd, printer, metrics, &peer_addr, name) {
-					return Ok(action);
-				}
+				tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
+				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				tokio::time::sleep(retry_delay).await;
+				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
 		}
 	}
@@ -1045,10 +471,8 @@ async fn run_ws_exit(
 	endpoint: std::net::SocketAddr,
 	name: &str,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
 	security: &SecurityConfig,
-) -> Result<ExitAction> {
+) -> Result<()> {
 	use wallhack_core::client::{
 		config::ClientConfig,
 		ws::{WsClient, WsClientConfig},
@@ -1073,63 +497,27 @@ async fn run_ws_exit(
 	let peer_addr = endpoint.to_string();
 
 	loop {
-		tokio::select! {
-			// Handle connection attempts
-			result = async {
-				let mut client = WsClient::new(client_config.clone())?;
-				client.connect(NodeRole::Exit).await
-			} => {
-				match result {
-					Ok(connect_result) => {
-						if let Some(action) = run_exit_loop(connect_result, metrics, repl_rx, printer, &peer_addr, name).await? {
-							return Ok(action);
-						}
-						// Session dropped — fixed reconnect delay for storm protection,
-						// then reset backoff so the next failure sequence starts fresh.
-						// NOTE: Keep this in sync with the QUIC equivalent
-						// in run_quic_exit above.
-						let msg = format!("Connection dropped, reconnecting in {RECONNECT_DELAY:?}...");
-						if let Some(p) = printer {
-							p.warn(msg);
-						} else {
-							crate::warn!("{msg}");
-						}
-						tokio::time::sleep(RECONNECT_DELAY).await;
-						retry_delay = INITIAL_RETRY_DELAY;
-					}
-					Err(e) => {
-						if crate::repl_common::is_nonretryable_error(&e) {
-							let msg = format!("Connection failed (not retrying): {e}");
-							if let Some(p) = printer {
-								p.warn(msg);
-							} else {
-								crate::warn!("{msg}");
-							}
-							return Ok(ExitAction::StopConnect);
-						}
-						tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
-						if let Some(p) = printer {
-							p.warn(format!("Connection failed: {e}, retrying in {retry_delay:?}..."));
-						} else {
-							crate::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
-						}
-						tokio::time::sleep(retry_delay).await;
-						retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-					}
-				}
+		match async {
+			let mut client = WsClient::new(client_config.clone())?;
+			client.connect(NodeRole::Exit).await
+		}
+		.await
+		{
+			Ok(connect_result) => {
+				run_exit_loop(connect_result, metrics, &peer_addr).await?;
+				tracing::warn!("Connection dropped, reconnecting in {RECONNECT_DELAY:?}...");
+				tokio::time::sleep(RECONNECT_DELAY).await;
+				retry_delay = INITIAL_RETRY_DELAY;
 			}
-
-			// Handle REPL commands (only fires while connecting/retrying)
-			cmd = async {
-				match repl_rx {
-					Some(rx) => rx.recv().await,
-					None => std::future::pending().await,
+			Err(e) => {
+				if is_nonretryable_error(&e) {
+					tracing::warn!("Connection failed (not retrying): {e}");
+					return Ok(());
 				}
-			} => {
-				let _done = printer.map(DoneGuard);
-				if let Some(action) = handle_connecting_repl_cmd(cmd, printer, metrics, &peer_addr, name) {
-					return Ok(action);
-				}
+				tracing::debug!("Connection failed: {}, retrying in {:?}", e, retry_delay);
+				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				tokio::time::sleep(retry_delay).await;
+				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
 		}
 	}
@@ -1164,20 +552,14 @@ fn build_quic_client_config(
 }
 
 #[cfg(feature = "quic")]
-#[allow(clippy::too_many_lines)]
 async fn run_quic_relay_capability(
 	global: &WallhackCli,
 	peer_addr: std::net::SocketAddr,
 	listen_addr: std::net::SocketAddr,
-	node_name: &str,
+	_node_name: &str,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
-) -> Result<ExitAction> {
-	use wallhack_core::{
-		control::handler::HandlerConfig,
-		server::server::{Server, ServerOptions},
-	};
+) -> Result<()> {
+	use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
 
 	// Connect to peer
 	let psk = global.resolve_psk();
@@ -1185,7 +567,7 @@ async fn run_quic_relay_capability(
 	let mut client = client::quic::QuicClient::try_new(client_config)?;
 	let connect_result = client.connect(NodeRole::Exit).await?;
 
-	crate::route_info!(printer, "Connected to peer {peer_addr}");
+	tracing::info!("Connected to peer {peer_addr}");
 
 	let (relay_instr, relay_resp) = connect_result.channels().clone();
 
@@ -1203,134 +585,45 @@ async fn run_quic_relay_capability(
 	let bound = server.local_addr()?;
 	let proto = server.protocol_name();
 
-	crate::route_info!(
-		printer,
+	tracing::info!(
 		"Relay capability active: connected to {peer_addr}, listening on {bound} ({proto})"
 	);
 
-	let peer_addr_str = peer_addr.to_string();
-	let listen_port = bound.port();
-	let connected_at = Instant::now();
-
 	// Accept and bridge peer connections
 	loop {
-		tokio::select! {
-			// Handle peer connections
-			result = server.accept(NodeRole::Exit) => {
-				match result {
-					Ok(Some(accept_result)) => {
-						crate::route_info!(printer, "Peer connected: {}", accept_result.peer_addr());
-						bridge_peer(accept_result, &relay_instr, &relay_resp);
-					}
-					Ok(None) => {
-						crate::info!("Server closed");
-						break;
-					}
-					Err(e) => {
-						crate::error!("Accept error: {e}");
-					}
-				}
+		match server.accept(NodeRole::Exit).await {
+			Ok(Some(accept_result)) => {
+				tracing::info!("Peer connected: {}", accept_result.peer_addr());
+				bridge_peer(accept_result, &relay_instr, &relay_resp);
 			}
-
-			// Handle REPL commands
-			cmd = async {
-				match repl_rx {
-					Some(rx) => rx.recv().await,
-					None => std::future::pending().await,
-				}
-			} => {
-				let _done = printer.map(DoneGuard);
-				match cmd {
-					Some(ExitReplCommand::Quit) | None => return Ok(ExitAction::Quit),
-					Some(ExitReplCommand::Version) => {
-						if let Some(p) = printer {
-							print_version_info(p);
-						}
-					}
-					Some(ExitReplCommand::Info) => {
-						if let Some(p) = printer {
-							p.print(format!("role:     exit ({node_name})"));
-							p.print(format!("connect:  {peer_addr_str}"));
-							p.print(format!("listen:   :{listen_port} ({proto})"));
-							p.print(format!("uptime:   {}", uptime()));
-						}
-					}
-					Some(ExitReplCommand::Disconnect) => return Ok(ExitAction::StopConnect),
-					Some(ExitReplCommand::Connect(_)) => {
-						if let Some(p) = printer {
-							p.print(format!(
-								"Already connected to {peer_addr_str}. Use 'disconnect' first."
-							));
-						}
-					}
-					Some(ExitReplCommand::Listen(_)) => {
-						if let Some(p) = printer {
-							p.print(format!("Already listening on :{listen_port}."));
-						}
-					}
-					Some(ExitReplCommand::Peers) => {
-						if let Some(p) = printer {
-							let row = exit_peer_row(
-								"entry",
-								&peer_addr_str,
-								&format_duration(connected_at.elapsed()),
-							);
-							print_peer_table(p, &[row]);
-						}
-					}
-					Some(ExitReplCommand::Ping) => {
-						if let Some(p) = printer {
-							p.print("Ping not implemented for exit nodes.");
-						}
-					}
-					Some(ExitReplCommand::Stats) => {
-						if let Some(p) = printer {
-							print_exit_stats(metrics, p);
-						}
-					}
-					Some(ExitReplCommand::RouteCmd) => {
-						if let Some(p) = printer {
-							p.print("route commands are only available for entry nodes.");
-						}
-					}
-					Some(ExitReplCommand::Help) => {
-						if let Some(p) = printer {
-							crate::repl_common::print_help(p);
-						}
-					}
-					Some(ExitReplCommand::Unknown(cmd)) => {
-						if let Some(p) = printer {
-							p.print(format!(
-								"Unknown command: {cmd}. Type 'help' for available commands."
-							));
-						}
-					}
-				}
+			Ok(None) => {
+				tracing::info!("Server closed");
+				break;
+			}
+			Err(e) => {
+				tracing::warn!("Accept error: {e}");
 			}
 		}
 	}
 
-	Ok(ExitAction::Quit)
+	Ok(())
 }
 
 #[cfg(feature = "websocket")]
-#[allow(clippy::too_many_lines)]
 async fn run_ws_relay_capability(
 	global: &WallhackCli,
 	peer_addr: std::net::SocketAddr,
 	listen_addr: std::net::SocketAddr,
 	node_name: &str,
 	metrics: &Arc<Metrics>,
-	repl_rx: &mut Option<mpsc::Receiver<ExitReplCommand>>,
-	printer: Option<&Printer>,
-) -> Result<ExitAction> {
+) -> Result<()> {
 	use wallhack_core::{
 		client::{
 			config::ClientConfig,
 			ws::{WsClient, WsClientConfig},
 		},
 		control::handler::HandlerConfig,
-		server::server::{Server, ServerOptions},
+		server::server::ServerOptions,
 	};
 
 	// Connect to peer
@@ -1353,7 +646,7 @@ async fn run_ws_relay_capability(
 	let mut client = WsClient::new(client_config)?;
 	let connect_result = client.connect(NodeRole::Exit).await?;
 
-	crate::route_info!(printer, "Connected to peer {peer_addr}");
+	tracing::info!("Connected to peer {peer_addr}");
 
 	let (relay_instr, relay_resp) = connect_result.channels().clone();
 
@@ -1370,114 +663,28 @@ async fn run_ws_relay_capability(
 	let bound = server.local_addr()?;
 	let proto = server.protocol_name();
 
-	crate::route_info!(
-		printer,
+	tracing::info!(
 		"Relay capability active: connected to {peer_addr}, listening on {bound} ({proto})"
 	);
 
-	let peer_addr_str = peer_addr.to_string();
-	let listen_port = bound.port();
-	let connected_at = Instant::now();
-
 	// Accept and bridge peer connections
 	loop {
-		tokio::select! {
-			// Handle peer connections
-			result = server.accept(NodeRole::Exit) => {
-				match result {
-					Ok(Some(accept_result)) => {
-						crate::route_info!(printer, "Peer connected: {}", accept_result.peer_addr());
-						bridge_peer(accept_result, &relay_instr, &relay_resp);
-					}
-					Ok(None) => {
-						crate::info!("Server closed");
-						break;
-					}
-					Err(e) => {
-						crate::error!("Accept error: {e}");
-					}
-				}
+		match server.accept(NodeRole::Exit).await {
+			Ok(Some(accept_result)) => {
+				tracing::info!("Peer connected: {}", accept_result.peer_addr());
+				bridge_peer(accept_result, &relay_instr, &relay_resp);
 			}
-
-			// Handle REPL commands
-			cmd = async {
-				match repl_rx {
-					Some(rx) => rx.recv().await,
-					None => std::future::pending().await,
-				}
-			} => {
-				let _done = printer.map(DoneGuard);
-				match cmd {
-					Some(ExitReplCommand::Quit) | None => return Ok(ExitAction::Quit),
-					Some(ExitReplCommand::Version) => {
-						if let Some(p) = printer {
-							print_version_info(p);
-						}
-					}
-					Some(ExitReplCommand::Info) => {
-						if let Some(p) = printer {
-							p.print(format!("role:     exit ({node_name})"));
-							p.print(format!("connect:  {peer_addr_str}"));
-							p.print(format!("listen:   :{listen_port} ({proto})"));
-							p.print(format!("uptime:   {}", uptime()));
-						}
-					}
-					Some(ExitReplCommand::Disconnect) => return Ok(ExitAction::StopConnect),
-					Some(ExitReplCommand::Connect(_)) => {
-						if let Some(p) = printer {
-							p.print(format!(
-								"Already connected to {peer_addr_str}. Use 'disconnect' first."
-							));
-						}
-					}
-					Some(ExitReplCommand::Listen(_)) => {
-						if let Some(p) = printer {
-							p.print(format!("Already listening on :{listen_port}."));
-						}
-					}
-					Some(ExitReplCommand::Peers) => {
-						if let Some(p) = printer {
-							let row = exit_peer_row(
-								"entry",
-								&peer_addr_str,
-								&format_duration(connected_at.elapsed()),
-							);
-							print_peer_table(p, &[row]);
-						}
-					}
-					Some(ExitReplCommand::Ping) => {
-						if let Some(p) = printer {
-							p.print("Ping not implemented for exit nodes.");
-						}
-					}
-					Some(ExitReplCommand::Stats) => {
-						if let Some(p) = printer {
-							print_exit_stats(metrics, p);
-						}
-					}
-					Some(ExitReplCommand::RouteCmd) => {
-						if let Some(p) = printer {
-							p.print("route commands are only available for entry nodes.");
-						}
-					}
-					Some(ExitReplCommand::Help) => {
-						if let Some(p) = printer {
-							crate::repl_common::print_help(p);
-						}
-					}
-					Some(ExitReplCommand::Unknown(cmd)) => {
-						if let Some(p) = printer {
-							p.print(format!(
-								"Unknown command: {cmd}. Type 'help' for available commands."
-							));
-						}
-					}
-				}
+			Ok(None) => {
+				tracing::info!("Server closed");
+				break;
+			}
+			Err(e) => {
+				tracing::warn!("Accept error: {e}");
 			}
 		}
 	}
 
-	Ok(ExitAction::Quit)
+	Ok(())
 }
 
 /// Bridge a peer connection to relay broadcast channels.
@@ -1495,7 +702,7 @@ fn bridge_peer<T: wallhack_core::transport::Transport>(
 	let mut relay_resp_rx = relay_resp.subscribe();
 	let mut peer_instr_rx = peer_instr.subscribe();
 
-	// Forward peer instructions to relay (also holds control_tx to keep control stream alive)
+	// Forward peer instructions to relay
 	tokio::spawn(async move {
 		let _keep_alive = control_tx;
 		loop {
@@ -1555,76 +762,12 @@ fn build_server_config(
 	}
 }
 
-/// Parse a line into an exit REPL command.
-fn parse_exit_repl_command(line: &str) -> ExitReplCommand {
-	let mut parts = line.split_whitespace();
-	let cmd = parts.next().unwrap_or("").to_lowercase();
-
-	match cmd.as_str() {
-		"quit" => ExitReplCommand::Quit,
-		"version" => ExitReplCommand::Version,
-		"info" => ExitReplCommand::Info,
-		"ping" => ExitReplCommand::Ping,
-		"stats" => ExitReplCommand::Stats,
-		"peers" => ExitReplCommand::Peers,
-		"connect" => match parts.next() {
-			Some(addr) => ExitReplCommand::Connect(addr.to_string()),
-			None => ExitReplCommand::Unknown(
-				"connect requires an address (e.g. connect host:6565)".to_string(),
-			),
-		},
-		"listen" => {
-			let default_listen = format!(":{}", wallhack_core::server::config::DEFAULT_LISTEN_PORT);
-			let addr = parts.next().map_or(default_listen, str::to_string);
-			ExitReplCommand::Listen(addr)
-		}
-		"disconnect" => ExitReplCommand::Disconnect,
-		"route" => ExitReplCommand::RouteCmd,
-		"help" => ExitReplCommand::Help,
-		_ => ExitReplCommand::Unknown(line.to_string()),
-	}
-}
-
-/// Build a peer row for a connected exit node peer.
-fn exit_peer_row(role: &str, addr: &str, uptime: &str) -> PeerRow {
-	PeerRow {
-		name: "-".to_string(),
-		role: role.to_string(),
-		addr: addr.to_string(),
-		latency: "N/A".to_string(),
-		uptime: uptime.to_string(),
-		device: None,
-	}
-}
-
-fn print_exit_stats(metrics: &wallhack_core::control::metrics::Metrics, printer: &Printer) {
-	printer.print("Traffic Statistics:");
-	printer.print(format!(
-		"  Bytes In:     {}",
-		crate::repl_common::format_bytes(metrics.bytes_in.load(Ordering::Relaxed))
-	));
-	printer.print(format!(
-		"  Bytes Out:    {}",
-		crate::repl_common::format_bytes(metrics.bytes_out.load(Ordering::Relaxed))
-	));
-	printer.print(format!(
-		"  Packets In:   {}",
-		metrics.packets_in.load(Ordering::Relaxed)
-	));
-	printer.print(format!(
-		"  Packets Out:  {}",
-		metrics.packets_out.load(Ordering::Relaxed)
-	));
-	printer.print(format!(
-		"  Connections:  {}",
-		metrics.active_connections.load(Ordering::Relaxed)
-	));
-	printer.print(format!(
-		"  Flows:        {}",
-		metrics.active_flows.load(Ordering::Relaxed)
-	));
-	printer.print(format!(
-		"  Dropped:      {}",
-		metrics.packets_dropped.load(Ordering::Relaxed)
-	));
+/// Check if an error is terminal and should not be retried.
+fn is_nonretryable_error(err: &impl std::fmt::Display) -> bool {
+	let msg = err.to_string();
+	msg.contains("Fingerprint mismatch")
+		|| msg.contains("PSK authentication failed")
+		|| msg.contains("certificate")
+		|| msg.contains("CertificateRequired")
+		|| msg.contains("HandshakeFailure")
 }
