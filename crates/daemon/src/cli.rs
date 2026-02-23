@@ -380,40 +380,41 @@ fn binary_name(argv0: &str) -> &str {
 		.unwrap_or(argv0)
 }
 
-/// Parse CLI from command line arguments.
+/// Parse CLI from explicit arguments.
 ///
 /// Wraps argh with:
 /// - Global flag reordering (allows `wallhack entry --debug` in addition to `wallhack --debug entry`)
 /// - Better error messages when subcommand-level flags are used without a subcommand
-#[must_use]
-pub fn parse_cli() -> WallhackCli {
-	let args: Vec<String> = std::env::args().collect();
+///
+/// # Errors
+///
+/// Returns [`DaemonError::Cli`] for parse errors or informational output (--help).
+pub fn parse_cli_from_args(args: Vec<String>) -> Result<WallhackCli, crate::DaemonError> {
 	let reordered = reorder_global_flags(args);
 	let cmd = binary_name(&reordered[0]);
 	let strs: Vec<&str> = reordered.iter().map(String::as_str).collect();
 
-	match WallhackCli::from_args(&[cmd], &strs[1..]) {
-		Ok(cli) => cli,
-		Err(early_exit) => {
-			if early_exit.status.is_err()
-				&& let Some(hint) = suggest_subcommand(&strs[1..])
-			{
-				eprintln!("{hint}");
-				eprintln!("Run {cmd} --help for more information.");
-				std::process::exit(1);
-			}
-			std::process::exit(if let Ok(()) = early_exit.status {
-				println!("{}", early_exit.output);
-				0
+	WallhackCli::from_args(&[cmd], &strs[1..]).map_err(|early_exit| {
+		if early_exit.status.is_err() {
+			let message = if let Some(hint) = suggest_subcommand(&strs[1..]) {
+				format!("{hint}\nRun {cmd} --help for more information.")
 			} else {
-				eprintln!(
+				format!(
 					"{}\nRun {cmd} --help for more information.",
 					early_exit.output
-				);
-				1
-			})
+				)
+			};
+			crate::DaemonError::Cli {
+				message,
+				exit_code: 1,
+			}
+		} else {
+			crate::DaemonError::Cli {
+				message: early_exit.output,
+				exit_code: 0,
+			}
 		}
-	}
+	})
 }
 
 impl WallhackCli {
