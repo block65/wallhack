@@ -15,33 +15,83 @@ pub fn mark_started() {
 	NODE_STARTED_AT.get_or_init(Instant::now);
 }
 
-/// Print version and uptime.
-pub fn print_ping(printer: &Printer) {
-	let uptime = NODE_STARTED_AT
+/// Returns the current uptime as a formatted string.
+#[must_use]
+pub fn uptime() -> String {
+	NODE_STARTED_AT
 		.get()
-		.map_or_else(|| "unknown".to_string(), |t| format_duration(t.elapsed()));
-	printer.print(format!(
-		"wallhack {} - uptime: {uptime}",
-		crate::version::built_info::PKG_VERSION
-	));
+		.map_or_else(|| "unknown".to_string(), |t| format_duration(t.elapsed()))
+}
+
+/// Message type for the print channel, allowing commands to signal completion.
+pub enum PrintMsg {
+	/// A line of text to display.
+	Text(String),
+	/// Signals that the current REPL command has finished printing.
+	Done,
+}
+
+/// Print just the version (used by the `version` REPL command).
+pub fn print_version_info(printer: &Printer) {
+	printer.print(crate::version::built_info::PKG_VERSION);
+}
+
+/// Print the unified help text (identical on all node types).
+pub fn print_help(printer: &Printer) {
+	use std::io::Write as _;
+	let mut tw = tabwriter::TabWriter::new(vec![]).padding(2);
+	let _ = writeln!(tw, "Available commands:");
+	let _ = writeln!(tw, "  version");
+	let _ = writeln!(tw, "  info\tNode state (role, listen address)");
+	let _ = writeln!(tw, "  peers\tList connected peers");
+	let _ = writeln!(
+		tw,
+		"  ping [peer]\tPing a peer (optional if only one connected)"
+	);
+	let _ = writeln!(tw, "  stats\tTraffic statistics");
+	let _ = writeln!(
+		tw,
+		"  route add <cidr> [via <peer>]\tAdd a route (peer optional if only one connected)"
+	);
+	let _ = writeln!(tw, "  route del <cidr>\tRemove a route");
+	let _ = writeln!(tw, "  route list\tList all routes");
+	let _ = writeln!(tw, "  connect <addr>\tConnect to a peer");
+	let _ = writeln!(tw, "  listen [addr]\tStart listening for peers");
+	let _ = writeln!(tw, "  disconnect [peer]\tDisconnect a peer");
+	let _ = writeln!(tw, "  help\tShow this help");
+	let _ = writeln!(tw, "  quit\tExit wallhack");
+	let _ = tw.flush();
+	let buf = tw.into_inner().unwrap_or_default();
+	let output = String::from_utf8_lossy(&buf);
+	for line in output.trim_end().lines() {
+		printer.print(line.trim_end());
+	}
 }
 
 /// Wrapper for printing to terminal without disrupting readline.
 #[derive(Clone)]
 pub struct Printer {
-	tx: mpsc::UnboundedSender<String>,
+	tx: mpsc::UnboundedSender<PrintMsg>,
 }
 
 impl Printer {
 	/// Create a new printer with the given channel.
 	#[must_use]
-	pub fn new(tx: mpsc::UnboundedSender<String>) -> Self {
+	pub fn new(tx: mpsc::UnboundedSender<PrintMsg>) -> Self {
 		Self { tx }
 	}
 
 	/// Print a message (async-safe).
 	pub fn print(&self, msg: impl Into<String>) {
-		let _ = self.tx.send(msg.into());
+		let _ = self.tx.send(PrintMsg::Text(msg.into()));
+	}
+
+	/// Signal that the current REPL command has finished producing output.
+	///
+	/// This is consumed by the readline thread to know all responses are queued
+	/// in `ExternalPrinter` before it draws the next prompt.
+	pub fn done(&self) {
+		let _ = self.tx.send(PrintMsg::Done);
 	}
 
 	/// Print an error message using the standard output formatting (readline-safe).
@@ -65,7 +115,20 @@ impl Printer {
 			Ok(config) => config.format_message(&crate::output::StatusMessage { level, message }),
 			Err(_) => format!("{level} {message}"),
 		};
-		let _ = self.tx.send(formatted);
+		let _ = self.tx.send(PrintMsg::Text(formatted));
+	}
+}
+
+/// RAII guard that calls [`Printer::done`] when dropped.
+///
+/// Place at the top of each REPL command dispatch arm so that `continue`,
+/// `break`, and early `return` all reliably signal command completion to the
+/// readline thread.
+pub struct DoneGuard<'a>(pub &'a Printer);
+
+impl Drop for DoneGuard<'_> {
+	fn drop(&mut self) {
+		self.0.done();
 	}
 }
 
