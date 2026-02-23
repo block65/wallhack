@@ -61,14 +61,16 @@ reedline (the Nushell readline library) uses a fundamentally different model:
 
 ## Goals
 
-1. Replace rustyline with reedline in the `readline` feature path.
-2. All existing REPL commands produce correct output in the correct order.
-3. Background async events (peer connect/disconnect) print cleanly without corrupting
+1. **Binary size check first — before any other work.** Measure the size delta of
+   adding reedline vs rustyline. If the delta is unacceptable the migration may be
+   abandoned or a lighter alternative chosen. Do not proceed to goal 2 until this
+   is confirmed acceptable.
+2. Replace rustyline with reedline in the `repl` feature path.
+3. All existing REPL commands produce correct output in the correct order.
+4. Background async events (peer connect/disconnect) print cleanly without corrupting
    the prompt line.
-4. The non-readline (`#[cfg(not(feature = "readline"))]`) path is unchanged.
-5. Maintain comparable binary size. reedline is a larger dependency tree — check
-   bloat-check output before and after; accept minor growth if functionality is correct,
-   but do not allow unbounded size increase. Document the delta.
+5. The non-REPL (`#[cfg(not(feature = "repl"))]`) path is unchanged.
+6. Document the binary size delta in this file once measured.
 
 ## Known challenges
 
