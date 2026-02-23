@@ -8,6 +8,9 @@ import pagefind from "astro-pagefind";
 export default defineConfig({
 	site: "https://wallhack.net",
 	trailingSlash: "never",
+	build: {
+		format: "preserve",
+	},
 	prefetch: {
 		prefetchAll: true,
 		defaultStrategy: "hover",
