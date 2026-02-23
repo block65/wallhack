@@ -12,17 +12,17 @@ fmt-check:
 
 # cargo clippy matching CI: slim and default, all targets
 lint:
-    cargo clippy --all-targets --no-default-features --features slim -- -D warnings
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --quiet --all-targets --no-default-features --features slim -- -D warnings
+    cargo clippy --quiet --all-targets -- -D warnings
 
 # Build slim and default profiles
 cargo-build:
-    cargo build --no-default-features --features slim
-    cargo build
+    cargo build --quiet --no-default-features --features slim
+    cargo build --quiet
 
 # Cargo unit tests
 test:
-    cargo test --all
+    cargo test --quiet --all
 
 # Build release binary with all transports (glibc, for development/IDE)
 build-release:
