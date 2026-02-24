@@ -14,9 +14,10 @@ use wallhack_core::{
 };
 
 use crate::{
-	NodeError, WallhackCli,
-	cli::{Protocol, RelayCommand},
+	NodeError,
+	address_spec::{AddressSpec, Protocol},
 	config::SecurityParams,
+	daemon_config::{GlobalConfig, RelayConfig},
 };
 
 /// Run as a relay node.
@@ -28,20 +29,12 @@ use crate::{
 ///
 /// Returns error if server fails (connection errors are retried).
 pub async fn run(
-	global: &WallhackCli,
-	cmd: &RelayCommand,
+	global: &GlobalConfig,
+	cfg: &RelayConfig,
 	metrics: Arc<Metrics>,
 ) -> Result<(), NodeError> {
-	let name = cmd.name();
-	tracing::info!(
-		"wallhack {}  {name}",
-		crate::version::built_info::PKG_VERSION
-	);
-
-	let (connect_spec, listen_spec) = cmd.transport().map_err(NodeError::Config)?;
-
 	// Parse listen address
-	let addr: std::net::SocketAddr = listen_spec.addr.parse::<crate::net::ListenAddr>()?.into();
+	let addr: std::net::SocketAddr = cfg.listen.addr.parse::<crate::net::ListenAddr>()?.into();
 
 	// Server options with control handler config
 	let server_options = ServerOptions {
@@ -51,15 +44,16 @@ pub async fn run(
 		routes: None,
 	};
 
-	tracing::info!("Connecting to {}...", connect_spec.addr);
-	let target_addr = crate::transport::resolve_endpoint(&connect_spec.addr, global).await?;
+	tracing::info!("Connecting to {}...", cfg.connect.addr);
+	let target_addr =
+		crate::transport::resolve_endpoint(&cfg.connect.addr, global.dns_server.as_deref()).await?;
 
 	let security = SecurityParams {
-		psk: global.resolve_psk(),
-		accept_fingerprint: cmd.accept_fingerprint.clone(),
+		psk: global.psk.clone(),
+		accept_fingerprint: cfg.accept_fingerprint.clone(),
 	};
 
-	match connect_spec.protocol {
+	match cfg.connect.protocol {
 		Protocol::Udp => {
 			#[cfg(feature = "quic")]
 			{
@@ -77,7 +71,7 @@ pub async fn run(
 				let (source_instr, source_resp) = source_result.channels().clone();
 				run_listener(
 					global,
-					&listen_spec,
+					&cfg.listen,
 					addr,
 					server_options,
 					source_instr,
@@ -106,7 +100,7 @@ pub async fn run(
 				let (source_instr, source_resp) = source_result.channels().clone();
 				run_listener(
 					global,
-					&listen_spec,
+					&cfg.listen,
 					addr,
 					server_options,
 					source_instr,
@@ -123,8 +117,8 @@ pub async fn run(
 }
 
 async fn run_listener(
-	global: &WallhackCli,
-	listen_spec: &crate::cli::AddressSpec,
+	global: &GlobalConfig,
+	listen_spec: &AddressSpec,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
 	source_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
@@ -156,14 +150,14 @@ async fn run_listener(
 
 #[cfg(feature = "quic")]
 async fn run_quic_listener(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
 	source_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
 	source_resp: broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) -> Result<(), NodeError> {
 	let server_config =
-		crate::config::build_server_config(global, addr, global.resolve_psk(), None);
+		crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
 	let mut server =
 		wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
 			.map_err(|e| NodeError::Transport(Box::new(e)))?;
@@ -189,7 +183,7 @@ async fn run_quic_listener(
 
 #[cfg(feature = "websocket")]
 async fn run_ws_listener(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	addr: std::net::SocketAddr,
 	server_options: ServerOptions,
 	source_instr: broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
@@ -198,7 +192,7 @@ async fn run_ws_listener(
 	use wallhack_core::server::ws::WebSocketServer;
 
 	let server_config =
-		crate::config::build_server_config(global, addr, global.resolve_psk(), None);
+		crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
 	let mut server = WebSocketServer::try_new(server_config, server_options)
 		.map_err(|e| NodeError::Transport(Box::new(e)))?;
 	tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);

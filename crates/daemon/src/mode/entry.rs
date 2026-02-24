@@ -22,9 +22,10 @@ use wallhack_core::{
 use wallhack_core::control::routes::RouteTable;
 
 use crate::{
-	NodeError, WallhackCli,
-	cli::{EntryCommand, Protocol, TransportDir},
+	NodeError,
+	address_spec::{AddressSpec, ConnectivitySpec, Protocol},
 	config::SecurityParams,
+	daemon_config::{EntryConfig, GlobalConfig},
 };
 
 /// Shared node resources passed through the entry server call stack.
@@ -105,18 +106,12 @@ const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(50
 ///
 /// Returns error if server or connection setup fails.
 pub async fn run(
-	global: &WallhackCli,
-	cmd: &EntryCommand,
+	global: &GlobalConfig,
+	cfg: &EntryConfig,
 	metrics: Arc<Metrics>,
 	peers: Arc<Registry>,
 	routes: SharedRouteTable,
 ) -> Result<(), NodeError> {
-	let name = cmd.name();
-	tracing::info!(
-		"wallhack {}  {name}",
-		crate::version::built_info::PKG_VERSION
-	);
-	let transport = cmd.transport().map_err(NodeError::Config)?;
 	let res = EntryResources {
 		sessions: SessionManager::default(),
 		metrics,
@@ -124,44 +119,43 @@ pub async fn run(
 		routes,
 	};
 
-	match transport {
-		TransportDir::Both { .. } => Err(NodeError::Config(
+	match &cfg.connectivity {
+		ConnectivitySpec::Both { .. } => Err(NodeError::Config(
 			"entry nodes do not support both --connect and --listen simultaneously".into(),
 		)),
-		TransportDir::Listen(spec) => run_entry_listen(global, cmd, &spec, res).await,
-		TransportDir::Connect(spec) => run_entry_connect(global, cmd, &spec, res.metrics).await,
+		ConnectivitySpec::Listen(spec) => run_entry_listen(global, cfg, spec, res).await,
+		ConnectivitySpec::Connect(spec) => run_entry_connect(global, cfg, spec, res.metrics).await,
 	}
 }
 
 /// Run entry node in listen mode — set up server and accept connections.
 async fn run_entry_listen(
-	global: &WallhackCli,
-	cmd: &EntryCommand,
-	spec: &crate::cli::AddressSpec,
+	global: &GlobalConfig,
+	cfg: &EntryConfig,
+	spec: &AddressSpec,
 	res: EntryResources,
 ) -> Result<(), NodeError> {
 	let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
-	let psk = global.resolve_psk();
+	let psk = global.psk.clone();
 	let server_options = ServerOptions {
 		handler_config: HandlerConfig::new(NodeRole::Entry),
 		metrics: Some(Arc::clone(&res.metrics)),
 		peers: Some(Arc::clone(&res.peers)),
 		routes: Some(Arc::clone(&res.routes)),
 	};
-	let server_config = crate::config::build_server_config(global, addr, psk, cmd.max_peers);
+	let server_config = crate::config::build_server_config(&global.tls, addr, psk, cfg.max_peers);
 
 	// Start REST API if enabled
 	#[cfg(feature = "http-api")]
-	if let Some(api_addr) = cmd.api_addr() {
-		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
+	if let Some(ref api_cfg) = cfg.api {
 		start_api(
-			api_addr,
+			api_cfg.addr,
 			&res.metrics,
 			&res.peers,
 			&res.routes,
 			server_config.tls.clone(),
-			api_user,
-			api_secret,
+			api_cfg.user.clone(),
+			api_cfg.secret.clone(),
 		);
 	}
 
@@ -172,7 +166,7 @@ async fn run_entry_listen(
 				let server =
 					wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
 						.map_err(|e| NodeError::Transport(Box::new(e)))?;
-				start_entry_server(server, res, cmd).await
+				start_entry_server(server, res, cfg).await
 			}
 			#[cfg(not(feature = "quic"))]
 			{
@@ -186,7 +180,7 @@ async fn run_entry_listen(
 					server_config,
 					server_options,
 				)?;
-				start_entry_server(server, res, cmd).await
+				start_entry_server(server, res, cfg).await
 			}
 			#[cfg(not(feature = "websocket"))]
 			{
@@ -200,7 +194,7 @@ async fn run_entry_listen(
 async fn start_entry_server<S: Server>(
 	server: S,
 	res: EntryResources,
-	cmd: &EntryCommand,
+	cfg: &EntryConfig,
 ) -> Result<(), NodeError>
 where
 	S::Error: std::error::Error + Send + Sync + 'static,
@@ -219,8 +213,8 @@ where
 		server,
 		res,
 		EntryListenOptions {
-			max_peers: cmd.max_peers,
-			fast_mode: cmd.fast,
+			max_peers: cfg.max_peers,
+			fast_mode: cfg.fast,
 		},
 	)
 	.await
@@ -230,31 +224,38 @@ where
 ///
 /// DNS resolve once, then retry loop with exponential backoff.
 async fn run_entry_connect(
-	global: &WallhackCli,
-	cmd: &EntryCommand,
-	spec: &crate::cli::AddressSpec,
+	global: &GlobalConfig,
+	cfg: &EntryConfig,
+	spec: &AddressSpec,
 	metrics: Arc<Metrics>,
 ) -> Result<(), NodeError> {
 	tracing::info!("Connecting to {}...", spec.addr);
-	let endpoint = crate::transport::resolve_endpoint(&spec.addr, global).await?;
+	let endpoint =
+		crate::transport::resolve_endpoint(&spec.addr, global.dns_server.as_deref()).await?;
 
 	// Start REST API if enabled (peers registry is unused in connect mode)
 	#[cfg(feature = "http-api")]
-	if let Some(api_addr) = cmd.api_addr() {
-		let tls = crate::config::build_tls_config(global);
+	if let Some(ref api_cfg) = cfg.api {
+		let tls = crate::config::build_tls_config(&global.tls);
 		let peers = Arc::new(Registry::new());
 		let routes = RouteTable::shared();
-		let (api_user, api_secret) = resolve_api_credentials(cmd, api_addr);
 		start_api(
-			api_addr, &metrics, &peers, &routes, tls, api_user, api_secret,
+			api_cfg.addr,
+			&metrics,
+			&peers,
+			&routes,
+			tls,
+			api_cfg.user.clone(),
+			api_cfg.secret.clone(),
 		);
 	}
 
 	let peer_addr = endpoint.to_string();
 	let security = SecurityParams {
-		psk: global.resolve_psk(),
+		psk: global.psk.clone(),
 		accept_fingerprint: None,
 	};
+	let fast_mode = cfg.fast;
 
 	match spec.protocol {
 		Protocol::Udp => {
@@ -274,7 +275,7 @@ async fn run_entry_connect(
 					|connect_result| {
 						let m = Arc::clone(&metrics);
 						let pa = peer_addr.clone();
-						async move { run_entry_connected(connect_result, &m, cmd.fast, &pa).await }
+						async move { run_entry_connected(connect_result, &m, fast_mode, &pa).await }
 					},
 					RECONNECT_DELAY,
 				)
@@ -299,7 +300,7 @@ async fn run_entry_connect(
 					|connect_result| {
 						let m = Arc::clone(&metrics);
 						let pa = peer_addr.clone();
-						async move { run_entry_connected(connect_result, &m, cmd.fast, &pa).await }
+						async move { run_entry_connected(connect_result, &m, fast_mode, &pa).await }
 					},
 					RECONNECT_DELAY,
 				)
@@ -651,34 +652,6 @@ async fn send_ping(
 	Ok(start.elapsed().as_secs_f64() * 1000.0)
 }
 
-/// Resolve API credentials, generating a random secret if not provided.
-#[cfg(feature = "http-api")]
-fn resolve_api_credentials(cmd: &EntryCommand, api_addr: std::net::SocketAddr) -> (String, String) {
-	let username = cmd.api_user.clone().unwrap_or_else(|| "admin".to_string());
-
-	let (secret, generated) = if let Some(s) = &cmd.api_secret {
-		(s.clone(), false)
-	} else {
-		use rand::Rng;
-		const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-		let mut rng = rand::rng();
-		let secret: String = (0..32)
-			.map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
-			.collect();
-		(secret, true)
-	};
-
-	tracing::info!("REST API listening on {api_addr}");
-	tracing::info!("  API username: {username}");
-	if generated {
-		tracing::info!("  API secret:   {secret}  (auto-generated)");
-	} else {
-		tracing::info!("  API secret:   {secret}");
-	}
-
-	(username, secret)
-}
-
 #[cfg(feature = "http-api")]
 fn start_api(
 	api_addr: std::net::SocketAddr,
@@ -699,6 +672,10 @@ fn start_api(
 		Arc::clone(peers),
 		Arc::clone(routes),
 	);
+	tracing::info!("REST API listening on {api_addr}");
+	tracing::info!("  API username: {username}");
+	tracing::info!("  API secret:   {secret}");
+
 	let auth = Auth::new(username, secret);
 	let state = ApiState::new(Arc::new(handler), auth);
 

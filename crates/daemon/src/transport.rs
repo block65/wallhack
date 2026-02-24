@@ -7,7 +7,7 @@ use std::{net::SocketAddr, str::FromStr, time::Duration};
 
 use tokio::sync::broadcast;
 
-use crate::{NodeError, WallhackCli};
+use crate::NodeError;
 
 /// Initial retry delay for connection attempts.
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -19,14 +19,12 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// Tries parsing as an IP literal first, then falls back to DNS resolution.
 pub(crate) async fn resolve_endpoint(
 	addr: &str,
-	global: &WallhackCli,
+	dns_server: Option<&str>,
 ) -> Result<SocketAddr, NodeError> {
 	let resolvable = crate::dns::ResolvableAddress::from_str(addr)
 		.map_err(|e| NodeError::DnsResolution(Box::new(e)))?;
-	let dns_server = global
-		.dns
-		.as_ref()
-		.map(|s| crate::dns::parse_str_to_addr(s))
+	let dns_server = dns_server
+		.map(crate::dns::parse_str_to_addr)
 		.transpose()
 		.map_err(|e| NodeError::DnsResolution(Box::new(e)))?;
 
@@ -45,7 +43,7 @@ pub(crate) async fn resolve_endpoint(
 /// Retry a connection attempt with exponential backoff.
 ///
 /// Calls `create_and_connect` in a loop. On success, returns the result.
-/// On non-retryable errors (cert/PSK failures), returns immediately.
+/// On dead errors (TLS/cert failures), returns immediately.
 /// On transient errors, retries with exponential backoff up to [`MAX_RETRY_DELAY`].
 pub(crate) async fn connect_with_retry<T, E, F, Fut>(create_and_connect: F) -> Result<T, NodeError>
 where
@@ -59,11 +57,12 @@ where
 		match create_and_connect().await {
 			Ok(result) => return Ok(result),
 			Err(e) => {
-				if crate::is_nonretryable_error(&e) {
-					tracing::error!("Connection failed (not retrying): {e}");
-					return Err(NodeError::Transport(Box::new(e)));
+				let err = NodeError::Transport(Box::new(e));
+				if !err.is_retryable() {
+					tracing::error!("Connection failed (not retrying): {err}");
+					return Err(err);
 				}
-				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				tracing::warn!("Connection failed: {err}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
@@ -99,11 +98,12 @@ where
 				tokio::time::sleep(reconnect_delay).await;
 			}
 			Err(e) => {
-				if crate::is_nonretryable_error(&e) {
-					tracing::error!("Connection failed (not retrying): {e}");
-					return Err(NodeError::Transport(Box::new(e)));
+				let err = NodeError::Transport(Box::new(e));
+				if !err.is_retryable() {
+					tracing::error!("Connection failed (not retrying): {err}");
+					return Err(err);
 				}
-				tracing::warn!("Connection failed: {e}, retrying in {retry_delay:?}...");
+				tracing::warn!("Connection failed: {err}, retrying in {retry_delay:?}...");
 				tokio::time::sleep(retry_delay).await;
 				retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
 			}
