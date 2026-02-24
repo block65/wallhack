@@ -59,7 +59,9 @@ message DaemonNotification {
 
 // ── Request messages ────────────────────────────────────────────────
 
-message PingRequest {}
+message PingRequest {
+  string peer = 1;  // prefix to match; empty = auto-select sole peer
+}
 
 message StatusRequest {}
 
@@ -179,6 +181,7 @@ enum ErrorCode {
   ERROR_CODE_ALREADY_LISTENING = 6;
   ERROR_CODE_NOT_CONNECTED = 7;
   ERROR_CODE_INTERNAL = 8;
+  ERROR_CODE_PEER_AMBIGUOUS = 9;
 }
 
 message OkResponse {}

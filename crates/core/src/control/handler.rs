@@ -317,12 +317,10 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn add_route(&self, cidr: crate::Cidr, peer: String) -> crate::node_api::Result<()> {
-        // Check if peer exists
-        if self.peers.get(&peer).is_none() {
-            return Err(crate::node_api::NodeApiError::PeerNotFound(peer));
-        }
+        // Resolve peer name by prefix (will error if not found or ambiguous)
+        let peer_info = self.peers.find_by_prefix(&peer)?;
 
-        self.routes.add(cidr, peer);
+        self.routes.add(cidr, peer_info.name);
         Ok(())
     }
 
@@ -334,8 +332,11 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
+        // Resolve peer name by prefix (will error if not found or ambiguous)
+        let peer_info = self.peers.find_by_prefix(&peer)?;
+
         self.peers
-            .unregister(&peer)
+            .unregister(&peer_info.name)
             .map(|_| ())
             .ok_or(crate::node_api::NodeApiError::PeerNotFound(peer))
     }

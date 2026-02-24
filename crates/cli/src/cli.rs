@@ -14,10 +14,9 @@ pub struct Cli {
 #[argh(subcommand)]
 pub enum CtlCommand {
     Ping(PingCmd),
-    Status(StatusCmd),
+    Info(InfoCmd),
     Stats(StatsCmd),
     Peers(PeersCmd),
-    Routes(RoutesCmd),
     Route(RouteCmd),
     Connect(ConnectCmd),
     Listen(ListenCmd),
@@ -25,15 +24,19 @@ pub enum CtlCommand {
     Shutdown(ShutdownCmd),
 }
 
-/// Ping the daemon.
+/// Ping the daemon or a peer.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "ping")]
-pub struct PingCmd {}
+pub struct PingCmd {
+    /// peer name prefix to ping (auto-selects sole peer if omitted)
+    #[argh(positional)]
+    pub peer: Option<String>,
+}
 
-/// Show daemon status.
+/// Show daemon info.
 #[derive(FromArgs, Debug)]
-#[argh(subcommand, name = "status")]
-pub struct StatusCmd {}
+#[argh(subcommand, name = "info")]
+pub struct InfoCmd {}
 
 /// Show traffic statistics.
 #[derive(FromArgs, Debug)]
@@ -44,11 +47,6 @@ pub struct StatsCmd {}
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "peers")]
 pub struct PeersCmd {}
-
-/// List routes.
-#[derive(FromArgs, Debug)]
-#[argh(subcommand, name = "routes")]
-pub struct RoutesCmd {}
 
 /// Manage routes.
 #[derive(FromArgs, Debug)]
@@ -62,9 +60,15 @@ pub struct RouteCmd {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand)]
 pub enum RouteAction {
+    List(RouteListCmd),
     Add(RouteAddCmd),
     Remove(RouteRemoveCmd),
 }
+
+/// List routes.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "list")]
+pub struct RouteListCmd {}
 
 /// Add a route.
 #[derive(FromArgs, Debug)]

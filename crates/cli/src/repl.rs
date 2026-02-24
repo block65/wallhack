@@ -3,22 +3,25 @@
 //! Uses `reedline` for line editing and history. Commands map to IPC
 //! management requests; no new IPC features are introduced.
 
-use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
-use tokio::net::UnixStream;
+use reedline::{DefaultPrompt, DefaultPromptSegment, ExternalPrinter, Reedline, Signal};
+use tokio::io::{AsyncRead, AsyncWrite};
 use wallhack_wire::management::management_request;
 
 use crate::{ipc, output};
 
 /// Run the interactive REPL.
 ///
-/// Connects to the daemon's IPC socket, then enters a read-eval-print loop.
-/// Reconnects automatically if the socket connection is lost.
+/// Takes an already-connected stream to the daemon (in-process duplex or
+/// external Unix socket). Commands are sent as IPC requests over that stream.
+/// The `printer` is used to safely print log output without corrupting the prompt.
 ///
 /// # Errors
 ///
 /// Returns error for fatal failures (e.g. terminal I/O).
-#[allow(clippy::missing_panics_doc)] // stream is always Some when unwrap is called
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    printer: ExternalPrinter<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let history_path = dirs_home().join(".wallhack_history");
     let history: Box<dyn reedline::History> =
         match reedline::FileBackedHistory::with_file(1000, history_path) {
@@ -37,9 +40,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         DefaultPromptSegment::Empty,
     );
 
-    let mut line_editor = Reedline::create().with_history(history);
+    let mut line_editor = Reedline::create()
+        .with_history(history)
+        .with_external_printer(printer);
 
-    let mut stream: Option<UnixStream> = None;
+    println!("{}", crate::version::version_short());
+    println!("Type 'help' for available commands.");
 
     loop {
         match line_editor.read_line(&prompt) {
@@ -55,36 +61,29 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         print_help();
                         continue;
                     }
+                    "version" => {
+                        println!("{}", crate::version::version_short());
+                        continue;
+                    }
                     _ => {}
                 }
 
                 let Some(request) = parse_command(line) else {
-                    eprintln!("unknown command: {line}");
-                    eprintln!("Type 'help' for available commands.");
+                    eprintln!(
+                        "error: unknown command: {line} (type 'help' for available commands)"
+                    );
                     continue;
                 };
 
-                // Ensure we have a connection, reconnecting if needed.
-                if stream.is_none() {
-                    match ipc::connect().await {
-                        Ok(s) => stream = Some(s),
-                        Err(e) => {
-                            eprintln!("cannot connect to daemon: {e}");
-                            continue;
-                        }
-                    }
-                }
-
-                match ipc::send_request(stream.as_mut().unwrap(), request).await {
+                match ipc::send_request(&mut stream, request).await {
                     Ok(resp) => {
                         if let Err(e) = output::print_response(&resp) {
-                            eprintln!("{e}");
+                            eprintln!("error: {e}");
                         }
                     }
                     Err(e) => {
-                        eprintln!("IPC error: {e}");
-                        // Drop the broken connection so we reconnect next time.
-                        stream = None;
+                        eprintln!("error: {e}");
+                        break;
                     }
                 }
             }
@@ -93,7 +92,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             Err(e) => {
-                eprintln!("readline error: {e}");
+                eprintln!("error: {e}");
                 break;
             }
         }
@@ -108,26 +107,23 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
     let cmd = *parts.first()?;
 
     match cmd {
-        "ping" => Some(management_request::Request::Ping(
-            wallhack_wire::management::PingRequest {},
-        )),
-        "status" | "info" => Some(management_request::Request::Status(
-            wallhack_wire::management::StatusRequest {},
-        )),
-        "version" => {
-            println!("{}", crate::version::version_short());
+        "ping" => {
+            let peer = parts
+                .get(1)
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default();
             Some(management_request::Request::Ping(
-                wallhack_wire::management::PingRequest {},
+                wallhack_wire::management::PingRequest { peer },
             ))
         }
+        "info" => Some(management_request::Request::Status(
+            wallhack_wire::management::StatusRequest {},
+        )),
         "stats" => Some(management_request::Request::Stats(
             wallhack_wire::management::StatsRequest {},
         )),
         "peers" => Some(management_request::Request::Peers(
             wallhack_wire::management::PeersRequest {},
-        )),
-        "routes" => Some(management_request::Request::Routes(
-            wallhack_wire::management::RoutesRequest {},
         )),
         "route" => parse_route_command(&parts),
         "connect" => {
@@ -168,7 +164,7 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
 
 /// Parse route sub-commands: `route add <cidr> [via] <peer>`, `route del <cidr>`.
 fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
-    let sub = *parts.get(1)?;
+    let sub = parts.get(1).copied().unwrap_or("list");
     match sub {
         "add" => {
             let cidr = (*parts.get(2)?).to_string();
@@ -179,13 +175,13 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
                 wallhack_wire::management::AddRouteRequest { cidr, peer },
             ))
         }
-        "del" | "remove" | "rm" => {
+        "del" | "remove" => {
             let cidr = (*parts.get(2)?).to_string();
             Some(management_request::Request::RemoveRoute(
                 wallhack_wire::management::RemoveRouteRequest { cidr },
             ))
         }
-        "list" | "ls" => Some(management_request::Request::Routes(
+        "list" | "" => Some(management_request::Request::Routes(
             wallhack_wire::management::RoutesRequest {},
         )),
         _ => None,
@@ -193,24 +189,26 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
 }
 
 fn print_help() {
-    println!(
-        "\
-Commands:
-  ping                         Ping the daemon
-  status / info                Show daemon status
-  version                      Show CLI and daemon version
-  stats                        Show traffic statistics
-  peers                        List connected peers
-  routes / route list          List configured routes
-  route add <cidr> [via] <peer>  Add a route
-  route del <cidr>             Remove a route
-  connect <addr>               Connect to a peer
-  listen <addr>                Start listening for connections
-  disconnect [peer]            Disconnect (upstream or specific peer)
-  shutdown                     Shut down the daemon
-  help / ?                     Show this help
-  quit / exit                  Exit the REPL"
-    );
+    use std::io::Write;
+    use tabwriter::TabWriter;
+
+    let mut tw = TabWriter::new(std::io::stdout());
+    let _ = writeln!(tw, "Commands:");
+    let _ = writeln!(tw, "  ping [<peer>]\tPing the daemon or a peer");
+    let _ = writeln!(tw, "  info\tShow daemon info");
+    let _ = writeln!(tw, "  version\tShow version");
+    let _ = writeln!(tw, "  stats\tShow traffic statistics");
+    let _ = writeln!(tw, "  peers\tList connected peers");
+    let _ = writeln!(tw, "  route\tList configured routes");
+    let _ = writeln!(tw, "  route add <cidr> <peer>\tAdd a route");
+    let _ = writeln!(tw, "  route del <cidr>\tRemove a route");
+    let _ = writeln!(tw, "  connect <addr>\tConnect to a peer");
+    let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
+    let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");
+    let _ = writeln!(tw, "  shutdown\tShut down the daemon");
+    let _ = writeln!(tw, "  help / ?\tShow this help");
+    let _ = writeln!(tw, "  quit \tQuit the REPL");
+    let _ = tw.flush();
 }
 
 /// Return the user's home directory.

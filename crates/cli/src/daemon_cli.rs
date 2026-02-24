@@ -6,11 +6,11 @@
 //! # Examples
 //!
 //! ```text
-//! wallhack daemon entry --listen :6565
-//! wallhack daemon entry --connect host:443
-//! wallhack daemon exit --connect host:6565
-//! wallhack daemon exit --listen :443
-//! wallhack daemon relay --connect up:443 --listen :6565
+//! wallhack entry --listen :6565
+//! wallhack entry --connect host:443
+//! wallhack exit --connect host:6565
+//! wallhack exit --listen :443
+//! wallhack relay --connect up:443 --listen :6565
 //! ```
 
 use std::{path::PathBuf, time::Duration};
