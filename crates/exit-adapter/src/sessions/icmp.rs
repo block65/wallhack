@@ -28,6 +28,9 @@ impl IcmpSession {
 		}
 	}
 
+	/// Maximum time to wait for an ICMP echo reply before giving up.
+	const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 	pub async fn echo_request(
 		&self,
 		data: &[u8],
@@ -75,8 +78,9 @@ impl IcmpSession {
 
 		tracing::trace!("Sent ICMP echo request status {:?}. Waiting to rx", status);
 
-		// NOTE: this will wait forever until data is received
-		self.recv(recv_buf).await
+		tokio::time::timeout(Self::REPLY_TIMEOUT, self.recv(recv_buf))
+			.await
+			.map_err(RuntimeError::from)?
 	}
 }
 
