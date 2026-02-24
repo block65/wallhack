@@ -28,8 +28,9 @@ use tokio_tungstenite::tungstenite::Message;
 ///   handled separately
 pub struct WebSocketByteStream<S> {
 	inner: S,
-	read_buf: Vec<u8>,
-	read_pos: usize,
+	/// Unconsumed bytes from the tail of the last binary message.
+	/// Stored as [`Bytes`] so partial-read overflow is a zero-copy slice.
+	read_buf: Bytes,
 }
 
 impl<S> WebSocketByteStream<S> {
@@ -38,8 +39,7 @@ impl<S> WebSocketByteStream<S> {
 	pub fn new(inner: S) -> Self {
 		Self {
 			inner,
-			read_buf: Vec::new(),
-			read_pos: 0,
+			read_buf: Bytes::new(),
 		}
 	}
 
@@ -70,19 +70,11 @@ where
 		cx: &mut Context<'_>,
 		buf: &mut ReadBuf<'_>,
 	) -> Poll<io::Result<()>> {
-		// First, drain any buffered data from a previous message
-		if self.read_pos < self.read_buf.len() {
-			let remaining = &self.read_buf[self.read_pos..];
-			let to_copy = remaining.len().min(buf.remaining());
-			buf.put_slice(&remaining[..to_copy]);
-			self.read_pos += to_copy;
-
-			// If we've consumed the entire buffer, clear it
-			if self.read_pos >= self.read_buf.len() {
-				self.read_buf.clear();
-				self.read_pos = 0;
-			}
-
+		// Drain any leftover bytes from a previous message first.
+		if !self.read_buf.is_empty() {
+			let to_copy = self.read_buf.len().min(buf.remaining());
+			buf.put_slice(&self.read_buf[..to_copy]);
+			self.read_buf = self.read_buf.slice(to_copy..);
 			return Poll::Ready(Ok(()));
 		}
 
@@ -99,10 +91,9 @@ where
 							let to_copy = data.len().min(buf.remaining());
 							buf.put_slice(&data[..to_copy]);
 
-							// Buffer any remaining data
+							// Buffer the tail — zero-copy slice of the existing Bytes.
 							if to_copy < data.len() {
-								self.read_buf = data.into();
-								self.read_pos = to_copy;
+								self.read_buf = data.slice(to_copy..);
 							}
 
 							return Poll::Ready(Ok(()));
