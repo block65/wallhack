@@ -1,12 +1,12 @@
 use crate::{ClientConfig, ServerConfig};
 
 pub enum RoleConfig {
-	Server(ServerConfig),
-	Client(ClientConfig),
+    Server(ServerConfig),
+    Client(ClientConfig),
 }
 
 pub struct HostConfig {
-	pub tun: Option<String>,
+    pub tun: Option<String>,
 
-	pub role: RoleConfig,
+    pub role: RoleConfig,
 }

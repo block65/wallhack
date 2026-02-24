@@ -5,24 +5,24 @@ use argh::FromArgs;
 /// Control the wallhack daemon.
 #[derive(FromArgs, Debug)]
 pub struct Cli {
-	#[argh(subcommand)]
-	pub command: CtlCommand,
+    #[argh(subcommand)]
+    pub command: CtlCommand,
 }
 
 /// Available control commands.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand)]
 pub enum CtlCommand {
-	Ping(PingCmd),
-	Status(StatusCmd),
-	Stats(StatsCmd),
-	Peers(PeersCmd),
-	Routes(RoutesCmd),
-	Route(RouteCmd),
-	Connect(ConnectCmd),
-	Listen(ListenCmd),
-	Disconnect(DisconnectCmd),
-	Shutdown(ShutdownCmd),
+    Ping(PingCmd),
+    Status(StatusCmd),
+    Stats(StatsCmd),
+    Peers(PeersCmd),
+    Routes(RoutesCmd),
+    Route(RouteCmd),
+    Connect(ConnectCmd),
+    Listen(ListenCmd),
+    Disconnect(DisconnectCmd),
+    Shutdown(ShutdownCmd),
 }
 
 /// Ping the daemon.
@@ -54,56 +54,56 @@ pub struct RoutesCmd {}
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "route")]
 pub struct RouteCmd {
-	#[argh(subcommand)]
-	pub action: RouteAction,
+    #[argh(subcommand)]
+    pub action: RouteAction,
 }
 
 /// Route sub-commands.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand)]
 pub enum RouteAction {
-	Add(RouteAddCmd),
-	Remove(RouteRemoveCmd),
+    Add(RouteAddCmd),
+    Remove(RouteRemoveCmd),
 }
 
 /// Add a route.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "add")]
 pub struct RouteAddCmd {
-	/// CIDR to route (e.g. "10.0.0.0/8")
-	#[argh(positional)]
-	pub cidr: String,
+    /// CIDR to route (e.g. "10.0.0.0/8")
+    #[argh(positional)]
+    pub cidr: String,
 
-	/// target peer name
-	#[argh(option, long = "peer")]
-	pub peer: String,
+    /// target peer name
+    #[argh(option, long = "peer")]
+    pub peer: String,
 }
 
 /// Remove a route.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "remove")]
 pub struct RouteRemoveCmd {
-	/// CIDR to remove (e.g. "10.0.0.0/8")
-	#[argh(positional)]
-	pub cidr: String,
+    /// CIDR to remove (e.g. "10.0.0.0/8")
+    #[argh(positional)]
+    pub cidr: String,
 }
 
 /// Connect to a peer.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "connect")]
 pub struct ConnectCmd {
-	/// address to connect to (e.g. "host:6565")
-	#[argh(positional)]
-	pub addr: String,
+    /// address to connect to (e.g. "host:6565")
+    #[argh(positional)]
+    pub addr: String,
 }
 
 /// Start listening for connections.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "listen")]
 pub struct ListenCmd {
-	/// address to listen on (e.g. ":6565")
-	#[argh(positional)]
-	pub addr: String,
+    /// address to listen on (e.g. ":6565")
+    #[argh(positional)]
+    pub addr: String,
 }
 
 /// Disconnect from upstream peer.

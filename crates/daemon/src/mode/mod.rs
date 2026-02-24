@@ -12,15 +12,15 @@ use std::sync::Arc;
 use wallhack_core::control::{metrics::Metrics, peers::Registry, routes::SharedRouteTable};
 
 use crate::{
-	NodeError,
-	daemon_config::{DaemonConfig, ModeConfig},
+    NodeError,
+    daemon_config::{DaemonConfig, ModeConfig},
 };
 
 /// Shared resources available to all node modes.
 pub(crate) struct NodeResources {
-	pub metrics: Arc<Metrics>,
-	pub peers: Arc<Registry>,
-	pub routes: SharedRouteTable,
+    pub metrics: Arc<Metrics>,
+    pub peers: Arc<Registry>,
+    pub routes: SharedRouteTable,
 }
 
 /// Dispatch to the appropriate node mode based on the config.
@@ -29,18 +29,18 @@ pub(crate) struct NodeResources {
 ///
 /// Returns error if the selected mode fails.
 pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Result<(), NodeError> {
-	match &config.mode {
-		ModeConfig::Entry(cfg) => {
-			entry::run(
-				&config.global,
-				cfg,
-				resources.metrics,
-				resources.peers,
-				resources.routes,
-			)
-			.await
-		}
-		ModeConfig::Exit(cfg) => exit::run(&config.global, cfg, resources.metrics).await,
-		ModeConfig::Relay(cfg) => relay::run(&config.global, cfg, resources.metrics).await,
-	}
+    match &config.mode {
+        ModeConfig::Entry(cfg) => {
+            entry::run(
+                &config.global,
+                cfg,
+                resources.metrics,
+                resources.peers,
+                resources.routes,
+            )
+            .await
+        }
+        ModeConfig::Exit(cfg) => exit::run(&config.global, cfg, resources.metrics).await,
+        ModeConfig::Relay(cfg) => relay::run(&config.global, cfg, resources.metrics).await,
+    }
 }

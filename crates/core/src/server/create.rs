@@ -8,64 +8,64 @@ use super::config;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-	#[error("tls config error: {0}")]
-	StartTls(#[from] quinn::crypto::rustls::NoInitialCipherSuite),
+    #[error("tls config error: {0}")]
+    StartTls(#[from] quinn::crypto::rustls::NoInitialCipherSuite),
 
-	#[error("io error: {0}")]
-	Io(#[from] std::io::Error),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 
-	#[error("server tls error: {0}")]
-	ServerTls(#[from] ServerTlsError),
+    #[error("server tls error: {0}")]
+    ServerTls(#[from] ServerTlsError),
 
-	#[error("tls error: {0}")]
-	Tls(#[from] rustls::Error),
+    #[error("tls error: {0}")]
+    Tls(#[from] rustls::Error),
 
-	// quinn::VarIntBoundsExceeded
-	#[error("quinn bounds error: {0}")]
-	Quinn(#[from] quinn::VarIntBoundsExceeded),
+    // quinn::VarIntBoundsExceeded
+    #[error("quinn bounds error: {0}")]
+    Quinn(#[from] quinn::VarIntBoundsExceeded),
 
-	#[error("{source} (addr {addr})")]
-	Endpoint {
-		source: std::io::Error,
+    #[error("{source} (addr {addr})")]
+    Endpoint {
+        source: std::io::Error,
 
-		addr: std::net::SocketAddr,
-	},
+        addr: std::net::SocketAddr,
+    },
 }
 
 pub fn create(config: config::ServerConfig) -> Result<quinn::Endpoint, Error> {
-	let (cert_der, priv_key, _fingerprint) = configure_crypto(config.tls)?;
+    let (cert_der, priv_key, _fingerprint) = configure_crypto(config.tls)?;
 
-	let mut server_crypto = rustls::ServerConfig::builder()
-		.with_no_client_auth()
-		.with_single_cert(cert_der, priv_key)?;
+    let mut server_crypto = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_der, priv_key)?;
 
-	server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
+    server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
 
-	let mut server_config =
-		quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
+    let mut server_config =
+        quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
 
-	let transport_config = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
-		std::io::Error::other("Failed to get mutable reference to transport config")
-	})?;
+    let transport_config = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
+        std::io::Error::other("Failed to get mutable reference to transport config")
+    })?;
 
-	let timeout = IdleTimeout::try_from(Duration::from_secs(10))?;
-	transport_config.max_idle_timeout(Some(timeout));
-	transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-	// Cap at 1024 to match standard ulimit - protects exit node resources
-	// Entry node can queue more; quinn handles backpressure automatically
-	transport_config.max_concurrent_bidi_streams(1_024u32.into());
-	transport_config.max_concurrent_uni_streams(256u32.into());
+    let timeout = IdleTimeout::try_from(Duration::from_secs(10))?;
+    transport_config.max_idle_timeout(Some(timeout));
+    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+    // Cap at 1024 to match standard ulimit - protects exit node resources
+    // Entry node can queue more; quinn handles backpressure automatically
+    transport_config.max_concurrent_bidi_streams(1_024u32.into());
+    transport_config.max_concurrent_uni_streams(256u32.into());
 
-	tracing::trace!("Server Config {:?}", server_config);
-	// tracing::trace!("will listen on {}", config.listen);
+    tracing::trace!("Server Config {:?}", server_config);
+    // tracing::trace!("will listen on {}", config.listen);
 
-	let endpoint =
-		quinn::Endpoint::server(server_config, config.listen).map_err(|e| Error::Endpoint {
-			source: e,
-			addr: config.listen,
-		})?;
+    let endpoint =
+        quinn::Endpoint::server(server_config, config.listen).map_err(|e| Error::Endpoint {
+            source: e,
+            addr: config.listen,
+        })?;
 
-	tracing::debug!("Listening on {:?}", endpoint.local_addr().ok());
+    tracing::debug!("Listening on {:?}", endpoint.local_addr().ok());
 
-	Ok(endpoint)
+    Ok(endpoint)
 }
