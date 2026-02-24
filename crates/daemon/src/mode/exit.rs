@@ -21,9 +21,10 @@ use wallhack_core::{
 };
 
 use crate::{
-	NodeError, WallhackCli,
-	cli::{ExitCommand, Protocol, TransportDir},
+	NodeError,
+	address_spec::{AddressSpec, ConnectivitySpec, Protocol},
 	config::SecurityParams,
+	daemon_config::{ExitConfig, GlobalConfig},
 };
 
 /// Delay before reconnecting after an established session drops.
@@ -40,42 +41,37 @@ const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 ///
 /// Returns error if orchestrator fails (connection errors are retried).
 pub async fn run(
-	global: &WallhackCli,
-	cmd: &ExitCommand,
+	global: &GlobalConfig,
+	cfg: &ExitConfig,
 	metrics: Arc<Metrics>,
 ) -> Result<(), NodeError> {
-	let transport = cmd.transport().map_err(NodeError::Config)?;
-	let name = cmd.name();
-	tracing::info!(
-		"wallhack {}  {name}",
-		crate::version::built_info::PKG_VERSION
-	);
 	let security = SecurityParams {
-		psk: global.resolve_psk(),
-		accept_fingerprint: cmd.accept_fingerprint.clone(),
+		psk: global.psk.clone(),
+		accept_fingerprint: cfg.accept_fingerprint.clone(),
 	};
 
-	match transport {
-		TransportDir::Both { connect, listen } => {
-			run_relay_capability_mode(global, &name, &connect, &listen, &metrics).await
+	match &cfg.connectivity {
+		ConnectivitySpec::Both { connect, listen } => {
+			run_relay_capability_mode(global, &cfg.name, connect, listen, &metrics).await
 		}
-		TransportDir::Connect(spec) => {
-			run_connect_mode(global, &name, &spec, &metrics, &security).await
+		ConnectivitySpec::Connect(spec) => {
+			run_connect_mode(global, &cfg.name, spec, &metrics, &security).await
 		}
-		TransportDir::Listen(spec) => run_listen_mode(global, &name, &spec, &metrics).await,
+		ConnectivitySpec::Listen(spec) => run_listen_mode(global, &cfg.name, spec, &metrics).await,
 	}
 }
 
 /// Run in connect-only mode (standard exit).
 async fn run_connect_mode(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	name: &str,
-	spec: &crate::cli::AddressSpec,
+	spec: &AddressSpec,
 	metrics: &Arc<Metrics>,
 	security: &SecurityParams,
 ) -> Result<(), NodeError> {
 	tracing::info!("Connecting to {}...", spec.addr);
-	let endpoint = crate::transport::resolve_endpoint(&spec.addr, global).await?;
+	let endpoint =
+		crate::transport::resolve_endpoint(&spec.addr, global.dns_server.as_deref()).await?;
 	let peer_addr = endpoint.to_string();
 
 	match spec.protocol {
@@ -151,19 +147,21 @@ async fn run_connect_mode(
 
 /// Run with relay capability (both connect and listen).
 async fn run_relay_capability_mode(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	name: &str,
-	connect_spec: &crate::cli::AddressSpec,
-	listen_spec: &crate::cli::AddressSpec,
+	connect_spec: &AddressSpec,
+	listen_spec: &AddressSpec,
 	metrics: &Arc<Metrics>,
 ) -> Result<(), NodeError> {
 	tracing::info!("Connecting to {}...", connect_spec.addr);
-	let peer_addr = crate::transport::resolve_endpoint(&connect_spec.addr, global).await?;
+	let peer_addr =
+		crate::transport::resolve_endpoint(&connect_spec.addr, global.dns_server.as_deref())
+			.await?;
 	let listen_addr: std::net::SocketAddr =
 		listen_spec.addr.parse::<crate::net::ListenAddr>()?.into();
 
 	let security = SecurityParams {
-		psk: global.resolve_psk(),
+		psk: global.psk.clone(),
 		accept_fingerprint: None,
 	};
 
@@ -191,7 +189,7 @@ async fn run_relay_capability_mode(
 
 #[cfg(feature = "quic")]
 async fn run_quic_relay_capability(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	peer_addr: std::net::SocketAddr,
 	listen_addr: std::net::SocketAddr,
 	name: &str,
@@ -226,7 +224,7 @@ async fn run_quic_relay_capability(
 		routes: None,
 	};
 	let server_config =
-		crate::config::build_server_config(global, listen_addr, global.resolve_psk(), None);
+		crate::config::build_server_config(&global.tls, listen_addr, global.psk.clone(), None);
 	let mut server =
 		wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
 			.map_err(|e| NodeError::Transport(Box::new(e)))?;
@@ -240,7 +238,7 @@ async fn run_quic_relay_capability(
 
 #[cfg(feature = "websocket")]
 async fn run_ws_relay_capability(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	peer_addr: std::net::SocketAddr,
 	listen_addr: std::net::SocketAddr,
 	name: &str,
@@ -270,7 +268,7 @@ async fn run_ws_relay_capability(
 		routes: None,
 	};
 	let server_config =
-		crate::config::build_server_config(global, listen_addr, global.resolve_psk(), None);
+		crate::config::build_server_config(&global.tls, listen_addr, global.psk.clone(), None);
 	let mut server =
 		wallhack_core::server::ws::WebSocketServer::try_new(server_config, server_options)?;
 	let bound = server.local_addr()?;
@@ -311,9 +309,9 @@ where
 
 /// Run in listen mode.
 async fn run_listen_mode(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	_node_name: &str,
-	spec: &crate::cli::AddressSpec,
+	spec: &AddressSpec,
 	metrics: &Arc<Metrics>,
 ) -> Result<(), NodeError> {
 	use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
@@ -328,7 +326,7 @@ async fn run_listen_mode(
 	};
 
 	let server_config =
-		crate::config::build_server_config(global, addr, global.resolve_psk(), None);
+		crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
 
 	match spec.protocol {
 		Protocol::Udp => {

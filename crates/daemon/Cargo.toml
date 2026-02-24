@@ -17,8 +17,6 @@ websocket = ["wallhack-core/websocket"]
 http-api = ["dep:wallhack-api"]
 
 [dependencies]
-anyhow = "1"
-argh = "0.1"
 hickory-resolver = { version = "0.25", default-features = false, features = [
   "tokio",
 ], optional = true }
@@ -35,14 +33,7 @@ wallhack-core = { path = "../core", default-features = false }
 wallhack-api = { path = "../api", optional = true }
 subtle = "2"
 console-subscriber = { workspace = true, optional = true }
-rand = { version = "0.9", default-features = false, features = [
-  "std",
-  "std_rng",
-] }
 parking_lot = "0.12.5"
-
-[build-dependencies]
-built = { version = "0.7", features = ["git2", "chrono"] }
 
 [lints]
 workspace = true

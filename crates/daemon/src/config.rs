@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 
 use wallhack_core::server::config::{ServerConfig, TlsConfig};
 
-use crate::WallhackCli;
+use crate::daemon_config::{GlobalConfig, TlsParams};
 
 #[cfg(feature = "quic")]
 use wallhack_core::client::config::{ClientConfig, MtlsConfig};
@@ -18,30 +18,30 @@ pub(crate) struct SecurityParams {
 	pub accept_fingerprint: Option<String>,
 }
 
-/// Build a [`TlsConfig`] from CLI certificate/key options.
+/// Build a [`TlsConfig`] from TLS parameters.
 ///
 /// Returns `None` if either cert or key is not provided.
-pub(crate) fn build_tls_config(global: &WallhackCli) -> Option<TlsConfig> {
-	match (&global.cert, &global.key) {
+pub(crate) fn build_tls_config(tls: &TlsParams) -> Option<TlsConfig> {
+	match (&tls.cert, &tls.key) {
 		(Some(cert), Some(key)) => Some(TlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
-			ca_roots: global.ca.clone(),
+			ca_roots: tls.ca.clone(),
 		}),
 		_ => None,
 	}
 }
 
-/// Build an [`MtlsConfig`] from CLI certificate/key options.
+/// Build an [`MtlsConfig`] from TLS parameters.
 ///
 /// Returns `None` if either cert or key is not provided.
 #[cfg(feature = "quic")]
-pub(crate) fn build_mtls_config(global: &WallhackCli) -> Option<MtlsConfig> {
-	match (&global.cert, &global.key) {
+pub(crate) fn build_mtls_config(tls: &TlsParams) -> Option<MtlsConfig> {
+	match (&tls.cert, &tls.key) {
 		(Some(cert), Some(key)) => Some(MtlsConfig {
 			cert_pem_file: cert.clone(),
 			key_pem_file: key.clone(),
-			ca_roots: global.ca.clone(),
+			ca_roots: tls.ca.clone(),
 		}),
 		_ => None,
 	}
@@ -49,14 +49,14 @@ pub(crate) fn build_mtls_config(global: &WallhackCli) -> Option<MtlsConfig> {
 
 /// Build a [`ServerConfig`] for any node mode.
 pub(crate) fn build_server_config(
-	global: &WallhackCli,
+	tls: &TlsParams,
 	addr: SocketAddr,
 	psk: Option<String>,
 	max_peers: Option<usize>,
 ) -> ServerConfig {
 	ServerConfig {
 		listen: addr,
-		tls: build_tls_config(global),
+		tls: build_tls_config(tls),
 		psk,
 		max_peers,
 	}
@@ -65,7 +65,7 @@ pub(crate) fn build_server_config(
 /// Build a QUIC [`ClientConfig`] with full security options.
 #[cfg(feature = "quic")]
 pub(crate) fn build_quic_client_config(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	endpoint: SocketAddr,
 	name: Option<String>,
 	security: &SecurityParams,
@@ -75,7 +75,7 @@ pub(crate) fn build_quic_client_config(
 	ClientConfig {
 		addr: endpoint,
 		hostname: global.hostname.clone(),
-		mtls: build_mtls_config(global),
+		mtls: build_mtls_config(&global.tls),
 		name,
 		psk: security.psk.clone(),
 		accept_fingerprint: security.accept_fingerprint.clone(),
@@ -86,7 +86,7 @@ pub(crate) fn build_quic_client_config(
 /// Build a WebSocket client config with full security options.
 #[cfg(feature = "websocket")]
 pub(crate) fn build_ws_client_config(
-	global: &WallhackCli,
+	global: &GlobalConfig,
 	endpoint: SocketAddr,
 	name: Option<String>,
 	security: &SecurityParams,
