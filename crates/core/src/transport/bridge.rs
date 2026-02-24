@@ -123,6 +123,7 @@ pub enum ControlLoopExit {
 ///
 /// The `handler` is `Some` on the server side (to process incoming
 /// `ControlRequest`s) and `None` on the client side.
+#[allow(clippy::too_many_lines)] // refactor candidate
 pub async fn run_control_loop<S: BiStream>(
     stream: &mut S,
     outgoing_rx: &mut mpsc::Receiver<ControlMessage>,

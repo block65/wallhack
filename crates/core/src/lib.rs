@@ -1,6 +1,9 @@
 #![feature(ip_as_octets)]
 #![warn(unused_extern_crates)]
 #![warn(clippy::pedantic)]
+// These functions are internal APIs where error types are self-documenting;
+// maintaining # Errors sections on every Result-returning fn is not worth the overhead.
+#![allow(clippy::missing_errors_doc)]
 
 mod tls;
 pub mod types;

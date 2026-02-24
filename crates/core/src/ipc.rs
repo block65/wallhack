@@ -134,6 +134,7 @@ async fn handle_connection(
 }
 
 /// Map a [`ManagementRequest`] to a [`ManagementResponse`] via [`NodeApi`].
+#[allow(clippy::too_many_lines)] // refactor candidate
 fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> ManagementResponse {
     let request_id = request.request_id;
 

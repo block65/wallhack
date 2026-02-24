@@ -116,6 +116,7 @@ struct UdpSession {
 }
 
 impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T> {
+    #[allow(clippy::too_many_lines)] // refactor candidate
     pub async fn run(mut self) -> Result<(), Error>
     where
         D: wallhack_netstack::inner::peek_device::PeekDevice,
