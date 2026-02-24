@@ -120,8 +120,7 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
 	where
 		D: wallhack_netstack::inner::peek_device::PeekDevice,
 	{
-		// Use backlog of 1 - JIT creates sockets on-demand anyway
-		let mut listener = self.stack.tcp_listen_any(1)?;
+		let mut listener = self.stack.tcp_listen_any()?;
 		let mut udp = self.stack.udp_bind_any()?;
 
 		let udp_timeout = Duration::from_secs(30);
