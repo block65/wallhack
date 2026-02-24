@@ -10,7 +10,7 @@ use sha1::{Digest, Sha1};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 /// The WebSocket GUID used in the Sec-WebSocket-Accept calculation.
-const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Maximum size of the HTTP request we'll accept (8KB).
 const MAX_REQUEST_SIZE: usize = 8192;
@@ -182,7 +182,7 @@ where
 fn compute_accept_key(key: &str) -> String {
 	let mut hasher = Sha1::new();
 	hasher.update(key.as_bytes());
-	hasher.update(WS_GUID.as_bytes());
+	hasher.update(WEBSOCKET_GUID.as_bytes());
 	let hash = hasher.finalize();
 	base64::engine::general_purpose::STANDARD.encode(hash)
 }
