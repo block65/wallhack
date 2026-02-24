@@ -5,6 +5,8 @@
 //! mechanisms (QUIC, WebSocket+yamux) allowing the rest of the stack to work
 //! with any compatible transport.
 
+#![feature(trait_alias)]
+
 mod error;
 pub mod traits;
 

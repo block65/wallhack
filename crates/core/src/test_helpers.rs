@@ -48,15 +48,3 @@ pub fn create_test_server() -> anyhow::Result<(quinn::Endpoint, SocketAddr)> {
 	Ok((server, endpoint))
 }
 
-/* pub async fn connect_test_client(
-	endpoint: SocketAddr,
-	timeout: Duration,
-) -> anyhow::Result<quinn::Connection> {
-	let client = client::quic::QuicClient::try_new(ClientConfig {
-		addr: endpoint,
-		..Default::default()
-	})?;
-
-	client.connect().await?
-}
- */

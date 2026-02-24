@@ -1,3 +1,4 @@
+# DONE
 # Trivial Cleanup Sprint
 
 Batch of low-risk, high-confidence fixes. No behaviour changes, no new
