@@ -107,7 +107,7 @@ pub async fn run_ipc_listener(
 ///
 /// Reads requests in a loop, dispatches each to `node_api`, and writes back
 /// the response. The connection closes when the peer disconnects or on error.
-async fn handle_connection(
+pub async fn handle_connection(
     stream: impl AsyncRead + AsyncWrite + Unpin,
     node_api: Arc<dyn NodeApi>,
 ) -> Result<(), TransportError> {
@@ -139,13 +139,25 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
     let request_id = request.request_id;
 
     let response = match &request.request {
-        Some(management_request::Request::Ping(_)) => {
-            let status = api.status();
-            management_response::Response::Ping(PingResponse {
-                uptime_ms: status.uptime_ms,
-                version: status.version,
-                node_role: node_role_to_proto(status.role).into(),
-            })
+        Some(management_request::Request::Ping(req)) => {
+            if req.peer.is_empty() {
+                // Ping the daemon itself
+                let status = api.status();
+                management_response::Response::Ping(PingResponse {
+                    uptime_ms: status.uptime_ms,
+                    version: status.version,
+                    node_role: node_role_to_proto(status.role).into(),
+                })
+            } else {
+                // Peer pinging is not yet implemented
+                return ManagementResponse {
+                    request_id,
+                    response: Some(management_response::Response::Error(ErrorResponse {
+                        code: ErrorCode::NotSupported.into(),
+                        message: "peer ping not yet implemented".to_string(),
+                    })),
+                };
+            }
         }
 
         Some(management_request::Request::Status(_)) => {
@@ -268,6 +280,13 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 fn error_response(e: &NodeApiError) -> management_response::Response {
     let (code, message) = match e {
         NodeApiError::PeerNotFound(p) => (ErrorCode::PeerNotFound, format!("peer not found: {p}")),
+        NodeApiError::PeerAmbiguous(prefix, peers) => {
+            let peers_str = peers.join(", ");
+            (
+                ErrorCode::PeerAmbiguous,
+                format!("peer name '{prefix}' is ambiguous: matches {peers_str}"),
+            )
+        }
         NodeApiError::RouteNotFound(c) => {
             (ErrorCode::RouteNotFound, format!("route not found: {c}"))
         }

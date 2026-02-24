@@ -1,8 +1,32 @@
 //! Output formatting for CLI responses.
 
+use std::io::Write;
+
+use tabwriter::TabWriter;
 use wallhack_wire::management::{self, ManagementResponse, management_response};
 
 use crate::ipc::IpcError;
+
+/// Format an uptime duration in milliseconds into a human-readable string.
+fn format_uptime(ms: u64) -> String {
+    let secs = ms / 1000;
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let mins = secs / 60;
+    let secs = secs % 60;
+    if mins < 60 {
+        return format!("{mins}m {secs}s");
+    }
+    let hours = mins / 60;
+    let mins = mins % 60;
+    if hours < 24 {
+        return format!("{hours}h {mins}m");
+    }
+    let days = hours / 24;
+    let hours = hours % 24;
+    format!("{days}d {hours}h")
+}
 
 /// Print a management response to stdout.
 ///
@@ -11,46 +35,43 @@ use crate::ipc::IpcError;
 /// Returns an error if the response contains an error from the daemon.
 pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
     match &resp.response {
-        Some(management_response::Response::Ping(p)) => {
-            let role = role_str(p.node_role());
-            println!(
-                "pong  role={role}  uptime={}ms  version={}",
-                p.uptime_ms, p.version
-            );
-        }
         Some(management_response::Response::Status(s)) => {
             let role = role_str(s.role());
             let capability = capability_str(s.capability());
             let connected = if s.connected { "yes" } else { "no" };
-            println!("role:        {role}");
-            println!("connected:   {connected}");
+            let uptime = format_uptime(s.uptime_ms);
+
+            let mut tw = TabWriter::new(std::io::stdout());
+            let _ = writeln!(tw, "role:\t{role}");
+            let _ = writeln!(tw, "connected:\t{connected}");
             if !s.peer_addr.is_empty() {
-                println!("peer addr:   {}", s.peer_addr);
+                let _ = writeln!(tw, "peer addr:\t{}", s.peer_addr);
             }
-            println!("capability:  {capability}");
+            let _ = writeln!(tw, "capability:\t{capability}");
             if !s.listen_addr.is_empty() {
-                println!("listen addr: {}", s.listen_addr);
+                let _ = writeln!(tw, "listen addr:\t{}", s.listen_addr);
             }
-            println!("version:     {}", s.version);
-            println!("uptime:      {}ms", s.uptime_ms);
+            let _ = writeln!(tw, "version:\t{}", s.version);
+            let _ = writeln!(tw, "uptime:\t{uptime}");
+            let _ = tw.flush();
         }
         Some(management_response::Response::Stats(s)) => {
-            println!("bytes in:     {}", s.bytes_in);
-            println!("bytes out:    {}", s.bytes_out);
-            println!("packets in:   {}", s.packets_in);
-            println!("packets out:  {}", s.packets_out);
-            println!("connections:  {}", s.active_connections);
-            println!("flows:        {}", s.active_flows);
-            println!("dropped:      {}", s.packets_dropped);
+            let mut tw = TabWriter::new(std::io::stdout());
+            let _ = writeln!(tw, "bytes in:\t{}", s.bytes_in);
+            let _ = writeln!(tw, "bytes out:\t{}", s.bytes_out);
+            let _ = writeln!(tw, "packets in:\t{}", s.packets_in);
+            let _ = writeln!(tw, "packets out:\t{}", s.packets_out);
+            let _ = writeln!(tw, "connections:\t{}", s.active_connections);
+            let _ = writeln!(tw, "flows:\t{}", s.active_flows);
+            let _ = writeln!(tw, "dropped:\t{}", s.packets_dropped);
+            let _ = tw.flush();
         }
         Some(management_response::Response::Peers(p)) => {
             if p.peers.is_empty() {
                 println!("No connected peers.");
             } else {
-                println!(
-                    "{:<20} {:<12} {:<22} {:<10} LATENCY",
-                    "NAME", "CAPABILITY", "ADDR", "STATUS"
-                );
+                let mut tw = TabWriter::new(std::io::stdout());
+                let _ = writeln!(tw, "NAME\tCAPABILITY\tADDR\tSTATUS\tLATENCY");
                 for peer in &p.peers {
                     let cap = capability_str(peer.capability());
                     let status = status_str(peer.status());
@@ -59,21 +80,25 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                     } else {
                         "—".to_string()
                     };
-                    println!(
-                        "{:<20} {:<12} {:<22} {:<10} {latency}",
-                        peer.name, cap, peer.addr, status
+                    let _ = writeln!(
+                        tw,
+                        "{}\t{}\t{}\t{}\t{}",
+                        peer.name, cap, peer.addr, status, latency
                     );
                 }
+                let _ = tw.flush();
             }
         }
         Some(management_response::Response::Routes(r)) => {
             if r.routes.is_empty() {
                 println!("No routes configured.");
             } else {
-                println!("{:<20} {:<20}", "CIDR", "PEER");
+                let mut tw = TabWriter::new(std::io::stdout());
+                let _ = writeln!(tw, "CIDR\tPEER");
                 for route in &r.routes {
-                    println!("{:<20} {:<20}", route.cidr, route.peer);
+                    let _ = writeln!(tw, "{}\t{}", route.cidr, route.peer);
                 }
+                let _ = tw.flush();
             }
         }
         Some(management_response::Response::Ok(_)) => {
@@ -81,6 +106,12 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
         }
         Some(management_response::Response::Error(e)) => {
             return Err(CtlError::Daemon(e.message.clone()));
+        }
+        Some(management_response::Response::Ping(_)) => {
+            // Ping response is handled by daemon; not used by CLI currently.
+            return Err(CtlError::Daemon(
+                "unexpected ping response from daemon".to_string(),
+            ));
         }
         None => {
             return Err(CtlError::EmptyResponse);

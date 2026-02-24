@@ -9,7 +9,7 @@ use std::{
 use arc_swap::ArcSwap;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::NodeRole;
+use crate::{NodeRole, node_api::NodeApiError};
 
 /// Request to ping a peer, with a channel to send the result back.
 pub type PingRequest = oneshot::Sender<f64>;
@@ -213,6 +213,38 @@ impl Registry {
             p.latency_measured_at
                 .is_none_or(|t| t.elapsed() > threshold)
         })
+    }
+
+    /// Find a peer by name prefix.
+    ///
+    /// Returns the peer if exactly one peer name starts with the prefix.
+    /// Returns an error if no peers match, or if the prefix is ambiguous.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerNotFound` if no peers match the prefix.
+    /// Returns `PeerAmbiguous` if multiple peers match the prefix.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if a match is found but the iterator is empty,
+    /// which should never happen given the match guard.
+    pub fn find_by_prefix(&self, prefix: &str) -> Result<PeerInfo, NodeApiError> {
+        let peers = self.peers.load();
+        let matches: Vec<_> = peers
+            .values()
+            .filter(|p| p.name.starts_with(prefix))
+            .cloned()
+            .collect();
+
+        match matches.len() {
+            0 => Err(NodeApiError::PeerNotFound(prefix.to_string())),
+            1 => Ok(matches.into_iter().next().expect("match count is 1")),
+            _ => {
+                let names = matches.iter().map(|p| p.name.clone()).collect();
+                Err(NodeApiError::PeerAmbiguous(prefix.to_string(), names))
+            }
+        }
     }
 }
 

@@ -42,6 +42,13 @@ use wallhack_core::{
 ///
 /// Returns [`NodeError`] for node failures.
 pub async fn run_daemon_engine(config: DaemonConfig) -> Result<(), NodeError> {
+    tracing::info!(
+        "{} {}  {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        config.mode.name()
+    );
+
     sys::check_entropy_ready();
 
     let handle = start_node(&config)?;

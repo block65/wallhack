@@ -40,6 +40,17 @@ pub enum ModeConfig {
     Relay(RelayConfig),
 }
 
+impl ModeConfig {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Entry(c) => &c.name,
+            Self::Exit(c) => &c.name,
+            Self::Relay(c) => &c.name,
+        }
+    }
+}
+
 /// Entry node configuration.
 #[derive(Debug, Clone)]
 pub struct EntryConfig {

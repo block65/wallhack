@@ -110,6 +110,8 @@ pub struct NodeStatus {
 pub enum NodeApiError {
     #[error("peer not found: {0}")]
     PeerNotFound(String),
+    #[error("peer name is ambiguous: {0} (matches: {1:?})")]
+    PeerAmbiguous(String, Vec<String>),
     #[error("route not found: {0}")]
     RouteNotFound(Cidr),
     #[error("operation not supported on this node type")]

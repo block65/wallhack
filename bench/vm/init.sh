@@ -143,7 +143,7 @@ _run_exit() {
 
 	echo "WALLHACK_TS: exit_wallhack_start=$(date +%s%3N)"
 	# wallhack exit node — connects to entry (retries with backoff)
-	wallhack ${DEBUG:+"--debug"} exit \
+	wallhack daemon ${DEBUG:+"--debug"} exit \
 		-c "${ENTRY_ETH}:${WH_PORT}${_TSUFFIX}" \
 		--name "${PEER_NAME}" \
 		2>&1 | tee /tmp/wallhack-exit.log &
@@ -340,7 +340,7 @@ _run_entry() {
 
 	echo "WALLHACK_TS: entry_wallhack_start=$(date +%s%3N)"
 	# Start wallhack entry node (listen mode)
-	wallhack ${DEBUG:+"--debug"} entry \
+	wallhack daemon ${DEBUG:+"--debug"} entry \
 		-l ":${WH_PORT}${_TSUFFIX}" \
 		2>&1 | tee /tmp/wallhack-entry.log &
 

@@ -5,7 +5,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use tokio::net::UnixStream;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::UnixStream,
+};
 use wallhack_wire::management::{
     DaemonMessage, ManagementRequest, ManagementResponse, daemon_message, management_request,
 };
@@ -59,7 +62,7 @@ pub async fn connect() -> std::io::Result<UnixStream> {
 /// Returns an error on I/O or framing failure, or if the daemon sends
 /// an unexpected message type.
 pub async fn send_request(
-    stream: &mut UnixStream,
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     request: management_request::Request,
 ) -> Result<ManagementResponse, IpcError> {
     let request_id = REQUEST_ID.fetch_add(1, Ordering::Relaxed);
