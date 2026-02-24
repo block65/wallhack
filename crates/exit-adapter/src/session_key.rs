@@ -2,9 +2,9 @@ use wallhack_wire::SocketSet;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum SessionKey {
-	Tcp(SocketSet),
-	Udp(SocketSet),
-	Icmp((SocketSet, u16)), // (SocketSet, ident)
+    Tcp(SocketSet),
+    Udp(SocketSet),
+    Icmp((SocketSet, u16)), // (SocketSet, ident)
 }
 
 // impl Display for SessionKey {

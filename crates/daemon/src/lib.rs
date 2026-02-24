@@ -18,15 +18,15 @@ use std::sync::Arc;
 use daemon_config::{DaemonConfig, ModeConfig};
 use tokio::sync::watch;
 use wallhack_core::{
-	NodeRole,
-	control::{
-		handler::{Handler, HandlerConfig},
-		metrics::Metrics,
-		peers::Registry,
-		routes::RouteTable,
-	},
-	daemon::DaemonHandle,
-	node_api::NodeApi,
+    NodeRole,
+    control::{
+        handler::{Handler, HandlerConfig},
+        metrics::Metrics,
+        peers::Registry,
+        routes::RouteTable,
+    },
+    daemon::DaemonHandle,
+    node_api::NodeApi,
 };
 
 // ============================================================================
@@ -42,25 +42,25 @@ use wallhack_core::{
 ///
 /// Returns [`NodeError`] for node failures.
 pub async fn run_daemon_engine(config: DaemonConfig) -> Result<(), NodeError> {
-	sys::check_entropy_ready();
+    sys::check_entropy_ready();
 
-	let handle = start_node(&config)?;
+    let handle = start_node(&config)?;
 
-	// Start IPC listener for the management protocol.
-	let socket_path = wallhack_core::ipc::socket_path();
-	let api = handle.api_arc();
-	let shutdown_rx = handle.shutdown_rx();
+    // Start IPC listener for the management protocol.
+    let socket_path = wallhack_core::ipc::socket_path();
+    let api = handle.api_arc();
+    let shutdown_rx = handle.shutdown_rx();
 
-	let ipc_task = tokio::spawn(async move {
-		if let Err(e) = wallhack_core::ipc::run_ipc_listener(api, &socket_path, shutdown_rx).await {
-			tracing::error!("IPC listener error: {e}");
-		}
-	});
+    let ipc_task = tokio::spawn(async move {
+        if let Err(e) = wallhack_core::ipc::run_ipc_listener(api, &socket_path, shutdown_rx).await {
+            tracing::error!("IPC listener error: {e}");
+        }
+    });
 
-	tokio::select! {
-		result = handle.wait() => result.map_err(|e| NodeError::Config(e.to_string())),
-		_ = ipc_task => Ok(()),
-	}
+    tokio::select! {
+        result = handle.wait() => result.map_err(|e| NodeError::Config(e.to_string())),
+        _ = ipc_task => Ok(()),
+    }
 }
 
 // ============================================================================
@@ -76,33 +76,33 @@ pub async fn run_daemon_engine(config: DaemonConfig) -> Result<(), NodeError> {
 ///
 /// Returns error if node setup fails.
 pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
-	let role = match &config.mode {
-		ModeConfig::Entry(_) => NodeRole::Entry,
-		ModeConfig::Exit(_) => NodeRole::Exit,
-		ModeConfig::Relay(_) => NodeRole::Relay,
-	};
+    let role = match &config.mode {
+        ModeConfig::Entry(_) => NodeRole::Entry,
+        ModeConfig::Exit(_) => NodeRole::Exit,
+        ModeConfig::Relay(_) => NodeRole::Relay,
+    };
 
-	let metrics = Arc::new(Metrics::default());
-	let peers = Arc::new(Registry::new());
-	let routes = RouteTable::shared();
+    let metrics = Arc::new(Metrics::default());
+    let peers = Arc::new(Registry::new());
+    let routes = RouteTable::shared();
 
-	let handler = Handler::new(
-		HandlerConfig::new(role),
-		Arc::clone(&metrics),
-		Arc::clone(&peers),
-		Arc::clone(&routes),
-	);
-	let node_api: Arc<dyn NodeApi> = Arc::new(handler);
+    let handler = Handler::new(
+        HandlerConfig::new(role),
+        Arc::clone(&metrics),
+        Arc::clone(&peers),
+        Arc::clone(&routes),
+    );
+    let node_api: Arc<dyn NodeApi> = Arc::new(handler);
 
-	let (shutdown_tx, _shutdown_rx) = watch::channel(());
+    let (shutdown_tx, _shutdown_rx) = watch::channel(());
 
-	let config = config.clone();
-	let resources = mode::NodeResources {
-		metrics,
-		peers,
-		routes,
-	};
-	let task = tokio::spawn(async move { mode::run(&config, resources).await.map_err(Into::into) });
+    let config = config.clone();
+    let resources = mode::NodeResources {
+        metrics,
+        peers,
+        routes,
+    };
+    let task = tokio::spawn(async move { mode::run(&config, resources).await.map_err(Into::into) });
 
-	Ok(DaemonHandle::new(node_api, shutdown_tx, task))
+    Ok(DaemonHandle::new(node_api, shutdown_tx, task))
 }

@@ -17,11 +17,11 @@ use std::{path::PathBuf, time::Duration};
 
 use argh::FromArgs;
 use wallhackd::{
-	address_spec::{AddressSpec, ConnectivitySpec},
-	daemon_config::{
-		ApiConfig, DaemonConfig, EntryConfig, ExitConfig, GlobalConfig, ModeConfig, RelayConfig,
-		TlsParams,
-	},
+    address_spec::{AddressSpec, ConnectivitySpec},
+    daemon_config::{
+        ApiConfig, DaemonConfig, EntryConfig, ExitConfig, GlobalConfig, ModeConfig, RelayConfig,
+        TlsParams,
+    },
 };
 
 /// Network pivoting and tunneling tool.
@@ -30,175 +30,175 @@ use wallhackd::{
 #[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
 #[derive(FromArgs, Debug, Clone)]
 pub struct WallhackCli {
-	/// TLS certificate file
-	#[argh(option)]
-	pub cert: Option<PathBuf>,
+    /// TLS certificate file
+    #[argh(option)]
+    pub cert: Option<PathBuf>,
 
-	/// TLS private key file
-	#[argh(option)]
-	pub key: Option<PathBuf>,
+    /// TLS private key file
+    #[argh(option)]
+    pub key: Option<PathBuf>,
 
-	/// CA roots file for mTLS verification
-	#[argh(option)]
-	pub ca: Option<PathBuf>,
+    /// CA roots file for mTLS verification
+    #[argh(option)]
+    pub ca: Option<PathBuf>,
 
-	/// DNS server for target resolution
-	#[argh(option, short = 'd')]
-	pub dns: Option<String>,
+    /// DNS server for target resolution
+    #[argh(option, short = 'd')]
+    pub dns: Option<String>,
 
-	/// TLS hostname for verification (defaults to target hostname)
-	#[argh(option)]
-	pub hostname: Option<String>,
+    /// TLS hostname for verification (defaults to target hostname)
+    #[argh(option)]
+    pub hostname: Option<String>,
 
-	/// connection timeout in seconds
-	#[argh(option, short = 't', default = "10")]
-	pub timeout: u64,
+    /// connection timeout in seconds
+    #[argh(option, short = 't', default = "10")]
+    pub timeout: u64,
 
-	/// pre-shared key for tunnel authentication (or set `WALLHACK_PSK` env var)
-	#[argh(option)]
-	pub psk: Option<String>,
+    /// pre-shared key for tunnel authentication (or set `WALLHACK_PSK` env var)
+    #[argh(option)]
+    pub psk: Option<String>,
 
-	/// verbose output
-	#[argh(switch, short = 'v')]
-	pub verbose: bool,
+    /// verbose output
+    #[argh(switch, short = 'v')]
+    pub verbose: bool,
 
-	/// extra verbose (debug level tracing)
-	#[argh(switch)]
-	pub debug: bool,
+    /// extra verbose (debug level tracing)
+    #[argh(switch)]
+    pub debug: bool,
 
-	/// comma-separated module substring filters for debug tracing
-	#[argh(option)]
-	pub debug_filter: Option<String>,
+    /// comma-separated module substring filters for debug tracing
+    #[argh(option)]
+    pub debug_filter: Option<String>,
 
-	/// trace level tracing (most verbose)
-	#[argh(switch)]
-	pub trace: bool,
+    /// trace level tracing (most verbose)
+    #[argh(switch)]
+    pub trace: bool,
 
-	/// comma-separated module substring filters for trace tracing
-	#[argh(option)]
-	pub trace_filter: Option<String>,
+    /// comma-separated module substring filters for trace tracing
+    #[argh(option)]
+    pub trace_filter: Option<String>,
 
-	/// quiet mode (errors only)
-	#[argh(switch, short = 'q')]
-	pub quiet: bool,
+    /// quiet mode (errors only)
+    #[argh(switch, short = 'q')]
+    pub quiet: bool,
 
-	/// print version information and exit
-	#[argh(switch)]
-	pub version: bool,
+    /// print version information and exit
+    #[argh(switch)]
+    pub version: bool,
 
-	#[argh(subcommand)]
-	pub command: Option<Command>,
+    #[argh(subcommand)]
+    pub command: Option<Command>,
 }
 
 /// Subcommand that determines the node role.
 #[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand)]
 pub enum Command {
-	Entry(EntryCommand),
-	Exit(ExitCommand),
-	Relay(RelayCommand),
+    Entry(EntryCommand),
+    Exit(ExitCommand),
+    Relay(RelayCommand),
 }
 
 impl Default for Command {
-	fn default() -> Self {
-		Self::Entry(EntryCommand {
-			name: None,
-			listen: None,
-			connect: None,
-			api: None,
-			api_user: None,
-			api_secret: None,
-			max_peers: None,
-			fast: false,
-		})
-	}
+    fn default() -> Self {
+        Self::Entry(EntryCommand {
+            name: None,
+            listen: None,
+            connect: None,
+            api: None,
+            api_user: None,
+            api_secret: None,
+            max_peers: None,
+            fast: false,
+        })
+    }
 }
 
 /// Entry node: creates TUN interface, routes traffic.
 #[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand, name = "entry")]
 pub struct EntryCommand {
-	/// name for this node; used for identification (random if omitted)
-	#[argh(option, short = 'n')]
-	pub name: Option<String>,
+    /// name for this node; used for identification (random if omitted)
+    #[argh(option, short = 'n')]
+    pub name: Option<String>,
 
-	/// listen address for incoming connections (e.g. ":6565")
-	#[argh(option, short = 'l')]
-	pub listen: Option<String>,
+    /// listen address for incoming connections (e.g. ":6565")
+    #[argh(option, short = 'l')]
+    pub listen: Option<String>,
 
-	/// connect to a peer (e.g. "host:6565")
-	#[argh(option, short = 'c')]
-	pub connect: Option<String>,
+    /// connect to a peer (e.g. "host:6565")
+    #[argh(option, short = 'c')]
+    pub connect: Option<String>,
 
-	/// REST API address (e.g. "127.0.0.1:6566")
-	#[argh(option)]
-	pub api: Option<String>,
+    /// REST API address (e.g. "127.0.0.1:6566")
+    #[argh(option)]
+    pub api: Option<String>,
 
-	/// REST API username for basic auth (default: admin)
-	#[argh(option)]
-	pub api_user: Option<String>,
+    /// REST API username for basic auth (default: admin)
+    #[argh(option)]
+    pub api_user: Option<String>,
 
-	/// REST API secret for basic auth (default: auto-generated, printed on startup)
-	#[argh(option)]
-	pub api_secret: Option<String>,
+    /// REST API secret for basic auth (default: auto-generated, printed on startup)
+    #[argh(option)]
+    pub api_secret: Option<String>,
 
-	/// maximum number of concurrent peer connections
-	#[argh(option)]
-	pub max_peers: Option<usize>,
+    /// maximum number of concurrent peer connections
+    #[argh(option)]
+    pub max_peers: Option<usize>,
 
-	/// skip SYN proxy verification (optimistic JIT, faster but less accurate port scanning)
-	#[argh(switch)]
-	pub fast: bool,
+    /// skip SYN proxy verification (optimistic JIT, faster but less accurate port scanning)
+    #[argh(switch)]
+    pub fast: bool,
 }
 
 /// Exit node: makes syscalls to the local network on behalf of the tunnel.
 #[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand, name = "exit")]
 pub struct ExitCommand {
-	/// listen address for incoming connections (e.g. ":443")
-	#[argh(option, short = 'l')]
-	pub listen: Option<String>,
+    /// listen address for incoming connections (e.g. ":443")
+    #[argh(option, short = 'l')]
+    pub listen: Option<String>,
 
-	/// connect to a peer (e.g. "host:6565")
-	#[argh(option, short = 'c')]
-	pub connect: Option<String>,
+    /// connect to a peer (e.g. "host:6565")
+    #[argh(option, short = 'c')]
+    pub connect: Option<String>,
 
-	/// name for this peer; used for TUN naming and identification (random if omitted)
-	#[argh(option, short = 'n')]
-	pub name: Option<String>,
+    /// name for this peer; used for TUN naming and identification (random if omitted)
+    #[argh(option, short = 'n')]
+    pub name: Option<String>,
 
-	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
-	#[argh(option)]
-	pub accept_fingerprint: Option<String>,
+    /// accept server certificate by fingerprint (e.g. "sha256:abc123...")
+    #[argh(option)]
+    pub accept_fingerprint: Option<String>,
 }
 
 /// Relay node: forwards traffic between peers.
 #[derive(FromArgs, Debug, Clone)]
 #[argh(subcommand, name = "relay")]
 pub struct RelayCommand {
-	/// node name (default: random 8-char hex)
-	#[argh(option, short = 'n')]
-	pub name: Option<String>,
+    /// node name (default: random 8-char hex)
+    #[argh(option, short = 'n')]
+    pub name: Option<String>,
 
-	/// listen address for relay connections (e.g. ":6565")
-	#[argh(option, short = 'l')]
-	pub listen: Option<String>,
+    /// listen address for relay connections (e.g. ":6565")
+    #[argh(option, short = 'l')]
+    pub listen: Option<String>,
 
-	/// connect to a peer (e.g. "host:6565")
-	#[argh(option, short = 'c')]
-	pub connect: Option<String>,
+    /// connect to a peer (e.g. "host:6565")
+    #[argh(option, short = 'c')]
+    pub connect: Option<String>,
 
-	/// accept server certificate by fingerprint (e.g. "sha256:abc123...")
-	#[argh(option)]
-	pub accept_fingerprint: Option<String>,
+    /// accept server certificate by fingerprint (e.g. "sha256:abc123...")
+    #[argh(option)]
+    pub accept_fingerprint: Option<String>,
 }
 
 /// Generate a random node name (8-character hex ID).
 fn generate_node_name() -> String {
-	use rand::Rng;
-	let mut rng = rand::rng();
-	let id: u32 = rng.random();
-	format!("{id:08x}")
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let id: u32 = rng.random();
+    format!("{id:08x}")
 }
 
 /// Known subcommand names.
@@ -206,13 +206,13 @@ const SUBCOMMANDS: &[&str] = &["entry", "exit", "relay"];
 
 /// Global switches that belong before the subcommand.
 const GLOBAL_FLAGS: &[&str] = &[
-	"--debug",
-	"--trace",
-	"-v",
-	"--verbose",
-	"-q",
-	"--quiet",
-	"--version",
+    "--debug",
+    "--trace",
+    "-v",
+    "--verbose",
+    "-q",
+    "--quiet",
+    "--version",
 ];
 
 /// Flags that belong to a subcommand, used by `suggest_subcommand` for detection.
@@ -220,85 +220,85 @@ const SUBCOMMAND_FLAGS: &[&str] = &["--listen", "-l", "--connect", "-c"];
 
 /// Reorder global flags that appear after the subcommand to before it.
 fn reorder_global_flags(args: Vec<String>) -> Vec<String> {
-	// Find the subcommand position (skip argv[0])
-	let sub_pos = args[1..]
-		.iter()
-		.position(|a| SUBCOMMANDS.contains(&a.as_str()))
-		.map(|i| i + 1);
+    // Find the subcommand position (skip argv[0])
+    let sub_pos = args[1..]
+        .iter()
+        .position(|a| SUBCOMMANDS.contains(&a.as_str()))
+        .map(|i| i + 1);
 
-	let Some(sub_pos) = sub_pos else {
-		return args;
-	};
+    let Some(sub_pos) = sub_pos else {
+        return args;
+    };
 
-	let mut before: Vec<String> = args[..sub_pos].to_vec();
-	let subcommand = args[sub_pos].clone();
-	let mut after: Vec<String> = Vec::new();
+    let mut before: Vec<String> = args[..sub_pos].to_vec();
+    let subcommand = args[sub_pos].clone();
+    let mut after: Vec<String> = Vec::new();
 
-	for arg in &args[sub_pos + 1..] {
-		if GLOBAL_FLAGS.contains(&arg.as_str()) {
-			before.push(arg.clone());
-		} else {
-			after.push(arg.clone());
-		}
-	}
+    for arg in &args[sub_pos + 1..] {
+        if GLOBAL_FLAGS.contains(&arg.as_str()) {
+            before.push(arg.clone());
+        } else {
+            after.push(arg.clone());
+        }
+    }
 
-	before.push(subcommand);
-	before.extend(after);
-	before
+    before.push(subcommand);
+    before.extend(after);
+    before
 }
 
 /// Suggest a subcommand when subcommand-level flags are used at the top level.
 fn suggest_subcommand(args: &[&str]) -> Option<String> {
-	use std::fmt::Write;
+    use std::fmt::Write;
 
-	let has_subcommand = args.iter().any(|a| SUBCOMMANDS.contains(a));
-	if has_subcommand {
-		return None;
-	}
+    let has_subcommand = args.iter().any(|a| SUBCOMMANDS.contains(a));
+    if has_subcommand {
+        return None;
+    }
 
-	let has_sub_flag = args.iter().any(|a| SUBCOMMAND_FLAGS.contains(a));
-	if !has_sub_flag {
-		return None;
-	}
+    let has_sub_flag = args.iter().any(|a| SUBCOMMAND_FLAGS.contains(a));
+    if !has_sub_flag {
+        return None;
+    }
 
-	let has_listen = args.iter().any(|a| *a == "--listen" || *a == "-l");
+    let has_listen = args.iter().any(|a| *a == "--listen" || *a == "-l");
 
-	let flag_str: String = args
-		.iter()
-		.map(|a| (*a).to_string())
-		.collect::<Vec<_>>()
-		.join(" ");
+    let flag_str: String = args
+        .iter()
+        .map(|a| (*a).to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
 
-	let mut lines = String::new();
-	if has_listen {
-		let _ = writeln!(lines, "  wallhack entry {flag_str}");
-		let _ = writeln!(lines, "  wallhack exit {flag_str}");
-	} else {
-		let _ = writeln!(lines, "  wallhack exit {flag_str}");
-		let _ = writeln!(lines, "  wallhack entry {flag_str}");
-	}
+    let mut lines = String::new();
+    if has_listen {
+        let _ = writeln!(lines, "  wallhack entry {flag_str}");
+        let _ = writeln!(lines, "  wallhack exit {flag_str}");
+    } else {
+        let _ = writeln!(lines, "  wallhack exit {flag_str}");
+        let _ = writeln!(lines, "  wallhack entry {flag_str}");
+    }
 
-	let flag_name = if has_listen { "--listen" } else { "--connect" };
-	Some(format!(
-		"The {flag_name} flag requires a subcommand. Did you mean:\n\n{lines}"
-	))
+    let flag_name = if has_listen { "--listen" } else { "--connect" };
+    Some(format!(
+        "The {flag_name} flag requires a subcommand. Did you mean:\n\n{lines}"
+    ))
 }
 
 /// Extract the binary name from argv[0], like argh does internally.
 fn binary_name(argv0: &str) -> &str {
-	std::path::Path::new(argv0)
-		.file_name()
-		.and_then(|s| s.to_str())
-		.unwrap_or(argv0)
+    std::path::Path::new(argv0)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(argv0)
 }
 
 /// CLI parse error or informational output (help, version).
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct CliError {
-	pub message: String,
-	/// 0 for informational output (--help, --version), 1 for parse errors.
-	pub exit_code: i32,
+    pub message: String,
+    /// 0 for informational output (--help, --version), 1 for parse errors.
+    pub exit_code: i32,
 }
 
 /// Parse CLI from explicit arguments.
@@ -311,60 +311,60 @@ pub struct CliError {
 ///
 /// Returns [`CliError`] for parse errors or informational output (--help).
 pub fn parse_cli_from_args(args: Vec<String>) -> Result<WallhackCli, CliError> {
-	let reordered = reorder_global_flags(args);
-	let cmd = binary_name(&reordered[0]);
-	let strs: Vec<&str> = reordered.iter().map(String::as_str).collect();
+    let reordered = reorder_global_flags(args);
+    let cmd = binary_name(&reordered[0]);
+    let strs: Vec<&str> = reordered.iter().map(String::as_str).collect();
 
-	WallhackCli::from_args(&[cmd], &strs[1..]).map_err(|early_exit| {
-		if early_exit.status.is_err() {
-			let message = if let Some(hint) = suggest_subcommand(&strs[1..]) {
-				format!("{hint}\nRun {cmd} --help for more information.")
-			} else {
-				format!(
-					"{}\nRun {cmd} --help for more information.",
-					early_exit.output
-				)
-			};
-			CliError {
-				message,
-				exit_code: 1,
-			}
-		} else {
-			CliError {
-				message: early_exit.output,
-				exit_code: 0,
-			}
-		}
-	})
+    WallhackCli::from_args(&[cmd], &strs[1..]).map_err(|early_exit| {
+        if early_exit.status.is_err() {
+            let message = if let Some(hint) = suggest_subcommand(&strs[1..]) {
+                format!("{hint}\nRun {cmd} --help for more information.")
+            } else {
+                format!(
+                    "{}\nRun {cmd} --help for more information.",
+                    early_exit.output
+                )
+            };
+            CliError {
+                message,
+                exit_code: 1,
+            }
+        } else {
+            CliError {
+                message: early_exit.output,
+                exit_code: 0,
+            }
+        }
+    })
 }
 
 /// Resolve PSK from flag or `WALLHACK_PSK` environment variable.
 fn resolve_psk(psk: Option<&String>) -> Option<String> {
-	psk.cloned().or_else(|| std::env::var("WALLHACK_PSK").ok())
+    psk.cloned().or_else(|| std::env::var("WALLHACK_PSK").ok())
 }
 
 /// Resolve API credentials, generating a random secret if not provided.
 fn resolve_api_config(cmd: &EntryCommand) -> Option<ApiConfig> {
-	let api_str = cmd.api.as_ref()?;
-	let addr = api_str
-		.parse()
-		.unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 6566)));
+    let api_str = cmd.api.as_ref()?;
+    let addr = api_str
+        .parse()
+        .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 6566)));
 
-	let user = cmd.api_user.clone().unwrap_or_else(|| "admin".to_string());
+    let user = cmd.api_user.clone().unwrap_or_else(|| "admin".to_string());
 
-	let secret = if let Some(s) = &cmd.api_secret {
-		s.clone()
-	} else {
-		use rand::Rng;
-		const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-		let mut rng = rand::rng();
-		let secret: String = (0..32)
-			.map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
-			.collect();
-		secret
-	};
+    let secret = if let Some(s) = &cmd.api_secret {
+        s.clone()
+    } else {
+        use rand::Rng;
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut rng = rand::rng();
+        let secret: String = (0..32)
+            .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
+            .collect();
+        secret
+    };
 
-	Some(ApiConfig { addr, user, secret })
+    Some(ApiConfig { addr, user, secret })
 }
 
 /// Build a [`DaemonConfig`] from parsed CLI arguments.
@@ -376,92 +376,92 @@ fn resolve_api_config(cmd: &EntryCommand) -> Option<ApiConfig> {
 ///
 /// Returns error if transport direction parsing fails.
 pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
-	let global = GlobalConfig {
-		tls: TlsParams {
-			cert: cli.cert.clone(),
-			key: cli.key.clone(),
-			ca: cli.ca.clone(),
-		},
-		hostname: cli.hostname.clone(),
-		dns_server: cli.dns.clone(),
-		timeout: Duration::from_secs(cli.timeout),
-		psk: resolve_psk(cli.psk.as_ref()),
-	};
+    let global = GlobalConfig {
+        tls: TlsParams {
+            cert: cli.cert.clone(),
+            key: cli.key.clone(),
+            ca: cli.ca.clone(),
+        },
+        hostname: cli.hostname.clone(),
+        dns_server: cli.dns.clone(),
+        timeout: Duration::from_secs(cli.timeout),
+        psk: resolve_psk(cli.psk.as_ref()),
+    };
 
-	let command = cli.command.clone().unwrap_or_default();
-	let mode = match command {
-		Command::Entry(cmd) => {
-			let connectivity = resolve_entry_transport(&cmd)?;
-			let api = resolve_api_config(&cmd);
-			ModeConfig::Entry(EntryConfig {
-				name: cmd.name.unwrap_or_else(generate_node_name),
-				connectivity,
-				api,
-				max_peers: cmd.max_peers,
-				fast: cmd.fast,
-			})
-		}
-		Command::Exit(cmd) => {
-			let connectivity = resolve_exit_transport(&cmd)?;
-			ModeConfig::Exit(ExitConfig {
-				name: cmd.name.unwrap_or_else(generate_node_name),
-				connectivity,
-				accept_fingerprint: cmd.accept_fingerprint,
-			})
-		}
-		Command::Relay(cmd) => {
-			let (connect, listen) = resolve_relay_transport(&cmd)?;
-			ModeConfig::Relay(RelayConfig {
-				name: cmd.name.unwrap_or_else(generate_node_name),
-				connect,
-				listen,
-				accept_fingerprint: cmd.accept_fingerprint,
-			})
-		}
-	};
+    let command = cli.command.clone().unwrap_or_default();
+    let mode = match command {
+        Command::Entry(cmd) => {
+            let connectivity = resolve_entry_transport(&cmd)?;
+            let api = resolve_api_config(&cmd);
+            ModeConfig::Entry(EntryConfig {
+                name: cmd.name.unwrap_or_else(generate_node_name),
+                connectivity,
+                api,
+                max_peers: cmd.max_peers,
+                fast: cmd.fast,
+            })
+        }
+        Command::Exit(cmd) => {
+            let connectivity = resolve_exit_transport(&cmd)?;
+            ModeConfig::Exit(ExitConfig {
+                name: cmd.name.unwrap_or_else(generate_node_name),
+                connectivity,
+                accept_fingerprint: cmd.accept_fingerprint,
+            })
+        }
+        Command::Relay(cmd) => {
+            let (connect, listen) = resolve_relay_transport(&cmd)?;
+            ModeConfig::Relay(RelayConfig {
+                name: cmd.name.unwrap_or_else(generate_node_name),
+                connect,
+                listen,
+                accept_fingerprint: cmd.accept_fingerprint,
+            })
+        }
+    };
 
-	Ok(DaemonConfig { global, mode })
+    Ok(DaemonConfig { global, mode })
 }
 
 /// Resolve entry transport direction.
 ///
 /// Defaults to listening on the default port when neither flag is provided.
 fn resolve_entry_transport(cmd: &EntryCommand) -> Result<ConnectivitySpec, String> {
-	match (&cmd.listen, &cmd.connect) {
-		(Some(addr), None) => Ok(ConnectivitySpec::Listen(addr.parse::<AddressSpec>()?)),
-		(None, Some(addr)) => Ok(ConnectivitySpec::Connect(addr.parse::<AddressSpec>()?)),
-		(Some(_), Some(_)) => Err("entry requires exactly one of --listen or --connect".into()),
-		(None, None) => Ok(ConnectivitySpec::Listen(AddressSpec::listen_all(
-			wallhack_core::server::config::DEFAULT_LISTEN_PORT,
-		))),
-	}
+    match (&cmd.listen, &cmd.connect) {
+        (Some(addr), None) => Ok(ConnectivitySpec::Listen(addr.parse::<AddressSpec>()?)),
+        (None, Some(addr)) => Ok(ConnectivitySpec::Connect(addr.parse::<AddressSpec>()?)),
+        (Some(_), Some(_)) => Err("entry requires exactly one of --listen or --connect".into()),
+        (None, None) => Ok(ConnectivitySpec::Listen(AddressSpec::listen_all(
+            wallhack_core::server::config::DEFAULT_LISTEN_PORT,
+        ))),
+    }
 }
 
 /// Resolve exit transport direction.
 ///
 /// No default — one or both of `--listen` or `--connect` is required.
 fn resolve_exit_transport(cmd: &ExitCommand) -> Result<ConnectivitySpec, String> {
-	match (&cmd.listen, &cmd.connect) {
-		(Some(listen), Some(connect)) => Ok(ConnectivitySpec::Both {
-			connect: connect.parse::<AddressSpec>()?,
-			listen: listen.parse::<AddressSpec>()?,
-		}),
-		(Some(addr), None) => Ok(ConnectivitySpec::Listen(addr.parse::<AddressSpec>()?)),
-		(None, Some(addr)) => Ok(ConnectivitySpec::Connect(addr.parse::<AddressSpec>()?)),
-		(None, None) => Err("exit requires --listen or --connect".into()),
-	}
+    match (&cmd.listen, &cmd.connect) {
+        (Some(listen), Some(connect)) => Ok(ConnectivitySpec::Both {
+            connect: connect.parse::<AddressSpec>()?,
+            listen: listen.parse::<AddressSpec>()?,
+        }),
+        (Some(addr), None) => Ok(ConnectivitySpec::Listen(addr.parse::<AddressSpec>()?)),
+        (None, Some(addr)) => Ok(ConnectivitySpec::Connect(addr.parse::<AddressSpec>()?)),
+        (None, None) => Err("exit requires --listen or --connect".into()),
+    }
 }
 
 /// Resolve relay transport directions.
 ///
 /// Relay requires **both** `--listen` and `--connect`.
 fn resolve_relay_transport(cmd: &RelayCommand) -> Result<(AddressSpec, AddressSpec), String> {
-	match (&cmd.connect, &cmd.listen) {
-		(Some(connect), Some(listen)) => Ok((
-			connect.parse::<AddressSpec>()?,
-			listen.parse::<AddressSpec>()?,
-		)),
-		(None, _) => Err("relay requires --connect".into()),
-		(_, None) => Err("relay requires --listen".into()),
-	}
+    match (&cmd.connect, &cmd.listen) {
+        (Some(connect), Some(listen)) => Ok((
+            connect.parse::<AddressSpec>()?,
+            listen.parse::<AddressSpec>()?,
+        )),
+        (None, _) => Err("relay requires --connect".into()),
+        (_, None) => Err("relay requires --listen".into()),
+    }
 }
