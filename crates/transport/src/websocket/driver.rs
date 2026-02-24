@@ -38,7 +38,7 @@ const MAX_CONCURRENT_CLASSIFICATIONS: usize = 128;
 pub trait TransportStream: AsyncRead + AsyncWrite + Send + Unpin {}
 
 /// Blanket implementation: "If it looks like a duck and quacks like a duck,
-/// it's a TransportStream."
+/// it's a `TransportStream`."
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> TransportStream for T {}
 
 /// Commands sent to the driver task.

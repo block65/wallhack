@@ -169,6 +169,7 @@ impl Server for WebSocketServer {
         })
     }
 
+    #[allow(clippy::too_many_lines)] // refactor candidate
     async fn accept(
         &mut self,
         _role: NodeRole,

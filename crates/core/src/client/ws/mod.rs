@@ -230,6 +230,7 @@ impl WsClient {
     ///
     /// Returns an error if the connection fails.
     #[allow(clippy::result_large_err)]
+    #[allow(clippy::too_many_lines)] // refactor candidate
     pub async fn connect(
         &mut self,
         role: NodeRole,
