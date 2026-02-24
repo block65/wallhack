@@ -25,6 +25,10 @@ pub enum TransportError {
 	/// The operation timed out.
 	#[error("operation timed out")]
 	Timeout,
+
+	/// The transport is overloaded and cannot accept more requests.
+	#[error("transport overloaded")]
+	Overloaded,
 }
 
 impl TransportError {

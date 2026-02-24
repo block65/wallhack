@@ -25,6 +25,14 @@ pub(super) const STREAM_TYPE_DATA: u8 = 0x00;
 /// Stream type prefix for control/bidirectional streams.
 pub(super) const STREAM_TYPE_CONTROL: u8 = 0x01;
 
+/// Maximum number of stream-open requests that can be queued while yamux is
+/// stalled (e.g. flow-control window exhausted).
+const MAX_PENDING_STREAM_OPENS: usize = 256;
+
+/// Maximum number of inbound streams undergoing prefix classification at once.
+/// Excess streams are closed immediately.
+const MAX_CONCURRENT_CLASSIFICATIONS: usize = 128;
+
 /// Trait alias for types that implement both tokio [`AsyncRead`] and
 /// [`AsyncWrite`].
 pub trait TokioAsyncReadWrite: AsyncRead + AsyncWrite + Send + Unpin {}
@@ -61,8 +69,26 @@ impl Driver {
 		while let Poll::Ready(Some(cmd)) = self.cmd_rx.poll_recv(cx) {
 			progress = true;
 			match cmd {
-				Command::OpenUni(tx) => self.pending_open_uni.push_back(tx),
-				Command::OpenBi(tx) => self.pending_open_bi.push_back(tx),
+				Command::OpenUni(tx) => {
+					if self.pending_open_uni.len() + self.pending_open_bi.len()
+						>= MAX_PENDING_STREAM_OPENS
+					{
+						warn!("pending stream-open queue full; rejecting open_uni request");
+						let _ = tx.send(Err(TransportError::Overloaded));
+					} else {
+						self.pending_open_uni.push_back(tx);
+					}
+				}
+				Command::OpenBi(tx) => {
+					if self.pending_open_uni.len() + self.pending_open_bi.len()
+						>= MAX_PENDING_STREAM_OPENS
+					{
+						warn!("pending stream-open queue full; rejecting open_bi request");
+						let _ = tx.send(Err(TransportError::Overloaded));
+					} else {
+						self.pending_open_bi.push_back(tx);
+					}
+				}
 				Command::Close => {
 					debug!("WebSocket transport driver received close command");
 					self.shutdown = true;
@@ -114,6 +140,12 @@ impl Driver {
 	fn poll_inbound(&mut self, cx: &mut Context<'_>) -> Poll<Result<bool, ConnectionError>> {
 		match self.connection.poll_next_inbound(cx) {
 			Poll::Ready(Some(Ok(mut stream))) => {
+				if self.pending_prefix_reads.len() >= MAX_CONCURRENT_CLASSIFICATIONS {
+					warn!("stream classification limit reached; dropping inbound stream");
+					drop(stream);
+					return Poll::Ready(Ok(true));
+				}
+
 				let uni_tx = self.incoming_uni_tx.clone();
 				let bi_tx = self.incoming_bi_tx.clone();
 				let timeout = self.prefix_read_timeout;
