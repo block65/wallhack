@@ -33,10 +33,13 @@ const MAX_PENDING_STREAM_OPENS: usize = 256;
 /// Excess streams are closed immediately.
 const MAX_CONCURRENT_CLASSIFICATIONS: usize = 128;
 
-/// Trait alias for types that implement both tokio [`AsyncRead`] and
-/// [`AsyncWrite`].
-pub trait TokioAsyncReadWrite: AsyncRead + AsyncWrite + Send + Unpin {}
-impl<T: AsyncRead + AsyncWrite + Send + Unpin> TokioAsyncReadWrite for T {}
+/// A single trait that combines Read + Write + Send + Unpin.
+/// This acts as a "vtable merger" so we can use these as trait objects.
+pub trait TransportStream: AsyncRead + AsyncWrite + Send + Unpin {}
+
+/// Blanket implementation: "If it looks like a duck and quacks like a duck,
+/// it's a TransportStream."
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> TransportStream for T {}
 
 /// Commands sent to the driver task.
 pub(super) enum Command {
@@ -52,7 +55,7 @@ type PrefixReadFut = Pin<Box<dyn Future<Output = ()> + Send>>;
 ///
 /// Implements [`Future`] and must be spawned to drive the yamux connection.
 pub struct Driver {
-	pub(super) connection: Connection<tokio_util::compat::Compat<Box<dyn TokioAsyncReadWrite>>>,
+	pub(super) connection: Connection<tokio_util::compat::Compat<Box<dyn TransportStream>>>,
 	pub(super) cmd_rx: mpsc::Receiver<Command>,
 	pub(super) incoming_uni_tx: mpsc::Sender<YamuxStream>,
 	pub(super) incoming_bi_tx: mpsc::Sender<YamuxStream>,
@@ -242,16 +245,16 @@ impl Future for Driver {
 	}
 }
 
-/// Creates a boxed, compat-wrapped connection over a `TokioAsyncReadWrite`
+/// Creates a boxed, compat-wrapped connection over a `TransportStream`
 /// stream.
 pub(super) fn make_connection<S>(
 	stream: S,
 	mode: Mode,
 	yamux_config: yamux::Config,
-) -> Connection<tokio_util::compat::Compat<Box<dyn TokioAsyncReadWrite>>>
+) -> Connection<tokio_util::compat::Compat<Box<dyn TransportStream>>>
 where
 	S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-	let boxed: Box<dyn TokioAsyncReadWrite> = Box::new(stream);
+	let boxed: Box<dyn TransportStream> = Box::new(stream);
 	Connection::new(boxed.compat(), yamux_config, mode)
 }
