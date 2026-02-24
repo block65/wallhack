@@ -158,9 +158,9 @@ pub struct Netstack<D: Device + Send + 'static> {
 	jit_tcp: bool,
 	jit_udp: bool,
 	tcp_ports: Arc<Mutex<HashSet<u16>>>,
-	/// Watch sender for the JIT TCP port set; receivers held by TcpListenerAny.
-	/// Published on every port insert and pruned so that TcpListenerAny can do
-	/// a cheap Arc::clone rather than cloning the full HashSet on every wakeup.
+	/// Watch sender for the JIT TCP port set; receivers held by `TcpListenerAny`.
+	/// Published on every port insert and pruned so that `TcpListenerAny` can do
+	/// a cheap `Arc::clone` rather than cloning the full `HashSet` on every wakeup.
 	tcp_ports_watch: Arc<watch::Sender<Arc<HashSet<u16>>>>,
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
 	jit_notify: Arc<Notify>,
@@ -406,7 +406,7 @@ struct JitPollConfig {
 	jit_tcp: bool,
 	jit_udp: bool,
 	tcp_ports: Arc<Mutex<HashSet<u16>>>,
-	/// Watch sender to keep TcpListenerAny receivers updated when the port set changes.
+	/// Watch sender to keep `TcpListenerAny` receivers updated when the port set changes.
 	tcp_ports_watch: Arc<watch::Sender<Arc<HashSet<u16>>>>,
 	udp_ports: Arc<Mutex<HashSet<u16>>>,
 	readable_fn: Option<ReadinessFn>,

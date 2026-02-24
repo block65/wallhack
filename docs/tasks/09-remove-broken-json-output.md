@@ -1,3 +1,4 @@
+# DONE
 # Remove Broken JSON Output Format
 
 The `--json` / `--output json` flag produces literal garbage. Remove it until

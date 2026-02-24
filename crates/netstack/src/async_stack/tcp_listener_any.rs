@@ -15,8 +15,8 @@ pub struct TcpListenerAny<D: Device + Send + 'static> {
 	/// Notify fired when JIT binds a new port.
 	jit_notify: Arc<Notify>,
 	/// Watch receiver for the JIT port set. Updated by the poll loop on every
-	/// port registration and prune cycle; borrow() + Arc::clone() is a cheap
-	/// read that requires no cloning of the underlying HashSet.
+	/// port registration and prune cycle; `borrow()` + `Arc::clone()` is a cheap
+	/// read that requires no cloning of the underlying `HashSet`.
 	ports: watch::Receiver<Arc<HashSet<u16>>>,
 	/// Handles already returned by `poll_accept` — don't return again.
 	seen: HashSet<SocketHandle>,
