@@ -218,7 +218,11 @@ async fn run_quic_relay_capability(
     let (source_instr, source_resp) = connect_result.channels().clone();
 
     let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(NodeRole::Exit, crate::built_info::PKG_NAME.to_string(), crate::built_info::PKG_VERSION.to_string()),
+        handler_config: HandlerConfig::new(
+            NodeRole::Exit,
+            crate::built_info::PKG_NAME.to_string(),
+            crate::built_info::PKG_VERSION.to_string(),
+        ),
         metrics: Some(Arc::clone(metrics)),
         peers: None,
         routes: None,
@@ -262,7 +266,11 @@ async fn run_ws_relay_capability(
     let (source_instr, source_resp) = connect_result.channels().clone();
 
     let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(NodeRole::Exit, crate::built_info::PKG_NAME.to_string(), crate::built_info::PKG_VERSION.to_string()),
+        handler_config: HandlerConfig::new(
+            NodeRole::Exit,
+            crate::built_info::PKG_NAME.to_string(),
+            crate::built_info::PKG_VERSION.to_string(),
+        ),
         metrics: Some(Arc::clone(metrics)),
         peers: None,
         routes: None,
@@ -319,7 +327,11 @@ async fn run_listen_mode(
     let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
 
     let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(NodeRole::Exit, crate::built_info::PKG_NAME.to_string(), crate::built_info::PKG_VERSION.to_string()),
+        handler_config: HandlerConfig::new(
+            NodeRole::Exit,
+            crate::built_info::PKG_NAME.to_string(),
+            crate::built_info::PKG_VERSION.to_string(),
+        ),
         metrics: Some(Arc::clone(metrics)),
         peers: None,
         routes: None,

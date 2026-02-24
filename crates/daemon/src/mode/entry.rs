@@ -138,7 +138,11 @@ async fn run_entry_listen(
     let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
     let psk = global.psk.clone();
     let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(NodeRole::Entry, crate::built_info::PKG_NAME.to_string(), crate::built_info::PKG_VERSION.to_string()),
+        handler_config: HandlerConfig::new(
+            NodeRole::Entry,
+            crate::built_info::PKG_NAME.to_string(),
+            crate::built_info::PKG_VERSION.to_string(),
+        ),
         metrics: Some(Arc::clone(&res.metrics)),
         peers: Some(Arc::clone(&res.peers)),
         routes: Some(Arc::clone(&res.routes)),
@@ -665,7 +669,11 @@ fn start_api(
     use wallhack_api::{Auth, State as ApiState};
     use wallhack_core::control::handler::Handler;
 
-    let handler_config = HandlerConfig::new(NodeRole::Entry, crate::built_info::PKG_NAME.to_string(), crate::built_info::PKG_VERSION.to_string());
+    let handler_config = HandlerConfig::new(
+        NodeRole::Entry,
+        crate::built_info::PKG_NAME.to_string(),
+        crate::built_info::PKG_VERSION.to_string(),
+    );
     let handler = Handler::new(
         handler_config,
         Arc::clone(metrics),

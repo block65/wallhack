@@ -366,7 +366,16 @@ mod tests {
         let metrics = Arc::new(Metrics::default());
         let peers = Arc::new(Registry::new());
         let routes = RouteTable::shared();
-        Handler::new(HandlerConfig::new(NodeRole::Entry, "wallhackd".to_string(), "0.0.0".to_string()), metrics, peers, routes)
+        Handler::new(
+            HandlerConfig::new(
+                NodeRole::Entry,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            metrics,
+            peers,
+            routes,
+        )
     }
 
     #[test]
@@ -396,7 +405,16 @@ mod tests {
         metrics.inc_bytes_in(100);
         metrics.inc_packets_out(5);
 
-        let handler = Handler::new(HandlerConfig::new(NodeRole::Entry, "wallhackd".to_string(), "0.0.0".to_string()), metrics, peers, routes);
+        let handler = Handler::new(
+            HandlerConfig::new(
+                NodeRole::Entry,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            metrics,
+            peers,
+            routes,
+        );
         let request = ControlRequest {
             request: Some(control_request::Request::Stats(
                 wallhack_wire::control::StatsRequest {},
