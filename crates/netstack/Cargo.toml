@@ -38,6 +38,11 @@ tokio = { workspace = true, features = [
     "macros",
     "test-util",
 ] }
+# deadlock_detection adds ownership tracking to every lock acquisition.
+# It is only active in test builds (dev-dependencies), so it has no effect
+# on release binaries. Cargo will unify this feature with the workspace
+# dependency for the duration of the test compile.
+parking_lot = { version = "0.12", features = ["deadlock_detection"] }
 
 [lints]
 workspace = true

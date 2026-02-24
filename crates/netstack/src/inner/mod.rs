@@ -1,6 +1,12 @@
 pub mod device;
 pub mod peek_device;
 
+use std::{
+	collections::{HashMap, HashSet},
+	sync::Arc,
+};
+
+use parking_lot::Mutex;
 use smoltcp::{
 	iface::{Config, Interface, SocketHandle, SocketSet, SocketStorage},
 	phy::Device,
@@ -38,6 +44,13 @@ pub struct InnerStack<D: Device> {
 	sockets: SocketSet<'static>,
 	tcp_rx_buffer_size: usize,
 	tcp_tx_buffer_size: usize,
+	max_sockets: usize,
+	/// Monotonic baseline captured at construction; used by `now()`.
+	start_instant: std::time::Instant,
+	/// Tracks when each socket was created; used by `prune_stale_syn_received`.
+	socket_birth: HashMap<SocketHandle, std::time::Instant>,
+	/// Shared reference to the JIT TCP port set; kept in sync during pruning.
+	jit_tcp_ports: Option<Arc<Mutex<HashSet<u16>>>>,
 }
 
 impl<D: Device> InnerStack<D> {
@@ -104,6 +117,10 @@ impl<D: Device> InnerStack<D> {
 			sockets,
 			tcp_rx_buffer_size: config.tcp_rx_buffer_size,
 			tcp_tx_buffer_size: config.tcp_tx_buffer_size,
+			max_sockets: config.max_sockets,
+			start_instant: std::time::Instant::now(),
+			socket_birth: HashMap::new(),
+			jit_tcp_ports: None,
 		}
 	}
 
@@ -182,6 +199,9 @@ impl<D: Device> InnerStack<D> {
 	///
 	/// Returns an error if the socket cannot be created.
 	pub fn ensure_udp_listener(&mut self, port: u16) -> Result<(), Error> {
+		if self.socket_count() >= self.max_sockets {
+			return Err(Error::MaxSocketsReached);
+		}
 		if self.udp_listener_exists(port) {
 			#[cfg(feature = "async")]
 			tracing::trace!(port, "UDP listener already exists");
@@ -228,6 +248,9 @@ impl<D: Device> InnerStack<D> {
 		if port == 0 {
 			return Err(Error::InvalidPort { port });
 		}
+		if self.socket_count() >= self.max_sockets {
+			return Err(Error::MaxSocketsReached);
+		}
 
 		let rx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_rx_buffer_size]);
 		let tx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_tx_buffer_size]);
@@ -235,6 +258,7 @@ impl<D: Device> InnerStack<D> {
 		socket.listen(port)?;
 
 		let handle = self.sockets.add(socket);
+		self.socket_birth.insert(handle, std::time::Instant::now());
 		Ok(handle)
 	}
 
@@ -301,22 +325,40 @@ impl<D: Device> InnerStack<D> {
 	///
 	/// Panics if the handle does not refer to a valid socket.
 	pub fn remove_socket(&mut self, handle: SocketHandle) -> smoltcp::socket::Socket<'static> {
+		self.socket_birth.remove(&handle);
 		self.sockets.remove(handle)
 	}
 
-	/// Remove all TCP sockets that are in a closed state. Returns the number of
-	/// sockets removed.
+	/// Attach a shared JIT TCP port set.
+	///
+	/// When set, `prune_closed_tcp_sockets` will remove pruned ports from this
+	/// set so that the external port set stays in sync without a separate pass.
+	pub fn set_jit_tcp_ports(&mut self, ports: Arc<Mutex<HashSet<u16>>>) {
+		self.jit_tcp_ports = Some(ports);
+	}
+
+	/// Remove TCP sockets that have reached a terminal state (`Closed` or
+	/// `TimeWait`). Returns the number of sockets removed.
+	///
+	/// `SynReceived` sockets are intentionally left alone here — they may be
+	/// actively completing a valid 3-way handshake. Use
+	/// [`prune_stale_syn_received`](Self::prune_stale_syn_received) with an
+	/// appropriate TTL to evict sockets stuck in that state.
+	///
+	/// If a JIT TCP port set was registered via `set_jit_tcp_ports`, any port
+	/// whose last socket is pruned here is also removed from that set.
 	pub fn prune_closed_tcp_sockets(&mut self) -> usize {
-		let to_remove: Vec<_> = self
+		let to_remove: Vec<(SocketHandle, u16)> = self
 			.sockets
 			.iter()
 			.filter_map(|(handle, socket)| {
 				if let Socket::Tcp(tcp) = socket {
 					match tcp.state() {
 						tcp::State::Closed | tcp::State::TimeWait => {
+							let port = tcp.listen_endpoint().port;
 							#[cfg(feature = "async")]
-							tracing::debug!(?handle, state = ?tcp.state(), port = tcp.listen_endpoint().port, "Pruning socket");
-							Some(handle)
+							tracing::debug!(?handle, state = ?tcp.state(), port, "Pruning socket");
+							Some((handle, port))
 						}
 						_ => None,
 					}
@@ -326,8 +368,71 @@ impl<D: Device> InnerStack<D> {
 			})
 			.collect();
 		let count = to_remove.len();
-		for handle in to_remove {
-			self.sockets.remove(handle);
+
+		// Remove ports from the JIT set before removing the sockets.
+		if let Some(ref ports) = self.jit_tcp_ports {
+			let mut port_set = ports.lock();
+			for (_, port) in &to_remove {
+				port_set.remove(port);
+			}
+		}
+
+		for (handle, _) in &to_remove {
+			self.socket_birth.remove(handle);
+			self.sockets.remove(*handle);
+		}
+		count
+	}
+
+	/// Remove `SynReceived` sockets older than `min_age`. Returns the number
+	/// of sockets removed.
+	///
+	/// Used by the poll loop to evict sockets that never completed a handshake
+	/// (e.g. from a SYN flood or a half-open scanner). A `min_age` of
+	/// [`Duration::ZERO`](std::time::Duration::ZERO) prunes all `SynReceived`
+	/// sockets immediately regardless of age (useful in tests).
+	///
+	/// If a JIT TCP port set was registered via `set_jit_tcp_ports`, pruned
+	/// ports are also removed from that set.
+	pub fn prune_stale_syn_received(&mut self, min_age: std::time::Duration) -> usize {
+		let now = std::time::Instant::now();
+		let to_remove: Vec<(SocketHandle, u16)> = self
+			.sockets
+			.iter()
+			.filter_map(|(handle, socket)| {
+				let Socket::Tcp(tcp) = socket else {
+					return None;
+				};
+				if tcp.state() != tcp::State::SynReceived {
+					return None;
+				}
+				let age = self
+					.socket_birth
+					.get(&handle)
+					.map_or(std::time::Duration::MAX, |t| now.duration_since(*t));
+				if age >= min_age {
+					let port = tcp.listen_endpoint().port;
+					#[cfg(feature = "async")]
+					tracing::debug!(?handle, port, ?age, "Pruning stale SynReceived socket");
+					Some((handle, port))
+				} else {
+					None
+				}
+			})
+			.collect();
+
+		let count = to_remove.len();
+
+		if let Some(ref ports) = self.jit_tcp_ports {
+			let mut port_set = ports.lock();
+			for (_, port) in &to_remove {
+				port_set.remove(port);
+			}
+		}
+
+		for (handle, _) in &to_remove {
+			self.socket_birth.remove(handle);
+			self.sockets.remove(*handle);
 		}
 		count
 	}
@@ -369,6 +474,18 @@ impl<D: Device> InnerStack<D> {
 	#[must_use]
 	pub fn socket_count(&self) -> usize {
 		self.sockets.iter().count()
+	}
+
+	/// Returns the current time as a `smoltcp::time::Instant`.
+	///
+	/// Uses a monotonic `std::time::Instant` baseline captured at construction
+	/// so this method never panics and is immune to system clock adjustments.
+	#[must_use]
+	pub fn now(&self) -> Instant {
+		let elapsed = self.start_instant.elapsed();
+		// Saturate at i64::MAX (~292 million years) rather than panicking.
+		let millis = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
+		Instant::from_millis(millis)
 	}
 
 	/// Returns a breakdown of TCP socket states as a formatted string.
