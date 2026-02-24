@@ -38,22 +38,18 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
         Some(management_response::Response::Status(s)) => {
             let role = role_str(s.role());
             let capability = capability_str(s.capability());
-            let connected = if s.connected { "yes" } else { "no" };
             let uptime = format_uptime(s.uptime_ms);
 
-            let mut tw = TabWriter::new(std::io::stdout());
-            let _ = writeln!(tw, "role:\t{role}");
-            let _ = writeln!(tw, "connected:\t{connected}");
+            println!("{:<18} {}", "role:", role);
             if !s.peer_addr.is_empty() {
-                let _ = writeln!(tw, "peer addr:\t{}", s.peer_addr);
+                println!("{:<18} {}", "peer addr:", s.peer_addr);
             }
-            let _ = writeln!(tw, "capability:\t{capability}");
+            println!("{:<18} {}", "capability:", capability);
             if !s.listen_addr.is_empty() {
-                let _ = writeln!(tw, "listen addr:\t{}", s.listen_addr);
+                println!("{:<18} {}", "listen addr:", s.listen_addr);
             }
-            let _ = writeln!(tw, "version:\t{}", s.version);
-            let _ = writeln!(tw, "uptime:\t{uptime}");
-            let _ = tw.flush();
+            println!("{:<18} {}", "wallhackd:", s.version);
+            println!("{:<18} {}", "uptime:", uptime);
         }
         Some(management_response::Response::Stats(s)) => {
             let mut tw = TabWriter::new(std::io::stdout());
