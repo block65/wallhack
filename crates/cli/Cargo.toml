@@ -7,9 +7,25 @@ edition = "2024"
 name = "wallhack"
 path = "src/bin/wallhack.rs"
 
+[features]
+default = ["quic", "websocket", "http-api", "repl"]
+slim = ["quic", "websocket"]
+
+# Transport features (forwarded to wallhackd)
+quic = ["wallhackd/quic"]
+websocket = ["wallhackd/websocket"]
+
+# REST API feature (forwarded to wallhackd)
+http-api = ["wallhackd/http-api"]
+
+# Interactive REPL
+repl = ["dep:reedline"]
+
 [dependencies]
 argh = "0.1"
 prost = "0.13"
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
+reedline = { version = "0.38", optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = [
   "net",
@@ -17,7 +33,13 @@ tokio = { workspace = true, features = [
   "rt-multi-thread",
   "macros",
 ] }
+tracing.workspace = true
+wallhack-core = { path = "../core", default-features = false }
 wallhack-wire = { path = "../wire" }
+wallhackd = { path = "../daemon", default-features = false }
+
+[build-dependencies]
+built = { version = "0.7", features = ["git2", "chrono"] }
 
 [lints]
 workspace = true
