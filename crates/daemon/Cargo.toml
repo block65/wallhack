@@ -35,5 +35,8 @@ subtle = "2"
 console-subscriber = { workspace = true, optional = true }
 parking_lot = "0.12.5"
 
+[build-dependencies]
+built = { version = "0.7", features = ["git2"] }
+
 [lints]
 workspace = true

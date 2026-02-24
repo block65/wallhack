@@ -19,17 +19,29 @@ use super::{metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTa
 pub struct HandlerConfig {
     /// The role of this node.
     pub node_role: NodeRole,
+    /// Application name.
+    pub name: String,
     /// Application version string.
     pub version: String,
 }
 
 impl HandlerConfig {
-    /// Creates a new handler configuration with the specified role.
+    /// Creates a new handler configuration with the specified role, name, and version.
     #[must_use]
-    pub fn new(node_role: NodeRole) -> Self {
+    pub fn new(node_role: NodeRole, name: String, version: String) -> Self {
         Self {
             node_role,
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            name,
+            version,
+        }
+    }
+
+    #[cfg(test)]
+    fn test_config(node_role: NodeRole) -> Self {
+        Self {
+            node_role,
+            name: "test-daemon".to_string(),
+            version: "0.0.0-test".to_string(),
         }
     }
 }
@@ -299,6 +311,7 @@ impl crate::node_api::NodeApi for Handler {
             peer_addr: None,
             has_relay_capability: false,
             listen_addr: None,
+            name: self.config.name.clone(),
             version: self.config.version.clone(),
             uptime_ms: u64::try_from(self.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
         }
@@ -353,7 +366,7 @@ mod tests {
         let metrics = Arc::new(Metrics::default());
         let peers = Arc::new(Registry::new());
         let routes = RouteTable::shared();
-        Handler::new(HandlerConfig::new(NodeRole::Entry), metrics, peers, routes)
+        Handler::new(HandlerConfig::new(NodeRole::Entry, "wallhackd".to_string(), "0.0.0".to_string()), metrics, peers, routes)
     }
 
     #[test]
@@ -383,7 +396,7 @@ mod tests {
         metrics.inc_bytes_in(100);
         metrics.inc_packets_out(5);
 
-        let handler = Handler::new(HandlerConfig::new(NodeRole::Entry), metrics, peers, routes);
+        let handler = Handler::new(HandlerConfig::new(NodeRole::Entry, "wallhackd".to_string(), "0.0.0".to_string()), metrics, peers, routes);
         let request = ControlRequest {
             request: Some(control_request::Request::Stats(
                 wallhack_wire::control::StatsRequest {},

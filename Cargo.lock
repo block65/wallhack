@@ -3449,6 +3449,7 @@ dependencies = [
 name = "wallhackd"
 version = "0.2.6"
 dependencies = [
+ "built",
  "console-subscriber",
  "hickory-resolver",
  "parking_lot",

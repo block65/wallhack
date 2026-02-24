@@ -170,6 +170,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 listen_addr: s.listen_addr.map_or_else(String::new, |a| a.to_string()),
                 version: s.version,
                 uptime_ms: s.uptime_ms,
+                package_name: s.name,
             })
         }
 
