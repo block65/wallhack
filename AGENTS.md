@@ -8,14 +8,16 @@ Before starting any work, read the following standards from the `standards/` sub
 
 ## Crate structure
 
-- `crates/daemon` — daemon binary (`wallhackd`): owns tunnel, IPC, REPL
-- `crates/cli` — thin CLI binary (`wallhack`): IPC client only, no heavy deps
+- `crates/daemon` — daemon library (`wallhackd`): headless tunnel engine, accepts structured `DaemonConfig`
+- `crates/cli` — unified CLI (`wallhack`/`wallhackd`): multi-call binary with daemon launcher, IPC control client, interactive REPL
+- `crates/api` — REST API for entry node management (axum, behind `http-api` feature)
 - `crates/core` — core logic
 - `crates/exit-adapter` — exit node adapter trait + sessions
 - `crates/transport`, `crates/netstack`, `crates/wire` — supporting crates
 - Slim build: `--no-default-features --features slim` (quic + websocket, no repl, no http-api)
-- Default build: all features including `http-api` (axum REST API)
+- Default build: all features including `http-api` (axum REST API) and `repl` (interactive REPL)
 - `wallhack-core` dep in `crates/daemon` must have `default-features = false` for feature isolation to work
+- CLI crate forwards features (`quic`, `websocket`, `http-api`) to daemon; daemon has no CLI or tracing dependencies
 - ICMP is `#[cfg(unix)]` only
 
 ## Toolchain
