@@ -51,6 +51,12 @@ pub struct StackConfig {
 	/// Required for transparent proxying or capturing all traffic on a TUN interface.
 	/// Note: Default routes are automatically added when this is enabled.
 	pub any_ip: bool,
+
+	/// Maximum number of concurrent sockets (TCP + UDP combined).
+	///
+	/// JIT binding is rejected once this limit is reached, preventing OOM under
+	/// SYN flood or exhaustive port scans. Defaults to `usize::MAX` (no limit).
+	pub max_sockets: usize,
 }
 
 impl Default for StackConfig {
@@ -62,6 +68,7 @@ impl Default for StackConfig {
 			tcp_rx_buffer_size: 256 * 1024,
 			tcp_tx_buffer_size: 256 * 1024,
 			any_ip: false,
+			max_sockets: usize::MAX,
 		}
 	}
 }

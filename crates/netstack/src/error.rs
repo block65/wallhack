@@ -43,4 +43,8 @@ pub enum Error {
 	/// The socket handle does not refer to a valid socket.
 	#[error("invalid socket handle")]
 	InvalidHandle,
+
+	/// The maximum number of concurrent sockets has been reached.
+	#[error("max concurrent sockets reached")]
+	MaxSocketsReached,
 }
