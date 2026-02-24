@@ -3373,6 +3373,8 @@ dependencies = [
  "criterion",
  "futures",
  "quinn",
+ "rcgen",
+ "rustls",
  "sha1",
  "thiserror 2.0.18",
  "tokio",
