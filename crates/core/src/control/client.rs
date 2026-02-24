@@ -200,7 +200,7 @@ mod tests {
         let metrics = Arc::new(Metrics::default());
         let server = ControlServer::bind(
             "127.0.0.1:0".parse().unwrap(),
-            HandlerConfig::new(NodeRole::Entry),
+            HandlerConfig::new(NodeRole::Entry, "wallhackd".to_string(), "0.0.0".to_string()),
             metrics,
         )
         .unwrap();

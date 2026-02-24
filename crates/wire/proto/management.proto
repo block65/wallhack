@@ -130,6 +130,7 @@ message StatusResponse {
   string listen_addr = 5;
   string version = 6;
   uint64 uptime_ms = 7;
+  string package_name = 8;
 }
 
 message StatsResponse {

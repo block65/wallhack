@@ -99,6 +99,8 @@ pub struct NodeStatus {
     pub has_relay_capability: bool,
     /// Listen address (if listening).
     pub listen_addr: Option<SocketAddr>,
+    /// Application name.
+    pub name: String,
     /// Application version.
     pub version: String,
     /// Uptime in milliseconds.

@@ -38,7 +38,7 @@ pub async fn run(
 
     // Server options with control handler config
     let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(NodeRole::Relay),
+        handler_config: HandlerConfig::new(NodeRole::Relay, crate::built_info::PKG_NAME.to_string(), crate::built_info::PKG_VERSION.to_string()),
         metrics: Some(Arc::clone(&metrics)),
         peers: None,
         routes: None,

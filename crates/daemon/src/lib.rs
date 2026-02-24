@@ -1,5 +1,9 @@
 #![warn(unused_extern_crates)]
 
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 pub mod address_spec;
 pub mod daemon_config;
 pub mod dns;
@@ -44,8 +48,8 @@ use wallhack_core::{
 pub async fn run_daemon_engine(config: DaemonConfig) -> Result<(), NodeError> {
     tracing::info!(
         "{} {}  {}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
+        built_info::PKG_NAME,
+        built_info::PKG_VERSION,
         config.mode.name()
     );
 
@@ -94,7 +98,11 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
     let routes = RouteTable::shared();
 
     let handler = Handler::new(
-        HandlerConfig::new(role),
+        HandlerConfig::new(
+            role,
+            built_info::PKG_NAME.to_string(),
+            built_info::PKG_VERSION.to_string(),
+        ),
         Arc::clone(&metrics),
         Arc::clone(&peers),
         Arc::clone(&routes),
