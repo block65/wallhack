@@ -35,11 +35,6 @@ pub enum Error {
 pub fn create(config: config::ServerConfig) -> Result<quinn::Endpoint, Error> {
 	let (cert_der, priv_key, _fingerprint) = configure_crypto(config.tls)?;
 
-	// let mut server_config =
-	// 	quinn::ServerConfig::with_single_cert(cert_der.clone(), priv_key.clone_key())?;
-	// let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
-	// transport_config.max_concurrent_uni_streams(0_u8.into());
-
 	let mut server_crypto = rustls::ServerConfig::builder()
 		.with_no_client_auth()
 		.with_single_cert(cert_der, priv_key)?;
