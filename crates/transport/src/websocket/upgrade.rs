@@ -189,6 +189,8 @@ fn compute_accept_key(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+	use tokio::io::AsyncWriteExt;
+
 	use super::*;
 
 	#[test]
@@ -197,5 +199,89 @@ mod tests {
 		let key = "dGhlIHNhbXBsZSBub25jZQ==";
 		let accept = compute_accept_key(key);
 		assert_eq!(accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+	}
+
+	/// Sends `request` to the server half of a duplex and returns the upgrade result.
+	async fn do_upgrade(request: &str) -> Result<UpgradeResult, UpgradeError> {
+		let (mut client, mut server) = tokio::io::duplex(65_536);
+		let bytes = request.as_bytes().to_vec();
+		tokio::spawn(async move {
+			client.write_all(&bytes).await.ok();
+		});
+		upgrade(&mut server).await
+	}
+
+	#[tokio::test]
+	async fn test_request_too_large() {
+		// A header that pushes the total past MAX_REQUEST_SIZE (8192 bytes).
+		let filler = "X-Filler: ".to_string() + &"a".repeat(8200) + "\r\n";
+		let request = format!("GET /ws HTTP/1.1\r\nHost: localhost\r\n{filler}\r\n");
+		let err = do_upgrade(&request).await.unwrap_err();
+		assert!(
+			matches!(err, UpgradeError::RequestTooLarge),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_missing_sec_websocket_key() {
+		let request = "GET /ws HTTP/1.1\r\n\
+		               Host: localhost\r\n\
+		               Upgrade: websocket\r\n\
+		               Connection: Upgrade\r\n\
+		               Sec-WebSocket-Version: 13\r\n\
+		               \r\n";
+		let err = do_upgrade(request).await.unwrap_err();
+		assert!(
+			matches!(err, UpgradeError::MissingHeader(_)),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_non_get_method() {
+		let request = "POST /ws HTTP/1.1\r\n\
+		               Host: localhost\r\n\
+		               Upgrade: websocket\r\n\
+		               Connection: Upgrade\r\n\
+		               Sec-WebSocket-Version: 13\r\n\
+		               Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+		               \r\n";
+		let err = do_upgrade(request).await.unwrap_err();
+		assert!(
+			matches!(err, UpgradeError::InvalidRequest(_)),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_wrong_websocket_version() {
+		let request = "GET /ws HTTP/1.1\r\n\
+		               Host: localhost\r\n\
+		               Upgrade: websocket\r\n\
+		               Connection: Upgrade\r\n\
+		               Sec-WebSocket-Version: 8\r\n\
+		               Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+		               \r\n";
+		let err = do_upgrade(request).await.unwrap_err();
+		assert!(
+			matches!(err, UpgradeError::InvalidRequest(_)),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_not_websocket_upgrade() {
+		// Missing Upgrade/Connection headers → NotWebSocket
+		let request = "GET /ws HTTP/1.1\r\n\
+		               Host: localhost\r\n\
+		               Sec-WebSocket-Version: 13\r\n\
+		               Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+		               \r\n";
+		let err = do_upgrade(request).await.unwrap_err();
+		assert!(
+			matches!(err, UpgradeError::NotWebSocket),
+			"unexpected error: {err}"
+		);
 	}
 }
