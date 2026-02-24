@@ -8,14 +8,16 @@ use std::{
 	task::{Context, Poll},
 };
 
-use quinn::{RecvStream, SendStream};
+use quinn::{ConnectionError, RecvStream, SendStream};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tracing::debug;
 
 use crate::{BiStream, Transport, TransportError};
 
 /// A bidirectional QUIC stream.
 ///
-/// Combines a [`SendStream`] and [`RecvStream`] into a single bidirectional stream.
+/// Combines a [`SendStream`] and [`RecvStream`] into a single bidirectional
+/// stream.
 pub struct QuicBiStream {
 	send: SendStream,
 	recv: RecvStream,
@@ -80,6 +82,7 @@ impl QuicTransport {
 	/// Creates a new QUIC transport from an established connection.
 	#[must_use]
 	pub fn new(connection: quinn::Connection) -> Self {
+		debug!(remote_addr = %connection.remote_address(), "creating QUIC transport");
 		Self { connection }
 	}
 
@@ -90,50 +93,58 @@ impl QuicTransport {
 	}
 }
 
+/// Maps a [`quinn::ConnectionError`] to a [`TransportError`], distinguishing
+/// graceful close (returns `None` sentinel) from actual errors.
+fn map_quic_connection_error(e: &ConnectionError) -> Result<Option<()>, TransportError> {
+	match e {
+		ConnectionError::ApplicationClosed(_) | ConnectionError::LocallyClosed => Ok(None),
+		ConnectionError::TimedOut => Err(TransportError::Timeout),
+		ConnectionError::Reset
+		| ConnectionError::TransportError(_)
+		| ConnectionError::ConnectionClosed(_)
+		| ConnectionError::VersionMismatch
+		| ConnectionError::CidsExhausted => Err(TransportError::connection_closed(e.to_string())),
+	}
+}
+
 impl Transport for QuicTransport {
 	type SendStream = SendStream;
 	type RecvStream = RecvStream;
 	type BiStream = QuicBiStream;
 
 	async fn open_uni(&self) -> Result<Self::SendStream, TransportError> {
-		self.connection
-			.open_uni()
-			.await
-			.map_err(|e| TransportError::connection_closed(e.to_string()))
+		debug!(remote_addr = %self.connection.remote_address(), "opening QUIC unidirectional stream");
+		self.connection.open_uni().await.map_err(|e| match e {
+			ConnectionError::TimedOut => TransportError::Timeout,
+			_ => TransportError::connection_closed(e.to_string()),
+		})
 	}
 
 	async fn open_bi(&self) -> Result<Self::BiStream, TransportError> {
-		let (send, recv) = self
-			.connection
-			.open_bi()
-			.await
-			.map_err(|e| TransportError::connection_closed(e.to_string()))?;
+		debug!(remote_addr = %self.connection.remote_address(), "opening QUIC bidirectional stream");
+		let (send, recv) = self.connection.open_bi().await.map_err(|e| match e {
+			ConnectionError::TimedOut => TransportError::Timeout,
+			_ => TransportError::connection_closed(e.to_string()),
+		})?;
 		Ok(QuicBiStream::new(send, recv))
 	}
 
 	async fn accept_uni(&self) -> Result<Option<Self::RecvStream>, TransportError> {
 		match self.connection.accept_uni().await {
 			Ok(stream) => Ok(Some(stream)),
-			Err(
-				quinn::ConnectionError::ApplicationClosed(_)
-				| quinn::ConnectionError::LocallyClosed,
-			) => Ok(None),
-			Err(e) => Err(TransportError::connection_closed(e.to_string())),
+			Err(e) => map_quic_connection_error(&e).map(|_| None),
 		}
 	}
 
 	async fn accept_bi(&self) -> Result<Option<Self::BiStream>, TransportError> {
 		match self.connection.accept_bi().await {
 			Ok((send, recv)) => Ok(Some(QuicBiStream::new(send, recv))),
-			Err(
-				quinn::ConnectionError::ApplicationClosed(_)
-				| quinn::ConnectionError::LocallyClosed,
-			) => Ok(None),
-			Err(e) => Err(TransportError::connection_closed(e.to_string())),
+			Err(e) => map_quic_connection_error(&e).map(|_| None),
 		}
 	}
 
 	async fn close(&self) -> Result<(), TransportError> {
+		debug!(remote_addr = %self.connection.remote_address(), "closing QUIC transport");
 		self.connection.close(0u32.into(), b"closing");
 		Ok(())
 	}

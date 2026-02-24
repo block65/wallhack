@@ -15,7 +15,7 @@ use tokio::{
 	net::{TcpListener, TcpStream},
 };
 use tokio_rustls::TlsAcceptor;
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::WebSocketConfig};
 use wallhack_transport::Transport;
 use wallhack_wire::{
 	control::{ControlMessage, control_message},
@@ -26,7 +26,12 @@ use yamux::Mode;
 use crate::{
 	NodeRole,
 	control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
-	transport::{bridge, ws::WsTransport, ws_adapter::WsByteStream, ws_upgrade},
+	transport::{
+		bridge,
+		websocket::{
+			self as ws_upgrade, WebSocketByteStream, WebSocketTransport, WebSocketTransportConfig,
+		},
+	},
 };
 
 use super::{
@@ -142,7 +147,7 @@ pub struct WebSocketServer {
 
 impl Server for WebSocketServer {
 	type Error = Error;
-	type Transport = WsTransport;
+	type Transport = WebSocketTransport;
 
 	fn try_new(config: ServerConfig, options: ServerOptions) -> Result<Self, Error> {
 		let std_listener = std::net::TcpListener::bind(config.listen)?;
@@ -179,8 +184,13 @@ impl Server for WebSocketServer {
 		let ws_stream = accept_websocket(MaybeTlsStream::Tls(Box::new(tls_stream))).await?;
 
 		// Convert to byte stream and wrap in yamux transport
-		let byte_stream = WsByteStream::new(ws_stream);
-		let (transport, driver) = WsTransport::new(byte_stream, Mode::Server, Some(peer_addr));
+		let byte_stream = WebSocketByteStream::new(ws_stream);
+		let (transport, driver) = WebSocketTransport::new(
+			byte_stream,
+			Mode::Server,
+			Some(peer_addr),
+			WebSocketTransportConfig::default(),
+		);
 		let transport = Arc::new(transport);
 
 		// Spawn the yamux driver
@@ -317,11 +327,18 @@ async fn accept_websocket(
 	// Perform WebSocket upgrade
 	let _upgrade_result = ws_upgrade::upgrade(&mut stream).await?;
 
+	// Maximum message and frame size: one tunnel MTU plus framing overhead.
+	// Anything larger is a protocol violation — reject early to prevent unbounded
+	// allocations in WsByteStream's read buffer.
+	let mut ws_config = WebSocketConfig::default();
+	ws_config.max_message_size = Some(65_535 + 512);
+	ws_config.max_frame_size = Some(65_535 + 512);
+
 	// Convert to WebSocket stream
 	let ws_stream = WebSocketStream::from_raw_socket(
 		stream,
 		tokio_tungstenite::tungstenite::protocol::Role::Server,
-		None,
+		Some(ws_config),
 	)
 	.await;
 

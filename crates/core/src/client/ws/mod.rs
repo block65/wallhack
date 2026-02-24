@@ -14,7 +14,9 @@ use tokio::{
 	net::TcpStream,
 };
 use tokio_rustls::TlsConnector;
-use tokio_tungstenite::{WebSocketStream, client_async};
+use tokio_tungstenite::{
+	WebSocketStream, client_async_with_config, tungstenite::protocol::WebSocketConfig,
+};
 use wallhack_wire::{
 	control::{ControlMessage, control_message},
 	data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
@@ -24,7 +26,10 @@ use yamux::Mode;
 use crate::{
 	NodeRole,
 	client::config::ClientConfig,
-	transport::{Transport, bridge, ws::WsTransport, ws_adapter::WsByteStream},
+	transport::{
+		Transport, bridge,
+		websocket::{WebSocketByteStream, WebSocketTransport, WebSocketTransportConfig},
+	},
 };
 
 use super::client::{ConnectResult, ConnectionTasks};
@@ -225,7 +230,10 @@ impl WsClient {
 	///
 	/// Returns an error if the connection fails.
 	#[allow(clippy::result_large_err)]
-	pub async fn connect(&mut self, role: NodeRole) -> Result<ConnectResult<WsTransport>, Error> {
+	pub async fn connect(
+		&mut self,
+		role: NodeRole,
+	) -> Result<ConnectResult<WebSocketTransport>, Error> {
 		let addr = self.config.base.addr;
 		let hostname = self
 			.config
@@ -248,6 +256,13 @@ impl WsClient {
 			addr.port(),
 			self.config.path
 		);
+
+		// Maximum WebSocket message and frame size: one tunnel MTU plus framing overhead.
+		// Anything larger is a protocol violation — reject at the tungstenite layer
+		// rather than buffering into an unbounded read_buf in WsByteStream.
+		let mut ws_config = WebSocketConfig::default();
+		ws_config.max_message_size = Some(65_535 + 512);
+		ws_config.max_frame_size = Some(65_535 + 512);
 
 		// Connect TCP — route through proxy if HTTPS_PROXY / ALL_PROXY / SOCKS5 env vars are set
 		let tcp_stream = {
@@ -278,24 +293,36 @@ impl WsClient {
 		let remote_addr_str = peer_addr.map_or_else(|| addr.to_string(), |a| a.to_string());
 
 		// Wrap in TLS if configured and perform WebSocket handshake
-		let ws_stream: WebSocketStream<MaybeTlsStream> =
-			if let Some(connector) = &self.tls_connector {
-				let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
-					.map_err(|_| Error::InvalidDnsName(hostname.clone()))?;
-				let tls_stream = connector.connect(server_name, tcp_stream).await?;
-				let (ws, _response) =
-					client_async(&url, MaybeTlsStream::Tls(Box::new(tls_stream))).await?;
-				ws
-			} else {
-				let (ws, _response) = client_async(&url, MaybeTlsStream::Plain(tcp_stream)).await?;
-				ws
-			};
+		let ws_stream: WebSocketStream<MaybeTlsStream> = if let Some(connector) =
+			&self.tls_connector
+		{
+			let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
+				.map_err(|_| Error::InvalidDnsName(hostname.clone()))?;
+			let tls_stream = connector.connect(server_name, tcp_stream).await?;
+			let (ws, _response) = client_async_with_config(
+				&url,
+				MaybeTlsStream::Tls(Box::new(tls_stream)),
+				Some(ws_config),
+			)
+			.await?;
+			ws
+		} else {
+			let (ws, _response) =
+				client_async_with_config(&url, MaybeTlsStream::Plain(tcp_stream), Some(ws_config))
+					.await?;
+			ws
+		};
 
 		tracing::debug!("WebSocket connected to {addr}");
 
 		// Convert to byte stream and wrap in yamux transport
-		let byte_stream = WsByteStream::new(ws_stream);
-		let (transport, driver) = WsTransport::new(byte_stream, Mode::Client, peer_addr);
+		let byte_stream = WebSocketByteStream::new(ws_stream);
+		let (transport, driver) = WebSocketTransport::new(
+			byte_stream,
+			Mode::Client,
+			peer_addr,
+			WebSocketTransportConfig::default(),
+		);
 		let transport = Arc::new(transport);
 
 		// Spawn the yamux driver
