@@ -1,10 +1,10 @@
-# wallhack-netstack
+# wallhack-entry-stack
 
 A high-performance, userspace TCP/IP stack designed for transparent proxying, network tunneling, and security research.
 
 ## What is it?
 
-`wallhack-netstack` is a deterministic, asynchronous network stack built on top of `smoltcp`. It provides a standard async I/O interface (Streams, Listeners, and Sockets) that operates entirely in userspace over virtual L3 (IP) devices. 
+`wallhack-entry-stack` is a deterministic, asynchronous network stack built on top of `smoltcp`. It provides a standard async I/O interface (Streams, Listeners, and Sockets) that operates entirely in userspace over virtual L3 (IP) devices. 
 
 Unlike the standard library's networking primitives which rely on the host operating system's kernel stack, this crate implements the full TCP/IP state machine internally. This allows an application to manage network traffic without being constrained by host kernel configurations, firewall rules, or socket limits.
 
@@ -13,7 +13,7 @@ Unlike the standard library's networking primitives which rely on the host opera
 Traditional networking applications are bound by the "Host OS Bottleneck." This crate was developed to solve three specific challenges:
 
 ### 1. Transparent Proxying & AnyIP
-In a tunneling or VPN context, you often need to accept traffic destined for *any* IP address or *any* port. Standard OS stacks require explicit binding to specific addresses or complex `iptables/nftables` redirection. `wallhack-netstack` supports "AnyIP" and Just-In-Time (JIT) binding, allowing the application to dynamically spawn listeners as traffic arrives for previously unknown destinations.
+In a tunneling or VPN context, you often need to accept traffic destined for *any* IP address or *any* port. Standard OS stacks require explicit binding to specific addresses or complex `iptables/nftables` redirection. `wallhack-entry-stack` supports "AnyIP" and Just-In-Time (JIT) binding, allowing the application to dynamically spawn listeners as traffic arrives for previously unknown destinations.
 
 ### 2. High-Fidelity Scanning Support
 Security tools like `nmap` often detect the presence of proxies or VPNs by observing subtle differences in how a TCP implementation responds to probes (e.g., specific flag combinations or sequence number patterns). By using a dedicated userspace stack, this crate provides a consistent and configurable "network identity" that is completely decoupled from the host OS.
@@ -27,7 +27,7 @@ Testing complex network protocols is notoriously difficult with standard sockets
 
 `smoltcp` is a fantastic, low-level, and `#![no_std]` capable TCP/IP implementation. However, it is fundamentally synchronous and requires the developer to manually manage the `SocketSet`, advance the state machine via `Interface::poll` at exact timestamps, and implement their own logic for waking async tasks.
 
-`wallhack-netstack` provides the "missing middle" required for modern applications:
+`wallhack-entry-stack` provides the "missing middle" required for modern applications:
 
 1.  **Tokio Integration**: It bridges `smoltcp`'s synchronous buffers to the `AsyncRead` and `AsyncWrite` ecosystem, allowing you to use standard tools like `copy_bidirectional`.
 2.  **Autonomous Poll Loop**: It manages a background task that intelligently polls the stack based on both hardware events (ingress) and internal protocol timers (retransmissions, ACK delays).
