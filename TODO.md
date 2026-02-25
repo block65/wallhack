@@ -35,6 +35,15 @@
 - [ ] `shell` — spawn shell over tunnel
 - [ ] Per-peer traffic stats — `stats [<peer>]` showing bytes/packets per peer rather than
       global node aggregates. Requires per-peer counters in `Metrics`/`Registry`.
+- [ ] REPL notifications — proto defines `DaemonNotification` with `PeerConnected`/
+      `PeerDisconnected` but nothing is wired up. Daemon doesn't send them, IPC is
+      request-response only, REPL doesn't listen. Needs: broadcast channel in IPC,
+      daemon fires events from peer registry, async REPL listener task, notification
+      display formatting.
+- [ ] Runtime mode promotion — e.g. promoting exit → relay via CLI command. Entry → relay
+      is nonsensical. Could be `wallhack promote relay` or similar.
+- [ ] Relay direction — how does a relay decide which direction to forward? Needs
+      investigation.
 
 ## Transports
 
@@ -143,10 +152,22 @@
 - [x] `--name`/`-n` flag added to both entry and exit nodes — random 8-char hex if omitted; shared `generate_node_name()` (will later default to CPU/hardware ID)
 - [x] Async REPL output race fixed — Done sentinel (`PrintMsg::Done` / `DoneGuard`) ensures all command responses are flushed to `ExternalPrinter` before the next prompt is drawn
 - [x] REPL colour enabled — guarded by `IsTerminal`; headless output uses plain `[+]`/`[!]`/`[-]` prefixes
- - [ ] Update the website with the benchmarks, explain that they are just "in
+- [ ] Update the website with the benchmarks, explain that they are just "in
       the gigabits per second" and its kind of irrelevant because the tunnel
       isnt a bottleneck, its the OS or the VM. Confirm this makes sense first.
       Some benchmarks are below 1gbps, which should be quoted. latency can be
       quoted also. maybe we can just say "1gbps+" Its like a weird flex because
       we cant say.
-      
+- [ ] "Ping the daemon or a peer" this is wrong, we dont need a "ping the
+  daemon" feature - that was a bug/miscommunication
+
+## Sockets
+
+- [ ] Consider `dirs` or similar for working out where the socket goes. Needs a
+  very carful judgement on BLOAT!
+- [ ] Make sure we dont create or manage a socket when running in multi-binary
+      mode, it can be in-memory
+- [ ] Ensure the permissions are set securely for the socket in a shared
+  environment so someone cant hijack wallhackd, whilst remaining compatible with
+  something like systemd in future
+- [ ] If not in-memory, make sure we are windows + macos compatible
