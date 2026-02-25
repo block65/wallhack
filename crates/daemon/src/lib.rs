@@ -1,6 +1,7 @@
 #![warn(unused_extern_crates)]
 
 pub mod built_info {
+    #![allow(clippy::needless_raw_string_hashes, clippy::doc_markdown)]
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
