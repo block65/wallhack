@@ -16,7 +16,7 @@ No real network between the VMs. This isolates the cost of the tunnel itself (en
 
 ### TCP Throughput
 
-An `iperf3` client on the entry VM sends TCP traffic to an `iperf3` server bound to the exit VM's loopback address (`10.100.0.1`). Traffic flows through the entry TUN interface, the tunnel transport, and the exit adapter, which opens a separate TCP connection to the server. `bits_per_second` is read from the `iperf3 --json` summary after a 10-second run. Reverse (`-R`) flips the sender to the exit side; parallel (`-P N`) opens N independent TCP streams. All values are sender-side except reverse, which reports receiver-side.
+An `iperf3` client on the entry VM sends TCP traffic to an `iperf3` server bound to the exit VM's loopback address (`10.100.0.1`). Traffic flows through the entry TUN interface, the tunnel transport, and the exit adapter, which opens a separate TCP connection to the server. Each run is 10 seconds. Reverse flips the sender to the exit side; parallel opens N independent TCP streams.
 
 | Transport | 1 stream | 2 streams | 4 streams | Reverse |
 |-----------|----------|-----------|-----------|---------|
