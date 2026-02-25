@@ -55,7 +55,7 @@ smoltcp = { version = "0.12", default-features = false, features = [
 ] }
 socket2.version = "0.5"
 thiserror = "2"
-tokio.features = ["rt", "macros", "rt-multi-thread", "net", "io-util", "fs"]
+tokio.features = ["rt", "macros", "rt-multi-thread", "net", "io-util"]
 tokio.workspace = true
 tracing.workspace = true
 tun = { version = "0.7", features = [
