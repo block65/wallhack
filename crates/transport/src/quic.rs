@@ -166,6 +166,7 @@ mod tests {
     use super::QuicTransport;
 
     fn make_server_config() -> (quinn::ServerConfig, CertificateDer<'static>) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let params = rcgen::CertificateParams::new(vec!["localhost".into()]).expect("valid params");
         let key_pair = rcgen::KeyPair::generate().expect("key generation");
         let cert = params.self_signed(&key_pair).expect("self-signed cert");
