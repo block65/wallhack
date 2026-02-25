@@ -18,5 +18,10 @@ export default defineConfig({
 	integrations: [markdoc(), icon(), sitemap(), pagefind()],
 	vite: {
 		plugins: [tailwindcss()],
+				{
+					src: "../AI_DISCLOSURE.md",
+					dest: "src/content/docs/ai-disclosure.mdoc",
+					frontmatter: { order: 100 },
+				},
 	},
 });

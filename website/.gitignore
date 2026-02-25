@@ -17,6 +17,9 @@ pnpm-debug.log*
 .env
 .env.production
 
+# synced from repo root at build time
+src/content/docs/ai-disclosure.mdoc
+
 # macOS-specific files
 .DS_Store
 
