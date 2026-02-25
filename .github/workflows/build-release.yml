@@ -87,11 +87,11 @@ jobs:
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+        run: cargo build --release --target ${{ matrix.target }} -p wallhack-cli ${{ matrix.features }}
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p cli ${{ matrix.features }}
+        run: cross build --release --target ${{ matrix.target }} -p wallhack-cli ${{ matrix.features }}
 
       - name: Check binary size
         if: matrix.bloat_label
