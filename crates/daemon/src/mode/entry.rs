@@ -409,6 +409,7 @@ where
                 conn_peers.register(peer.clone(), peer_addr.clone(), NodeRole::Exit);
 
                 // Create ping channel for this peer
+                #[allow(deprecated)] // TODO: replace with peer events
                 let mut ping_rx = conn_peers.register_ping_channel(&peer);
                 let transport = accept_result.transport();
 
