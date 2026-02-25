@@ -8,39 +8,48 @@ order: 5
 
 These benchmarks measure the throughput and latency cost of the tunnel itself (encryption, framing, and multiplexing) and how each transport holds up under packet loss. The goal is to provide enough data to choose the right transport for the environment.
 
-All results use `iperf3` pushing traffic through a full end-to-end tunnel with both nodes running and encryption active. Results are from v0.1.2 on Linux x86_64. To reproduce: `just benchmark` in the `bench/` directory.
+All results use `iperf3` pushing traffic through a full end-to-end tunnel with both nodes running and encryption active. Entry and exit run as QEMU microVMs on the same host. Results are from wallhackd v0.2.6 on Linux x86_64. To reproduce: `just bench benchmark` from the repo root.
 
 ## Loopback
 
-The entry and exit nodes are on the same machine with no real network between them. This isolates the cost of the tunnel itself (encryption, framing, and multiplexing) from any network conditions.
+No real network between the VMs. This isolates the cost of the tunnel itself (encryption, framing, and multiplexing) from any network conditions.
 
-### Throughput
+### TCP Throughput
 
-| Transport | 1 stream | 4 streams | Reverse |
-|-----------|----------|-----------|---------|
-| UDP (QUIC) | 2.4 Gbps | 2.4 Gbps | 581 Mbps |
-| TCP (WebSockets) | 2.4 Gbps | 2.5 Gbps | — |
+| Transport | 1 stream | 2 streams | 4 streams | Reverse |
+|-----------|----------|-----------|-----------|---------|
+| QUIC | 1.4 Gbps | 1.3 Gbps | 1.1 Gbps | 218 Mbps |
+| WebSocket | 1.3 Gbps | 1.4 Gbps | 1.5 Gbps | 565 Mbps |
 
-Both transports are equivalent when there is no packet loss.
+WebSocket scales better with parallel streams and has higher reverse throughput.
+
+### UDP Throughput
+
+| Transport | Throughput |
+|-----------|------------|
+| QUIC | 11.0 Gbps |
+| WebSocket | 9.2 Gbps |
+
+UDP throughput is significantly higher than TCP because there is no flow control or congestion window overhead on the inner connection.
 
 ### Latency
 
-| Transport | Avg RTT | Jitter |
-|-----------|---------|--------|
-| UDP (QUIC) | 0.164 ms | 0.034 ms |
-| TCP (WebSockets) | 0.129 ms | 0.034 ms |
+| Transport | RTT |
+|-----------|-----|
+| QUIC | 0.52 ms |
+| WebSocket | 0.81 ms |
 
-WebSockets is 21% lower latency. QUIC runs TLS and stream framing in userspace, adding overhead that doesn't pay off without packet loss.
+Both transports add sub-millisecond overhead on loopback.
 
 ## Synthetic packet loss
 
-The same loopback setup with [netem](https://wiki.linuxfoundation.org/networking/netem) (the Linux network emulation tool) injecting packet loss and added delay on the tunnel link, simulating packet loss and latency on the tunnel link.
+The same loopback setup with [netem](https://wiki.linuxfoundation.org/networking/netem) injecting packet loss and added delay on the entry node's tunnel link.
 
 ### Throughput (4 parallel streams)
 
-| Transport | 0.5% loss / +10ms RTT | 2.0% loss / +50ms RTT |
+| Transport | 0.5% loss / 5ms delay | 2% loss / 25ms delay |
 |-----------|----------------------|----------------------|
-| UDP (QUIC) | 58 Mbps | 17 Mbps |
-| TCP (WebSockets) | 89 Mbps | 7.7 Mbps |
+| QUIC | 1.2 Gbps | 1.3 Gbps |
+| WebSocket | 1.5 Gbps | 1.5 Gbps |
 
-At low loss WebSockets still leads. At 2% loss QUIC pulls ahead. Each connection gets an independent stream, so a dropped packet stalls only that stream rather than everything sharing the same TCP flow.
+On a high-bandwidth loopback link, both transports absorb modest loss without significant throughput degradation. WebSocket maintains higher aggregate throughput under these conditions.

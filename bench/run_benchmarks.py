@@ -23,19 +23,23 @@ from vm_common import (
 )
 
 SCENARIOS = [
-    ("benchmark", "tcp_fwd", "throughput_mbps"),
-    ("benchmark", "tcp_rev", "throughput_mbps"),
-    ("benchmark", "udp", "throughput_mbps"),
-    ("benchmark", "latency", "latency_ms"),
-    ("benchmark", "parallel2", "throughput_mbps"),
-    ("benchmark", "parallel4", "throughput_mbps"),
+    ("benchmark", "tcp_fwd", "throughput_mbps", None),
+    ("benchmark", "tcp_rev", "throughput_mbps", None),
+    ("benchmark", "udp", "throughput_mbps", None),
+    ("benchmark", "latency", "latency_ms", None),
+    ("benchmark", "parallel2", "throughput_mbps", None),
+    ("benchmark", "parallel4", "throughput_mbps", None),
+    # Packet-loss throughput (4 parallel streams under netem).
+    # delay is one-way, so 5ms delay ≈ 10ms RTT, 25ms ≈ 50ms RTT.
+    ("benchmark", "parallel4", "throughput_mbps", {"loss": "0.5%", "delay": "5ms"}),
+    ("benchmark", "parallel4", "throughput_mbps", {"loss": "2%", "delay": "25ms"}),
 ]
 
 
 # ── scenario runner ───────────────────────────────────────────────────────────
 
 
-def run_one_benchmark(transport, metric, debug=False):
+def run_one_benchmark(transport, metric, netem=None, debug=False):
     port = free_port()
     exit_log, entry_log = make_log_pair()
     exit_proc = None
@@ -44,7 +48,7 @@ def run_one_benchmark(transport, metric, debug=False):
     # on startup (before the guest OS even boots), so by the time we get
     # WALLHACK_ENTRY_READY_MAGIC_TOKEN, the port is guaranteed to be bound.
     entry_proc = start_vm(
-        qemu_cmd(port, "entry", "benchmark", transport, metric=metric, debug=debug)
+        qemu_cmd(port, "entry", "benchmark", transport, netem=netem, metric=metric, debug=debug)
     )
 
     entry_drainer = threading.Thread(
@@ -68,6 +72,7 @@ def run_one_benchmark(transport, metric, debug=False):
                 "exit",
                 "benchmark",
                 transport,
+                netem=netem,
                 metric=metric,
                 debug=debug,
             )
@@ -133,8 +138,10 @@ results = {
 }
 
 for transport in transports:
-    for _, metric_name, unit in SCENARIOS:
+    for _, metric_name, unit, netem in SCENARIOS:
         label = f"{transport}/{metric_name}"
+        if netem:
+            label += " (" + " ".join(f"{k}={v}" for k, v in netem.items()) + ")"
         print(f"Benchmarking {label} ({args.runs} runs)...", end=" ", flush=True)
 
         run_values = []
@@ -142,7 +149,7 @@ for transport in transports:
         last_exit_log, last_entry_log = None, None
         for i in range(args.runs):
             val, err, exit_log, entry_log = run_one_benchmark(
-                transport, metric_name, args.debug
+                transport, metric_name, netem=netem, debug=args.debug
             )
             if val is not None:
                 run_values.append(val)
@@ -158,8 +165,7 @@ for transport in transports:
             median = statistics.median(run_values)
             print(f"median: {median:.2f} {unit}")
 
-            results["scenarios"].append(
-                {
+            entry = {
                     "name": metric_name,
                     "transport": transport,
                     "metric": unit,
@@ -168,7 +174,9 @@ for transport in transports:
                     "median": median,
                     "max": max_val,
                 }
-            )
+            if netem:
+                entry["netem"] = netem
+            results["scenarios"].append(entry)
         else:
             print(f"FAILED: {last_err}")
             if args.verbose or args.debug:
