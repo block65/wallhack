@@ -5,8 +5,12 @@ use argh::FromArgs;
 /// Control the wallhack daemon.
 #[derive(FromArgs, Debug)]
 pub struct Cli {
+    /// print version information and exit
+    #[argh(switch)]
+    pub version: bool,
+
     #[argh(subcommand)]
-    pub command: CtlCommand,
+    pub command: Option<CtlCommand>,
 }
 
 /// Available control commands.

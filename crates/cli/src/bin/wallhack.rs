@@ -29,6 +29,11 @@ fn main() {
         .unwrap_or("wallhack")
         .to_string();
 
+    if args.iter().any(|a| a == "--version") {
+        println!("{}", wallhack_cli::version::version_short());
+        std::process::exit(0);
+    }
+
     let is_ctl = bin_name == "wallhackctl";
     let is_daemon = bin_name == DAEMON_BIN_NAME
         || (!is_ctl
@@ -89,9 +94,6 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
         std::process::exit(0);
     }
 
-    tracing::subscriber::set_global_default(wallhack_cli::subscriber::SimpleSubscriber::from(&cli))
-        .expect("setting default subscriber");
-
     let config = match wallhack_cli::daemon_cli::build_daemon_config(&cli) {
         Ok(config) => config,
         Err(e) => {
@@ -100,6 +102,17 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
         }
     };
 
+    // When the repl feature is enabled and stdout is a TTY, launch the daemon
+    // with an interactive REPL attached instead of running headlessly.
+    #[cfg(feature = "repl")]
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        run_daemon_repl(&cli, &config);
+    }
+
+    // Headless path: no REPL, just run the daemon engine.
+    tracing::subscriber::set_global_default(wallhack_cli::subscriber::SimpleSubscriber::from(&cli))
+        .expect("setting default subscriber");
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -107,6 +120,116 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
 
     let exit_code = rt.block_on(async {
         match wallhackd::run_daemon_engine(config).await {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        }
+    });
+
+    std::process::exit(exit_code);
+}
+
+#[cfg(feature = "repl")]
+fn run_daemon_repl(
+    cli: &wallhack_cli::daemon_cli::WallhackCli,
+    config: &wallhackd::daemon_config::DaemonConfig,
+) -> ! {
+    // REPL defaults to WARN so daemon info-level noise doesn't clutter the
+    // prompt. --debug / --trace still work if the user wants more detail.
+    let subscriber = if cli.trace || cli.trace_filter.is_some() {
+        wallhack_cli::subscriber::SimpleSubscriber::new(
+            tracing::level_filters::LevelFilter::TRACE,
+            cli.trace_filter.as_deref().unwrap_or(""),
+        )
+    } else if cli.debug || cli.debug_filter.is_some() {
+        wallhack_cli::subscriber::SimpleSubscriber::new(
+            tracing::level_filters::LevelFilter::DEBUG,
+            cli.debug_filter.as_deref().unwrap_or(""),
+        )
+    } else {
+        wallhack_cli::subscriber::SimpleSubscriber::new(
+            tracing::level_filters::LevelFilter::WARN,
+            "",
+        )
+    };
+    let writer = subscriber.writer();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
+
+    let printer = reedline::ExternalPrinter::<String>::default();
+    let sender = printer.sender();
+    *writer.write().unwrap() = Box::new(move |tag, msg| {
+        let _ = sender.send(format!("{tag}: {msg}"));
+    });
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+
+    let exit_code = rt.block_on(async {
+        let handle = match wallhackd::start_node(config) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        };
+
+        // Start IPC listener so wallhackctl can still connect.
+        let socket_path = wallhack_core::ipc::socket_path();
+        let ipc_api = handle.api_arc();
+        let peer_events = handle.peer_events_sender();
+        let shutdown_rx = handle.shutdown_rx();
+        tokio::spawn(async move {
+            if let Err(e) = wallhack_core::ipc::run_ipc_listener(
+                ipc_api,
+                peer_events,
+                &socket_path,
+                shutdown_rx,
+            )
+            .await
+            {
+                tracing::error!("IPC listener error: {e}");
+            }
+        });
+
+        // In-process connection for the REPL (with notifications).
+        let (client, server) = tokio::io::duplex(4096);
+        let api = handle.api_arc();
+        let repl_events = handle.subscribe_peer_events();
+        tokio::spawn(async move {
+            if let Err(e) =
+                wallhack_core::ipc::handle_connection(server, api, Some(repl_events)).await
+            {
+                tracing::debug!("REPL IPC connection ended: {e}");
+            }
+        });
+
+        let conn = wallhack_cli::ipc::IpcConnection::new(client);
+
+        // Forward notifications to the REPL printer.
+        let notif_sender = printer.sender();
+        let mut notif_rx = conn.subscribe_notifications();
+        tokio::spawn(async move {
+            wallhack_cli::output::forward_notifications(&mut notif_rx, |line| {
+                let _ = notif_sender.send(line);
+            })
+            .await;
+        });
+
+        let repl_result = tokio::select! {
+            result = wallhack_cli::repl::run(conn, printer) => result,
+            _ = tokio::signal::ctrl_c() => Ok(()),
+        };
+
+        // Gracefully shut down the daemon node.
+        if let Err(e) = handle.shutdown().await {
+            tracing::debug!("Node shutdown: {e}");
+        }
+
+        match repl_result {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -140,7 +263,11 @@ fn run_ctl(cli: wallhack_cli::cli::Cli) -> ! {
 async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlError> {
     let mut stream = ipc::connect().await.map_err(ipc::IpcError::from)?;
 
-    let request = match cli.command {
+    let Some(command) = cli.command else {
+        eprintln!("error: missing subcommand\nRun with --help for usage information.");
+        std::process::exit(1);
+    };
+    let request = match command {
         CtlCommand::Ping(cmd) => management_request::Request::Ping(PingRequest {
             peer: cmd.peer.unwrap_or_default(),
         }),
@@ -175,7 +302,7 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
 fn run_repl() -> ! {
     use tracing::level_filters::LevelFilter;
 
-    let subscriber = wallhack_cli::subscriber::SimpleSubscriber::new(LevelFilter::INFO, "");
+    let subscriber = wallhack_cli::subscriber::SimpleSubscriber::new(LevelFilter::WARN, "");
     let writer = subscriber.writer();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 
@@ -205,16 +332,41 @@ fn run_repl() -> ! {
             }
         };
 
-        // In-process connection: no filesystem socket needed.
+        // In-process connection with notifications.
         let (client, server) = tokio::io::duplex(4096);
         let api = handle.api_arc();
+        let repl_events = handle.subscribe_peer_events();
         tokio::spawn(async move {
-            if let Err(e) = wallhack_core::ipc::handle_connection(server, api).await {
+            if let Err(e) =
+                wallhack_core::ipc::handle_connection(server, api, Some(repl_events)).await
+            {
                 tracing::debug!("REPL IPC connection ended: {e}");
             }
         });
 
-        match wallhack_cli::repl::run(client, printer).await {
+        let conn = wallhack_cli::ipc::IpcConnection::new(client);
+
+        // Forward notifications to the REPL printer.
+        let notif_sender = printer.sender();
+        let mut notif_rx = conn.subscribe_notifications();
+        tokio::spawn(async move {
+            wallhack_cli::output::forward_notifications(&mut notif_rx, |line| {
+                let _ = notif_sender.send(line);
+            })
+            .await;
+        });
+
+        let repl_result = tokio::select! {
+            result = wallhack_cli::repl::run(conn, printer) => result,
+            _ = tokio::signal::ctrl_c() => Ok(()),
+        };
+
+        // Gracefully shut down the daemon node.
+        if let Err(e) = handle.shutdown().await {
+            tracing::debug!("Node shutdown: {e}");
+        }
+
+        match repl_result {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("error: {e}");

@@ -87,7 +87,7 @@ impl Server for QuicServer {
 
         let endpoint = quinn::Endpoint::server(server_config, config.listen)?;
 
-        tracing::info!("local_addr {:?}", endpoint.local_addr());
+        tracing::debug!("local_addr {:?}", endpoint.local_addr());
 
         Ok(Self {
             endpoint,

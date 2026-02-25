@@ -4,22 +4,21 @@
 //! management requests; no new IPC features are introduced.
 
 use reedline::{DefaultPrompt, DefaultPromptSegment, ExternalPrinter, Reedline, Signal};
-use tokio::io::{AsyncRead, AsyncWrite};
 use wallhack_wire::management::management_request;
 
-use crate::{ipc, output};
+use crate::{ipc::IpcConnection, output};
 
 /// Run the interactive REPL.
 ///
-/// Takes an already-connected stream to the daemon (in-process duplex or
-/// external Unix socket). Commands are sent as IPC requests over that stream.
-/// The `printer` is used to safely print log output without corrupting the prompt.
+/// Takes an [`IpcConnection`] to the daemon (in-process duplex or external
+/// Unix socket). The `printer` is used to safely print log output and
+/// notifications without corrupting the prompt.
 ///
 /// # Errors
 ///
 /// Returns error for fatal failures (e.g. terminal I/O).
 pub async fn run(
-    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    mut conn: IpcConnection,
     printer: ExternalPrinter<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let history_path = dirs_home().join(".wallhack_history");
@@ -75,7 +74,7 @@ pub async fn run(
                     continue;
                 };
 
-                match ipc::send_request(&mut stream, request).await {
+                match conn.request(request).await {
                     Ok(resp) => {
                         if let Err(e) = output::print_response(&resp) {
                             eprintln!("error: {e}");
