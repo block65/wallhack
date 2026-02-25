@@ -138,6 +138,25 @@ done
 
 log ""
 log "Results: $PASS_COUNT passed, $FAILED failed, $SKIP_COUNT skipped"
+
+# --- Crate breakdown (glibc only, requires cargo-bloat) ---
+if command -v cargo-bloat >/dev/null 2>&1 && [ "$NO_BUILD" = "false" ]; then
+    for build in "${BUILDS[@]}"; do
+        IFS='|' read -r label target features <<< "$build"
+        [ -z "$ONLY" ] || [ "$label" = "$ONLY" ] || continue
+        # cargo-bloat can't analyse cross-compiled binaries
+        [[ "$target" != *-musl ]] || continue
+
+        log ""
+        log "=== Top 30 crates: $label ==="
+        # cargo-bloat doesn't support --quiet, but respects CARGO_TERM_QUIET
+        # shellcheck disable=SC2086
+        CARGO_TERM_QUIET=true cargo bloat --release -p wallhack-cli --target "$target" $features --crates -n 30 2>&1 \
+            | grep -E '^\s+\S|^ File' | tee -a "$RESULT_FILE"
+    done
+fi
+
+log ""
 log "Saved to: $RESULT_FILE"
 
 if [ "$FAILED" -gt 0 ]; then
