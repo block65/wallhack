@@ -67,15 +67,13 @@ pub async fn run_ipc_listener(
 ) -> Result<()> {
     // Ensure parent directory exists.
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
+        std::fs::create_dir_all(parent)
             .with_context(|| format!("creating socket directory {}", parent.display()))?;
     }
 
     // Remove stale socket if it exists.
     if path.exists() {
-        tokio::fs::remove_file(path)
-            .await
+        std::fs::remove_file(path)
             .with_context(|| format!("removing stale socket {}", path.display()))?;
     }
 
@@ -105,7 +103,8 @@ pub async fn run_ipc_listener(
     }
 
     // Clean up socket file.
-    let _ = tokio::fs::remove_file(path).await;
+    // TODO: use platform-agnostic named pipe on Windows (UnixListener is Unix-only)
+    let _ = std::fs::remove_file(path);
 
     Ok(())
 }
