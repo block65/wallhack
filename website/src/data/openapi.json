@@ -16,7 +16,7 @@
 			"basicAuth": {
 				"type": "http",
 				"scheme": "basic",
-				"description": "Configured via --api-user and --api-pass. Optional — if not configured, no authentication is required."
+				"description": "Configured via --api-user and --api-secret. Optional — if not configured, no authentication is required."
 			}
 		},
 		"schemas": {

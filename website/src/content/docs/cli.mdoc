@@ -12,29 +12,32 @@ Every entry node includes an interactive command-line interface for direct acces
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `ping` | `p` | Show version and uptime |
-| `stats` | `s` | Show traffic statistics |
-| `peers` | - | List connected peers and sessions |
-| `route add <cidr> [via <peer>]` | - | Add a route; peer optional when only one is connected |
+| `ping [<peer>]` | - | Ping the daemon or a peer |
+| `info` | - | Show daemon info |
+| `version` | - | Show version |
+| `stats` | - | Show traffic statistics |
+| `peers` | - | List connected peers |
+| `route add <cidr> [via] <peer>` | - | Add a route |
 | `route del <cidr>` | - | Remove a route |
-| `route list` | `routes`, `ip route` | List all routes |
-| `disconnect <peer>` | - | Disconnect a peer |
-| `help` | `?` | Show this help message |
-| `quit` | `q` | Exit wallhack |
+| `route list` | `route` | List configured routes |
+| `connect <addr>` | - | Connect to a peer |
+| `listen <addr>` | - | Start listening for connections |
+| `disconnect [peer]` | - | Disconnect peer |
+| `shutdown` | - | Shut down the daemon |
+| `help` | `?` | Show this help |
+| `quit` | `exit` | Quit the REPL |
 
 ## Example Session
 
 ```
 wallhack> peers
-Connected peers (1):
-  PEER   ROLE  ADDRESS          LATENCY   UPTIME
-  peer1  exit  10.0.1.5:52341   1.234ms   0:42
+NAME   CAPABILITY  ADDR              STATUS     LATENCY
+peer1  Exit        10.0.1.5:52341    Connected  1.2ms
 
 wallhack> route add 10.0.0.0/8 via peer1
-Route added: 10.0.0.0/8 via peer1 dev tun-peer1
+OK
 
-wallhack> routes
-Routes (1):
-  DESTINATION  VIA    DEVICE    AGE
-  10.0.0.0/8   peer1  tun-peer1  0:03
+wallhack> route list
+CIDR        PEER
+10.0.0.0/8  peer1
 ```
