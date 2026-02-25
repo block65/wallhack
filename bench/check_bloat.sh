@@ -94,7 +94,15 @@ for build in "${BUILDS[@]}"; do
 
     [ -z "$ONLY" ] || [ "$label" = "$ONLY" ] || continue
 
-    binary="target/$target/release/wallhack"
+    # musl targets use cross with a separate target dir to avoid glibc conflicts
+    if [[ "$target" == *-musl ]]; then
+        target_dir="target/musl"
+        build_cmd="cross"
+    else
+        target_dir="target"
+        build_cmd="cargo"
+    fi
+    binary="$target_dir/$target/release/wallhack"
 
     if [ "$NO_BUILD" = "true" ]; then
         if [ ! -f "$binary" ]; then
@@ -104,7 +112,7 @@ for build in "${BUILDS[@]}"; do
         fi
     else
         # shellcheck disable=SC2086
-        if ! cargo build -q --release -p wallhack-cli --target "$target" $features 2>&1; then
+        if ! CARGO_TARGET_DIR="$target_dir" $build_cmd build -q --release -p wallhack-cli --target "$target" $features 2>&1; then
             log "$(printf '%-16s %-30s %10s %10s %s' "$label" "$target" "BUILD FAIL" "-" "FAIL")"
             FAILED=$((FAILED + 1))
             continue
