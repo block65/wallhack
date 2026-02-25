@@ -13,7 +13,8 @@ Before starting any work, read the following standards from the `standards/` sub
 - `crates/api` — REST API for entry node management (axum, behind `http-api` feature)
 - `crates/core` — core logic
 - `crates/exit-adapter` — exit node adapter trait + sessions
-- `crates/transport`, `crates/netstack`, `crates/wire` — supporting crates
+- `crates/entry-stack` — entry-side userspace TCP/IP stack (smoltcp-based, parses TUN packets into structured flows)
+- `crates/transport`, `crates/wire` — supporting crates
 - Slim build: `--no-default-features --features slim` (quic + websocket, no repl, no http-api)
 - Default build: all features including `http-api` (axum REST API) and `repl` (interactive REPL)
 - `wallhack-core` dep in `crates/daemon` must have `default-features = false` for feature isolation to work

@@ -24,7 +24,7 @@ anyhow = "1"
 dashmap = "6"
 prost = { version = "0.13" }
 wallhack-wire = { path = "../wire" }
-wallhack-netstack = { path = "../netstack", features = ["async"] }
+wallhack-entry-stack = { path = "../entry-stack", features = ["async"] }
 arc-swap = { workspace = true }
 parking_lot = { workspace = true }
 quinn = { version = "0.11", default-features = false, features = [

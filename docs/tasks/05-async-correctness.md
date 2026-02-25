@@ -7,7 +7,7 @@ broadcast→mpsc migration (task 07) and can land first.
 ## Scope
 
 `crates/exit-adapter/src/sessions/`,
-`crates/netstack/src/async_stack/`,
+`crates/entry-stack/src/async_stack/`,
 `crates/transport/src/ws_adapter.rs`
 
 ---
@@ -71,9 +71,9 @@ tokio::time::timeout(ICMP_REPLY_TIMEOUT, self.recv(recv_buf))
 
 Add `Timeout` variant to `RuntimeError`.
 
-### 3. Netstack inject receiver — use `parking_lot::Mutex`, not `tokio::sync::Mutex`
+### 3. Entry-stack inject receiver — use `parking_lot::Mutex`, not `tokio::sync::Mutex`
 
-**File:** `crates/netstack/src/async_stack/mod.rs:402`
+**File:** `crates/entry-stack/src/async_stack/mod.rs:402`
 
 ```rust
 inject_rx: Option<Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>>
@@ -91,13 +91,13 @@ wrapping it in `Arc<Mutex>` at all is a smell.
 
 ### 4. `TcpListenerAny` — stop cloning HashSet on every wakeup
 
-**File:** `crates/netstack/src/async_stack/tcp_listener_any.rs:54`
+**File:** `crates/entry-stack/src/async_stack/tcp_listener_any.rs:54`
 
 ```rust
 let ports = self.ports.lock().clone();  // inside a hot wakeup loop
 ```
 
-This allocates and populates a new `HashSet<u16>` on every netstack wakeup
+This allocates and populates a new `HashSet<u16>` on every entry-stack wakeup
 (which can be hundreds of times per second). The set changes rarely (only when
 a new port is registered via JIT or explicit bind).
 

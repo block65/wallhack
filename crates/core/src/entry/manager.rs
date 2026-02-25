@@ -14,7 +14,9 @@ use tokio::{
     sync::{Notify, broadcast},
     time::Instant,
 };
-use wallhack_netstack::async_stack::{HeldSyn, Netstack, SynProxyState, udp_socket::UdpSocketAny};
+use wallhack_entry_stack::async_stack::{
+    HeldSyn, Netstack, SynProxyState, udp_socket::UdpSocketAny,
+};
 use wallhack_transport::Transport;
 use wallhack_wire::{
     data::{
@@ -41,8 +43,8 @@ const RATE_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("netstack error: {0}")]
-    Netstack(#[from] wallhack_netstack::error::Error),
+    #[error("entry-stack error: {0}")]
+    Netstack(#[from] wallhack_entry_stack::error::Error),
 
     #[error("session error: {0}")]
     Session(#[from] super::session::Error),
@@ -119,7 +121,7 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
     #[allow(clippy::too_many_lines)] // refactor candidate
     pub async fn run(mut self) -> Result<(), Error>
     where
-        D: wallhack_netstack::inner::peek_device::PeekDevice,
+        D: wallhack_entry_stack::inner::peek_device::PeekDevice,
     {
         let mut listener = self.stack.tcp_listen_any()?;
         let mut udp = self.stack.udp_bind_any()?;
@@ -165,7 +167,7 @@ impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T>
                         local_port,
                         remote = %meta.endpoint,
                         local_addr = ?meta.local_address,
-                        "UDP packet received from netstack"
+                        "UDP packet received from entry stack"
                     );
                     let key = (meta.endpoint, local_port);
                     let now = Instant::now();
