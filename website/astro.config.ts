@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
 import icon from "astro-icon";
 import pagefind from "astro-pagefind";
+import { syncer } from "./vite-plugin-syncer.ts";
 
 export default defineConfig({
 	site: "https://wallhack.net",
@@ -17,11 +18,15 @@ export default defineConfig({
 	},
 	integrations: [markdoc(), icon(), sitemap(), pagefind()],
 	vite: {
-		plugins: [tailwindcss()],
+		plugins: [
+			tailwindcss(),
+			syncer([
 				{
 					src: "../AI_DISCLOSURE.md",
 					dest: "src/content/docs/ai-disclosure.mdoc",
 					frontmatter: { order: 100 },
 				},
+			]),
+		],
 	},
 });
