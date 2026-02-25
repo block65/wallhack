@@ -107,6 +107,26 @@ pub struct NodeStatus {
     pub uptime_ms: u64,
 }
 
+/// Result of a successful connect operation.
+#[derive(Debug, Clone)]
+pub struct ConnectInfo {
+    /// Resolved peer address.
+    pub peer_addr: String,
+    /// Transport protocol used (e.g. "QUIC", "WebSocket").
+    pub protocol: String,
+}
+
+/// Result of a successful listen operation.
+#[derive(Debug, Clone)]
+pub struct ListenInfo {
+    /// Actual bound address (may differ from requested if port was 0).
+    pub listen_addr: SocketAddr,
+    /// Transport protocol used (e.g. "QUIC", "WebSocket").
+    pub protocol: String,
+    /// Certificate fingerprint (SHA-256).
+    pub fingerprint: String,
+}
+
 /// Error types for node API operations.
 #[derive(Debug, thiserror::Error)]
 pub enum NodeApiError {
@@ -160,14 +180,14 @@ pub trait NodeApi: Send + Sync {
     ///
     /// Only supported on exit nodes. Returns error for entry nodes.
     /// If already connected, returns `AlreadyConnected` error.
-    fn connect(&self, addr: SocketAddr) -> Result<()>;
+    fn connect(&self, addr: SocketAddr) -> Result<ConnectInfo>;
 
     /// Start listening for downstream connections.
     ///
     /// Only supported on exit nodes. Returns error for entry nodes.
     /// If already listening, returns `AlreadyListening` error.
     /// Enables relay capability when combined with connect.
-    fn listen(&self, addr: SocketAddr) -> Result<()>;
+    fn listen(&self, addr: SocketAddr) -> Result<ListenInfo>;
 
     /// Disconnect from upstream peer.
     ///

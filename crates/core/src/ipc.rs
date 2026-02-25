@@ -12,16 +12,18 @@ use anyhow::{Context, Result};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::UnixListener,
-    sync::watch,
+    sync::{broadcast, mpsc, watch},
 };
 use wallhack_transport::TransportError;
 use wallhack_wire::management::{
-    self, DaemonMessage, ErrorCode, ErrorResponse, ManagementRequest, ManagementResponse,
-    OkResponse, PeersResponse, PingResponse, RoutesResponse, StatsResponse, StatusResponse,
-    daemon_message, management_request, management_response,
+    self, ConnectResponse, DaemonMessage, DaemonNotification, ErrorCode, ErrorResponse,
+    ListenResponse, ManagementRequest, ManagementResponse, OkResponse, PeerConnected,
+    PeerDisconnected, PeersResponse, PingResponse, RoutesResponse, StatsResponse, StatusResponse,
+    daemon_message, daemon_notification, management_request, management_response,
 };
 
 use crate::{
+    control::peers::PeerEvent,
     node_api::{NodeApi, NodeApiError},
     transport::bridge::{CONTROL_MTU, read_length_delimited, write_length_delimited},
 };
@@ -37,9 +39,12 @@ const SOCKET_NAME: &str = "wallhackd.sock";
 pub fn socket_path() -> PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         Path::new(&runtime_dir).join("wallhack").join(SOCKET_NAME)
-    } else {
-        let user = std::env::var("USER").unwrap_or_else(|_| "shared".to_string());
+    } else if let Ok(user) = std::env::var("USER") {
         PathBuf::from(format!("/tmp/wallhack-{user}")).join(SOCKET_NAME)
+    } else if let Ok(home) = std::env::var("HOME") {
+        Path::new(&home).join(".wallhack").join(SOCKET_NAME)
+    } else {
+        PathBuf::from("/tmp/wallhack-shared").join(SOCKET_NAME)
     }
 }
 
@@ -56,6 +61,7 @@ pub fn socket_path() -> PathBuf {
 /// Returns an error if the socket cannot be bound.
 pub async fn run_ipc_listener(
     node_api: Arc<dyn NodeApi>,
+    peer_events: broadcast::Sender<PeerEvent>,
     path: &Path,
     mut shutdown_rx: watch::Receiver<()>,
 ) -> Result<()> {
@@ -88,8 +94,9 @@ pub async fn run_ipc_listener(
             result = listener.accept() => {
                 let (stream, _addr) = result.context("accepting IPC connection")?;
                 let api = Arc::clone(&node_api);
+                let events_rx = peer_events.subscribe();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, api).await {
+                    if let Err(e) = handle_connection(stream, api, Some(events_rx)).await {
                         tracing::debug!(error = %e, "IPC connection ended");
                     }
                 });
@@ -105,32 +112,99 @@ pub async fn run_ipc_listener(
 
 /// Handle a single IPC connection.
 ///
-/// Reads requests in a loop, dispatches each to `node_api`, and writes back
-/// the response. The connection closes when the peer disconnects or on error.
+/// Reads requests, dispatches to `node_api`, and writes back responses.
+/// If `peer_events` is provided, peer lifecycle notifications are also
+/// pushed to the client as `DaemonMessage::Notification` frames.
 pub async fn handle_connection(
-    stream: impl AsyncRead + AsyncWrite + Unpin,
+    stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
     node_api: Arc<dyn NodeApi>,
+    peer_events: Option<broadcast::Receiver<PeerEvent>>,
 ) -> Result<(), TransportError> {
     let (mut reader, mut writer) = tokio::io::split(stream);
 
-    loop {
+    // Channel for serialising writes from both request handler and
+    // notification forwarder through a single writer task.
+    let (write_tx, mut write_rx) = mpsc::channel::<DaemonMessage>(32);
+
+    // Writer task: drains the channel and writes frames.
+    let writer_task = tokio::spawn(async move {
+        while let Some(msg) = write_rx.recv().await {
+            if let Err(e) = write_length_delimited(&mut writer, &msg).await {
+                tracing::trace!(error = %e, "IPC write ended");
+                break;
+            }
+        }
+    });
+
+    // Notification forwarder task (if subscribed).
+    let notify_tx = write_tx.clone();
+    let notify_task = peer_events.map(|mut rx| {
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let notification = peer_event_to_proto(event);
+                        let msg = DaemonMessage {
+                            message: Some(daemon_message::Message::Notification(notification)),
+                        };
+                        if notify_tx.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!(missed = n, "IPC notification subscriber lagged");
+                        // Reusing TunnelError as a generic warning — no
+                        // dedicated proto message for internal advisories yet.
+                        let warning = DaemonMessage {
+                            message: Some(daemon_message::Message::Notification(
+                                DaemonNotification {
+                                    event: Some(daemon_notification::Event::TunnelError(
+                                        management::TunnelError {
+                                            message: format!("missed {n} peer notification(s)"),
+                                        },
+                                    )),
+                                },
+                            )),
+                        };
+                        if notify_tx.send(warning).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+    });
+
+    // Request loop: read requests, dispatch, send responses.
+    let result = loop {
         let request: ManagementRequest = match read_length_delimited(&mut reader, CONTROL_MTU).await
         {
             Ok(req) => req,
             Err(e) => {
                 tracing::trace!(error = %e, "IPC read ended");
-                return Ok(());
+                break Ok(());
             }
         };
 
         let response = dispatch_request(&request, &*node_api);
-
         let msg = DaemonMessage {
             message: Some(daemon_message::Message::Response(response)),
         };
 
-        write_length_delimited(&mut writer, &msg).await?;
+        if write_tx.send(msg).await.is_err() {
+            break Ok(());
+        }
+    };
+
+    // Tear down: drop our sender so the writer drains and exits.
+    drop(write_tx);
+    if let Some(task) = notify_task {
+        task.abort();
     }
+    let _ = writer_task.await;
+
+    result
 }
 
 /// Map a [`ManagementRequest`] to a [`ManagementResponse`] via [`NodeApi`].
@@ -232,7 +306,10 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
         Some(management_request::Request::Connect(req)) => match req.addr.parse() {
             Ok(addr) => match api.connect(addr) {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Ok(info) => management_response::Response::Connect(ConnectResponse {
+                    peer_addr: info.peer_addr,
+                    protocol: info.protocol,
+                }),
                 Err(e) => error_response(&e),
             },
             Err(_) => management_response::Response::Error(ErrorResponse {
@@ -243,7 +320,11 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
         Some(management_request::Request::Listen(req)) => match req.addr.parse() {
             Ok(addr) => match api.listen(addr) {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Ok(info) => management_response::Response::Listen(ListenResponse {
+                    listen_addr: info.listen_addr.to_string(),
+                    protocol: info.protocol,
+                    fingerprint: info.fingerprint,
+                }),
                 Err(e) => error_response(&e),
             },
             Err(_) => management_response::Response::Error(ErrorResponse {
@@ -277,6 +358,34 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 }
 
 // ── Conversion helpers ──────────────────────────────────────────────
+
+fn peer_event_to_proto(event: PeerEvent) -> DaemonNotification {
+    let event = match event {
+        PeerEvent::Connected { name, addr, role } => {
+            daemon_notification::Event::PeerConnected(PeerConnected {
+                peer: Some(management::PeerInfo {
+                    name,
+                    addr,
+                    capability: match role {
+                        crate::NodeRole::Entry => management::NodeCapability::Unspecified,
+                        crate::NodeRole::Exit => management::NodeCapability::Exit,
+                        crate::NodeRole::Relay => management::NodeCapability::Relay,
+                    }
+                    .into(),
+                    status: management::PeerStatus::Connected.into(),
+                    ..Default::default()
+                }),
+            })
+        }
+        PeerEvent::Disconnected { name } => {
+            daemon_notification::Event::PeerDisconnected(PeerDisconnected {
+                name,
+                reason: String::new(),
+            })
+        }
+    };
+    DaemonNotification { event: Some(event) }
+}
 
 fn error_response(e: &NodeApiError) -> management_response::Response {
     let (code, message) = match e {

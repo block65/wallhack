@@ -7,9 +7,22 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::{NodeRole, node_api::NodeApiError};
+
+/// Events emitted when peers connect or disconnect.
+#[derive(Debug, Clone)]
+pub enum PeerEvent {
+    Connected {
+        name: String,
+        addr: String,
+        role: NodeRole,
+    },
+    Disconnected {
+        name: String,
+    },
+}
 
 /// Request to ping a peer, with a channel to send the result back.
 pub type PingRequest = oneshot::Sender<f64>;
@@ -46,13 +59,17 @@ pub struct Registry {
     peers: ArcSwap<HashMap<String, PeerInfo>>,
     /// Channels to request pings from connection handlers.
     ping_channels: ArcSwap<HashMap<String, mpsc::Sender<PingRequest>>>,
+    /// Broadcast channel for peer lifecycle events.
+    events_tx: broadcast::Sender<PeerEvent>,
 }
 
 impl Default for Registry {
     fn default() -> Self {
+        let (events_tx, _) = broadcast::channel(64);
         Self {
             peers: ArcSwap::from_pointee(HashMap::new()),
             ping_channels: ArcSwap::from_pointee(HashMap::new()),
+            events_tx,
         }
     }
 }
@@ -70,8 +87,22 @@ impl Registry {
         Arc::new(Self::new())
     }
 
+    /// Subscribe to peer lifecycle events.
+    pub fn subscribe(&self) -> broadcast::Receiver<PeerEvent> {
+        self.events_tx.subscribe()
+    }
+
+    /// Returns a clone of the peer events sender.
+    pub fn events_sender(&self) -> broadcast::Sender<PeerEvent> {
+        self.events_tx.clone()
+    }
+
     /// Register a new peer.
     pub fn register(&self, id: String, addr: String, role: NodeRole) {
+        // TOCTOU: another thread could register the same id between this
+        // check and the rcu insert. Harmless — a duplicate Connected event
+        // is better than a missed one, and callers don't race on the same id.
+        let is_new = !self.peers.load().contains_key(&id);
         let info = PeerInfo {
             name: id.clone(),
             addr,
@@ -82,11 +113,21 @@ impl Registry {
             latency_ms: None,
             latency_measured_at: None,
         };
+        let event_addr = info.addr.clone();
+        let event_role = info.role;
+        let event_name = id.clone();
         self.peers.rcu(move |old| {
             let mut new = (**old).clone();
             new.insert(id.clone(), info.clone());
             new
         });
+        if is_new {
+            let _ = self.events_tx.send(PeerEvent::Connected {
+                name: event_name,
+                addr: event_addr,
+                role: event_role,
+            });
+        }
     }
 
     /// Update relay capability for a peer.
@@ -113,12 +154,18 @@ impl Registry {
             removed = new.remove(id);
             new
         });
+        if removed.is_some() {
+            let _ = self.events_tx.send(PeerEvent::Disconnected {
+                name: id.to_string(),
+            });
+        }
         removed
     }
 
     /// Register a ping channel for a peer's connection handler.
     ///
     /// Returns the receiver that the connection handler should listen on.
+    #[deprecated(note = "will be replaced by peer events")]
     pub fn register_ping_channel(&self, id: &str) -> mpsc::Receiver<PingRequest> {
         let (tx, rx) = mpsc::channel(1);
         self.ping_channels.rcu(|old| {
@@ -137,6 +184,7 @@ impl Registry {
     /// # Errors
     ///
     /// Returns error if the peer doesn't exist or ping fails.
+    #[deprecated(note = "will be replaced by peer events")]
     pub async fn ping_peer(
         &self,
         id: &str,
@@ -287,5 +335,49 @@ mod tests {
 
         let peer = registry.get("peer1").unwrap();
         assert_eq!(peer.bytes_transferred, 150);
+    }
+
+    #[test]
+    fn test_register_emits_connected_event() {
+        let registry = Registry::new();
+        let mut rx = registry.subscribe();
+
+        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, PeerEvent::Connected { ref name, .. } if name == "peer1"));
+    }
+
+    #[test]
+    fn test_unregister_emits_disconnected_event() {
+        let registry = Registry::new();
+        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+
+        let mut rx = registry.subscribe();
+        registry.unregister("peer1");
+
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, PeerEvent::Disconnected { ref name } if name == "peer1"));
+    }
+
+    #[test]
+    fn test_duplicate_register_does_not_emit() {
+        let registry = Registry::new();
+        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+
+        let mut rx = registry.subscribe();
+        registry.register("peer1".into(), "1.2.3.4:9999".into(), NodeRole::Exit);
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_unregister_unknown_does_not_emit() {
+        let registry = Registry::new();
+        let mut rx = registry.subscribe();
+
+        registry.unregister("ghost");
+
+        assert!(rx.try_recv().is_err());
     }
 }

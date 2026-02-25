@@ -35,15 +35,6 @@ impl HandlerConfig {
             version,
         }
     }
-
-    #[cfg(test)]
-    fn test_config(node_role: NodeRole) -> Self {
-        Self {
-            node_role,
-            name: "test-daemon".to_string(),
-            version: "0.0.0-test".to_string(),
-        }
-    }
 }
 
 /// Handler for control channel requests.
@@ -317,11 +308,17 @@ impl crate::node_api::NodeApi for Handler {
         }
     }
 
-    fn connect(&self, _addr: std::net::SocketAddr) -> crate::node_api::Result<()> {
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
         Err(crate::node_api::NodeApiError::NotSupported)
     }
 
-    fn listen(&self, _addr: std::net::SocketAddr) -> crate::node_api::Result<()> {
+    fn listen(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
         Err(crate::node_api::NodeApiError::NotSupported)
     }
 

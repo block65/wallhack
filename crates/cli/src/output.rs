@@ -3,7 +3,10 @@
 use std::io::Write;
 
 use tabwriter::TabWriter;
-use wallhack_wire::management::{self, ManagementResponse, management_response};
+use tokio::sync::broadcast;
+use wallhack_wire::management::{
+    DaemonNotification, ManagementResponse, daemon_notification, management_response,
+};
 
 use crate::ipc::IpcError;
 
@@ -36,19 +39,18 @@ fn format_uptime(ms: u64) -> String {
 pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
     match &resp.response {
         Some(management_response::Response::Status(s)) => {
-            let role = role_str(s.role());
-            let capability = capability_str(s.capability());
+            let role = s.role();
             let uptime = format_uptime(s.uptime_ms);
 
             println!("{:<18} {}", "role:", role);
             if !s.peer_addr.is_empty() {
                 println!("{:<18} {}", "peer addr:", s.peer_addr);
             }
-            println!("{:<18} {}", "capability:", capability);
             if !s.listen_addr.is_empty() {
                 println!("{:<18} {}", "listen addr:", s.listen_addr);
             }
             println!("{:<18} {} {}", "version:", s.package_name, s.version);
+            println!("{:<18} wallhack {}", "cli:", env!("CARGO_PKG_VERSION"));
             println!("{:<18} {}", "uptime:", uptime);
         }
         Some(management_response::Response::Stats(s)) => {
@@ -69,8 +71,8 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                 let mut tw = TabWriter::new(std::io::stdout());
                 let _ = writeln!(tw, "NAME\tCAPABILITY\tADDR\tSTATUS\tLATENCY");
                 for peer in &p.peers {
-                    let cap = capability_str(peer.capability());
-                    let status = status_str(peer.status());
+                    let cap = peer.capability();
+                    let status = peer.status();
                     let latency = if peer.latency_ms > 0.0 {
                         format!("{:.1}ms", peer.latency_ms)
                     } else {
@@ -97,6 +99,15 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                 let _ = tw.flush();
             }
         }
+        Some(management_response::Response::Connect(c)) => {
+            println!("Connected to {} ({})", c.peer_addr, c.protocol);
+        }
+        Some(management_response::Response::Listen(l)) => {
+            println!("Listening on {} ({})", l.listen_addr, l.protocol);
+            if !l.fingerprint.is_empty() {
+                println!("Fingerprint: {}", l.fingerprint);
+            }
+        }
         Some(management_response::Response::Ok(_)) => {
             println!("OK");
         }
@@ -116,30 +127,6 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
     Ok(())
 }
 
-fn role_str(role: management::NodeRole) -> &'static str {
-    match role {
-        management::NodeRole::Entry => "entry",
-        management::NodeRole::Exit => "exit",
-        management::NodeRole::Unspecified => "unknown",
-    }
-}
-
-fn capability_str(cap: management::NodeCapability) -> &'static str {
-    match cap {
-        management::NodeCapability::Exit => "exit",
-        management::NodeCapability::Relay => "relay",
-        management::NodeCapability::Unspecified => "unknown",
-    }
-}
-
-fn status_str(status: management::PeerStatus) -> &'static str {
-    match status {
-        management::PeerStatus::Connected => "connected",
-        management::PeerStatus::Disconnected => "disconnected",
-        management::PeerStatus::Unspecified => "unknown",
-    }
-}
-
 /// Errors from the control CLI.
 #[derive(Debug, thiserror::Error)]
 pub enum CtlError {
@@ -149,4 +136,48 @@ pub enum CtlError {
     Daemon(String),
     #[error("empty response from daemon")]
     EmptyResponse,
+}
+
+/// Forward daemon notifications to a callback.
+///
+/// Runs until the broadcast channel closes. Designed to be spawned as a task.
+/// The callback receives formatted notification strings (e.g. for
+/// `ExternalPrinter::sender().send()`).
+pub async fn forward_notifications(
+    rx: &mut broadcast::Receiver<DaemonNotification>,
+    mut emit: impl FnMut(String),
+) {
+    loop {
+        match rx.recv().await {
+            Ok(notif) => {
+                if let Some(line) = format_notification(&notif) {
+                    emit(line);
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                emit(format!("[!] missed {n} notification(s)"));
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+fn format_notification(notif: &DaemonNotification) -> Option<String> {
+    match &notif.event {
+        Some(daemon_notification::Event::PeerConnected(pc)) => {
+            let peer = pc.peer.as_ref()?;
+            Some(format!(
+                "[+] peer \"{}\" connected ({})",
+                peer.name, peer.addr
+            ))
+        }
+        Some(daemon_notification::Event::PeerDisconnected(pd)) => {
+            Some(format!("[-] peer \"{}\" disconnected", pd.name))
+        }
+        Some(daemon_notification::Event::TunnelError(te)) => Some(format!("[!] {}", te.message)),
+        Some(daemon_notification::Event::ShuttingDown(sd)) => {
+            Some(format!("[*] daemon shutting down: {}", sd.reason))
+        }
+        _ => None,
+    }
 }

@@ -6,9 +6,15 @@
 
 use std::sync::Arc;
 
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::{broadcast, watch},
+    task::JoinHandle,
+};
 
-use crate::node_api::NodeApi;
+use crate::{
+    control::peers::{PeerEvent, SharedRegistry},
+    node_api::NodeApi,
+};
 
 /// Handle to a running wallhack node.
 ///
@@ -17,6 +23,7 @@ use crate::node_api::NodeApi;
 /// `start_relay()` in the CLI crate.
 pub struct DaemonHandle {
     node_api: Arc<dyn NodeApi>,
+    peers: SharedRegistry,
     shutdown_tx: watch::Sender<()>,
     node_task: JoinHandle<anyhow::Result<()>>,
 }
@@ -26,11 +33,13 @@ impl DaemonHandle {
     #[must_use]
     pub fn new(
         node_api: Arc<dyn NodeApi>,
+        peers: SharedRegistry,
         shutdown_tx: watch::Sender<()>,
         node_task: JoinHandle<anyhow::Result<()>>,
     ) -> Self {
         Self {
             node_api,
+            peers,
             shutdown_tx,
             node_task,
         }
@@ -52,6 +61,18 @@ impl DaemonHandle {
     #[must_use]
     pub fn shutdown_rx(&self) -> watch::Receiver<()> {
         self.shutdown_tx.subscribe()
+    }
+
+    /// Subscribe to peer lifecycle events (connect/disconnect).
+    #[must_use]
+    pub fn subscribe_peer_events(&self) -> broadcast::Receiver<PeerEvent> {
+        self.peers.subscribe()
+    }
+
+    /// Returns the peer events sender for passing to subsystems (e.g. IPC listener).
+    #[must_use]
+    pub fn peer_events_sender(&self) -> broadcast::Sender<PeerEvent> {
+        self.peers.events_sender()
     }
 
     /// Signals the node to shut down and waits for it to finish.

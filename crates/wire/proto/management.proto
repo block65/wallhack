@@ -41,6 +41,8 @@ message ManagementResponse {
     StatsResponse stats = 4;
     PeersResponse peers = 5;
     RoutesResponse routes = 6;
+    ConnectResponse connect = 7;
+    ListenResponse listen = 8;
     ErrorResponse error = 20;
     OkResponse ok = 21; // for void operations (add_route, disconnect, etc.)
   }
@@ -186,6 +188,17 @@ enum ErrorCode {
 }
 
 message OkResponse {}
+
+message ConnectResponse {
+  string peer_addr = 1;    // resolved peer address
+  string protocol = 2;     // "QUIC" or "WebSocket"
+}
+
+message ListenResponse {
+  string listen_addr = 1;  // actual bound address (important if port was 0)
+  string protocol = 2;     // "QUIC" or "WebSocket"
+  string fingerprint = 3;  // certificate fingerprint (SHA-256)
+}
 
 // ── Notification messages ───────────────────────────────────────────
 
