@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::io::copy_bidirectional;
-use wallhack_netstack::async_stack::tcp_stream::TcpStream;
+use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream, Transport, TransportError};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 

@@ -57,7 +57,7 @@ src/
 
 ## Pre-existing issues (not introduced by this refactor)
 
-- `wallhack-netstack` clippy errors in `tests.rs` (similar_names, items_after_statements) and doc_markdown warnings in `mod.rs` / `tcp_listener_any.rs` — these were present before the transport refactor.
+- `wallhack-entry-stack` clippy errors in `tests.rs` (similar_names, items_after_statements) and doc_markdown warnings in `mod.rs` / `tcp_listener_any.rs` — these were present before the transport refactor.
 
 
 ## Other

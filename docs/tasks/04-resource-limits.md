@@ -8,7 +8,7 @@ controlling source IPs or ports can exhaust memory or file descriptors.
 
 `crates/wallhack/src/entry/manager.rs`,
 `crates/wallhack/src/entry/actor.rs`,
-`crates/netstack/src/async_stack/`
+`crates/entry-stack/src/async_stack/`
 
 ---
 
@@ -87,7 +87,7 @@ pub fn inject_pending(&mut self, packet: Vec<u8>) {
 
 ### 4. JIT TCP listen socket cap
 
-**File:** `crates/netstack/src/async_stack/mod.rs`, JIT bind path
+**File:** `crates/entry-stack/src/async_stack/mod.rs`, JIT bind path
 
 Each SYN to an unbound port creates a new smoltcp listen socket. An attacker
 sending SYNs to 65 535 different ports creates 65 535 sockets, exhausting

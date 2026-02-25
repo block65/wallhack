@@ -100,9 +100,9 @@ spawned stream-prefix task:
 - Channel send failure → `tracing::warn!("stream dispatcher full, dropping stream")`
 - Replace bare `_ => {}` arm with the warn.
 
-### 9. Log JIT bind failures in netstack
+### 9. Log JIT bind failures in entry-stack
 
-`crates/netstack/src/async_stack/mod.rs`:
+`crates/entry-stack/src/async_stack/mod.rs`:
 ```rust
 // before
 let _ = jit_bind_port(...);

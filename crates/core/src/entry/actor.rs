@@ -3,7 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 use smoltcp::wire::{IpCidr, Ipv4Address, Ipv6Address};
 use tokio::io::unix::AsyncFd;
 use tun::{AbstractDevice, Configuration, Device};
-use wallhack_netstack::{
+use wallhack_entry_stack::{
     async_stack::{Netstack, ReadinessFn},
     config::StackConfig,
 };
@@ -70,7 +70,7 @@ impl TunActor {
         &mut self.stack
     }
 
-    /// Consume the actor, returning the netstack with an epoll-based readiness
+    /// Consume the actor, returning the entry stack with an epoll-based readiness
     /// callback already configured, plus a clone of the TUN device fd for
     /// injecting raw packets (e.g. ICMP errors).
     #[must_use]
@@ -146,7 +146,7 @@ impl SmoltcpTunDevice {
     }
 }
 
-impl wallhack_netstack::inner::peek_device::PeekDevice for SmoltcpTunDevice {
+impl wallhack_entry_stack::inner::peek_device::PeekDevice for SmoltcpTunDevice {
     fn peek_ingress(&mut self) -> Option<&[u8]> {
         // Drain ALL available packets from the TUN device into pending.
         // This is critical for handling bursts of SYNs - we need to see
