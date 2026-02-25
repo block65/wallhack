@@ -23,9 +23,7 @@ export function syncer(files: SyncDocEntry[]): Plugin {
 			const raw = await readFile(src, "utf-8");
 			const lines = raw.split("\n");
 
-			const title = lines
-				.find((l) => l.startsWith("# "))
-				?.replace(/^#\s+/, "");
+			const title = lines.find((l) => l.startsWith("# "))?.replace(/^#\s+/, "");
 
 			const description = lines.find(
 				(l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("!["),
