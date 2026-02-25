@@ -12,9 +12,11 @@ All results use `iperf3` pushing traffic through a full end-to-end tunnel with b
 
 ## Loopback
 
-No real network between the VMs. This isolates the cost of the tunnel itself (encryption, framing, and multiplexing) from any network conditions.
+No real network between the VMs. This isolates the cost of the tunnel itself (encryption, framing, and multiplexing) from network conditions.
 
 ### TCP Throughput
+
+An `iperf3` client on the entry VM sends TCP traffic to an `iperf3` server bound to the exit VM's loopback address (`10.100.0.1`). Traffic flows through the entry TUN interface, the tunnel transport, and the exit adapter, which opens a separate TCP connection to the server. `bits_per_second` is read from the `iperf3 --json` summary after a 10-second run. Reverse (`-R`) flips the sender to the exit side; parallel (`-P N`) opens N independent TCP streams. All values are sender-side except reverse, which reports receiver-side.
 
 | Transport | 1 stream | 2 streams | 4 streams | Reverse |
 |-----------|----------|-----------|-----------|---------|
@@ -25,31 +27,33 @@ WebSocket scales better with parallel streams and has higher reverse throughput.
 
 ### UDP Throughput
 
+Same path as TCP, but `iperf3 -u -b 0` sends UDP datagrams with no bandwidth cap. The exit adapter forwards each datagram without flow control or congestion windowing on the inner connection.
+
 | Transport | Throughput |
 |-----------|------------|
 | QUIC | 11.0 Gbps |
 | WebSocket | 9.2 Gbps |
 
-UDP throughput is significantly higher than TCP because there is no flow control or congestion window overhead on the inner connection.
+UDP throughput is an order of magnitude higher than TCP because there is no congestion window or retransmission overhead on the inner flow.
 
 ### Latency
+
+`mean_rtt` from the entry VM kernel's `TCP_INFO` socket option (`tcpi_rtt`), reported by `iperf3 --json` over a 5-second run. This is the full round-trip as seen by the entry kernel's TCP stack: entry TUN, wallhack entry, tunnel transport, wallhack exit, exit adapter TCP connection to the `iperf3` server, and back.
 
 | Transport | RTT |
 |-----------|-----|
 | QUIC | 0.52 ms |
 | WebSocket | 0.81 ms |
 
-Both transports add sub-millisecond overhead on loopback.
+End-to-end RTT through the full tunnel stays sub-millisecond on loopback for both transports.
 
-## Synthetic packet loss
+## Synthetic Packet Loss
 
-The same loopback setup with [netem](https://wiki.linuxfoundation.org/networking/netem) injecting packet loss and added delay on the entry node's tunnel link.
-
-### Throughput (4 parallel streams)
+Same loopback topology with [netem](https://wiki.linuxfoundation.org/networking/netem) (`tc qdisc add dev eth0 root netem`) applied on the entry VM's ethernet interface. Netem acts on egress, so loss and delay affect the entry-to-exit direction only. 4 parallel TCP streams (`iperf3 -P 4`) over a 10-second run.
 
 | Transport | 0.5% loss / 5ms delay | 2% loss / 25ms delay |
 |-----------|----------------------|----------------------|
 | QUIC | 1.2 Gbps | 1.3 Gbps |
 | WebSocket | 1.5 Gbps | 1.5 Gbps |
 
-On a high-bandwidth loopback link, both transports absorb modest loss without significant throughput degradation. WebSocket maintains higher aggregate throughput under these conditions.
+On a high-bandwidth loopback link, both transports absorb modest loss without measurable throughput degradation. Retransmissions complete almost immediately because the underlying link has no bandwidth constraint.
