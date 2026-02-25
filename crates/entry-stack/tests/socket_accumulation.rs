@@ -8,7 +8,7 @@ use smoltcp::{
     time::Instant,
     wire::{IpCidr, Ipv4Address},
 };
-use wallhack_netstack::{
+use wallhack_entry_stack::{
     config::StackConfig,
     inner::{InnerStack, device::VecDevice},
 };

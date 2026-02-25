@@ -5,7 +5,7 @@ use smoltcp::wire::IpCidr;
 /// # Examples
 ///
 /// ```
-/// use wallhack_netstack::config::StackConfig;
+/// use wallhack_entry_stack::config::StackConfig;
 /// use smoltcp::wire::{IpCidr, Ipv4Address};
 ///
 /// let config = StackConfig {

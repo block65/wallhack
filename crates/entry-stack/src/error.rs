@@ -1,6 +1,6 @@
 use smoltcp::socket::{tcp, udp};
 
-/// Errors produced by the netstack crate.
+/// Errors produced by the entry-stack crate.
 ///
 /// # Variants
 ///

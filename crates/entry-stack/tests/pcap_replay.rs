@@ -15,7 +15,7 @@ use smoltcp::{
     time::Instant,
     wire::{IpCidr, IpProtocol, Ipv4Address, Ipv4Packet, Ipv6Packet},
 };
-use wallhack_netstack::{
+use wallhack_entry_stack::{
     config::StackConfig,
     inner::{InnerStack, device::VecDevice},
 };
@@ -221,7 +221,7 @@ fn replay_pcap(stack: &mut InnerStack<VecDevice>, path: &str) -> ReplayStats {
 /// Robustness test: Feed every IP packet from the Ultimate PCAP into the stack.
 ///
 /// The stack must not panic on any packet, regardless of protocol or malformed data.
-/// This is the core "fuzz-like" deterministic test the NETSTACK spec requires.
+/// This is the core "fuzz-like" deterministic test the entry-stack spec requires.
 #[test]
 fn pcap_replay_no_panic() {
     let device = VecDevice::new(1500);
@@ -425,7 +425,7 @@ fn pcap_replay_full_handshake() {
     assert_eq!(stack.tcp_socket(handle).state(), State::Established);
 
     // Step 3: Send some data from client
-    let data = b"Hello, netstack!";
+    let data = b"Hello, entry-stack!";
     let data_pkt = TcpRepr {
         src_port: client_port,
         dst_port: 9000,
