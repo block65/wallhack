@@ -8,16 +8,16 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-/// Return short version string (`wallhack <version>`).
+/// Return short version string
 #[must_use]
 pub fn version_short() -> String {
-    format!("wallhack {}", built_info::PKG_VERSION)
+    format!("{} {}", built_info::PKG_NAME, built_info::PKG_VERSION)
 }
 
 /// Return full version information with build metadata.
 #[must_use]
 pub fn version_verbose() -> String {
-    let mut out = format!("wallhack {}\n", built_info::PKG_VERSION);
+    let mut out = version_short();
     let _ = writeln!(out, "Built: {}", built_info::BUILT_TIME_UTC);
 
     if let Some(commit) = built_info::GIT_COMMIT_HASH {
@@ -25,7 +25,7 @@ pub fn version_verbose() -> String {
     }
 
     if built_info::GIT_DIRTY == Some(true) {
-        let _ = writeln!(out, "  (dirty working tree)");
+        let _ = writeln!(out, "  (dirty)");
     }
 
     let _ = writeln!(out, "\nFeatures:");
