@@ -177,3 +177,20 @@
 
 - [ ] Stale claim "QUIC (UDP) and WebSockets (TCP) both reach 2.4 Gbps in
   loopback benchmarks" - can just be replaced with "multi gigabit"?
+
+## Random 
+- [ ] No color in [+] message in entry REPL
+- [ ] log prefix (mix of warn: and [+] logs) in REPL
+- [ ] no connected message in exit node when connecting to a peer
+- [ ] didnt connect in REPL
+      ```
+      $ wallhack exit --connect attacker
+      wallhack 0.1.0
+      Type 'help' for available commands.
+      wallhack〉peers
+      No connected peers.
+      ```
+- [ ] Cant issue connect command to a host name in REPL ```
+      wallhack〉connect attacker
+      error: daemon error: invalid address: attacker
+      ```

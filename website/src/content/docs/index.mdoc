@@ -27,9 +27,9 @@ QUIC can egress over any open outbound UDP port; WebSockets can traverse HTTP pr
 
 ## Performance and Reliability
 
-[QUIC (UDP)](/transport-modes#udp-quic) and [WebSockets (TCP)](/transport-modes#tcp-websockets) both reach **2.4 Gbps** in loopback benchmarks. The tunnel itself is not the bottleneck.
+[QUIC (UDP)](/transport-modes#udp-quic) and [WebSockets (TCP)](/transport-modes#tcp-websockets) reach multi-gigabit throughput in loopback benchmarks. The tunnel itself is not the bottleneck.
 
-On unreliable networks, at 2% packet loss, WebSockets drops to 7.7 Mbps. QUIC's per-stream loss recovery keeps it at **17 Mbps**.
+Both transports maintain gigabit-class throughput under 2% packet loss with 25 ms delay, thanks to the high-bandwidth loopback link allowing near-instant retransmissions.
 
 See [Benchmarks](/benchmarks) for full results.
 
