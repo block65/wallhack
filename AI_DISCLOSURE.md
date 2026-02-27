@@ -28,18 +28,18 @@ None of these checks care who authored the code.
 Transparency.
 
 Some people have strong opinions about AI in software development, particularly
-in open source. You're entitled to know how this project is built so you can
-make informed decisions about using it. The code is open source. Read it, test
-it, benchmark it, break it. Judge it on its merits.
+in open source.
+
+You're entitled to know how this project is built so you can make informed
+decisions about using it. The code is open source. Read it, test it, benchmark
+it, break it. Judge it on its merits.
 
 The high impact of generative code generation was made possible by the fact that
 lots of highly intelligent and hardworking software engineers spent decades
 building the infrastructure and tools AI now exploits: version control, automated
 testing, CI/CD, static analysis, type systems.
 
-That harness was already there. AI just stepped into it.
-
-AI produces mountains of code, fast. Producing *correct, secure, well-reasoned*
-code still requires a human who knows what they're looking at.
+That harness was already there. AI just stepped into it. But turning that output
+into something worth shipping still requires human involvement.
 
 AI slop is a human issue, not an AI issue.
