@@ -47,7 +47,7 @@ impl MinimalPcapIterator {
                 // Unrecognized byte pattern for the magic number
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
-                    format!("Invalid or unsupported PCAP magic number bytes: {magic_buf:02x?}",),
+                    format!("Invalid or unsupported PCAP magic number bytes: {magic_buf:02x?}"),
                 ));
             }
         };
