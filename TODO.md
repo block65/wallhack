@@ -112,7 +112,7 @@
       `String`; port numbers are raw `u16`. Introduce newtypes (`struct Psk(String)`
       with `ZeroizeOnDrop`, `struct PeerId(String)`) so the compiler prevents mixing,
       reduces ambiguous clone noise, and documents intent at the type level.
-- [ ] `TryFrom<ProtoNodeRole>` error type — `type Error = String` in
+- [x] `TryFrom<ProtoNodeRole>` error type — `type Error = String` in
       `crates/wallhack/src/types.rs`. Replace with a proper `NodeRoleError` enum;
       raw `String` errors opt out of the type system and make `?` chains harder to
       reason about.
@@ -134,12 +134,12 @@
 - [ ] Deduplicate orchestrator session patterns — TCP and UDP `get-or-create` logic in
       `crates/wallhack/src/exit/orchestrator.rs` are near-identical structs apart from
       the protocol label. Extract a generic `get_or_create_session` helper.
-- [ ] `ExitNodeResponse` construction boilerplate — The `ExitNodeResponse { pair: Some(pair), response: Some(…) }` struct literal is repeated throughout the exit
+- [x] `ExitNodeResponse` construction boilerplate — The `ExitNodeResponse { pair: Some(pair), response: Some(…) }` struct literal is repeated throughout the exit
       orchestrator. Add a constructor or builder method to centralise the pair-wrapping.
 
 ## Misc
 
-- [ ] Audit `#[allow(clippy::...)]` call sites — confirm each suppression is
+- [x] Audit `#[allow(clippy::...)]` call sites — confirm each suppression is
       intentional and add a comment explaining why, or fix the underlying issue.
 - [ ] We have some serious naming issues in regards to topology, and the use of
       directional wording such as in/out send/receive and up/down. We need to
@@ -158,7 +158,7 @@
       Some benchmarks are below 1gbps, which should be quoted. latency can be
       quoted also. maybe we can just say "1gbps+" Its like a weird flex because
       we cant say.
-- [ ] "Ping the daemon or a peer" this is wrong, we dont need a "ping the
+- [x] "Ping the daemon or a peer" this is wrong, we dont need a "ping the
   daemon" feature - that was a bug/miscommunication
 
 ## Sockets
@@ -175,7 +175,7 @@
 
 ## Website
 
-- [ ] Stale claim "QUIC (UDP) and WebSockets (TCP) both reach 2.4 Gbps in
+- [x] Stale claim "QUIC (UDP) and WebSockets (TCP) both reach 2.4 Gbps in
   loopback benchmarks" - can just be replaced with "multi gigabit"?
 
 ## Random 
