@@ -197,6 +197,8 @@ impl IpcConnection {
                     }
                 };
 
+            // Guard form would require cloning resp (moved into send)
+            #[allow(clippy::collapsible_match)]
             match daemon_msg.message {
                 Some(daemon_message::Message::Response(resp)) => {
                     if response_tx.send(resp).await.is_err() {
