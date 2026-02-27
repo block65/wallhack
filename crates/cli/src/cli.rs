@@ -28,7 +28,7 @@ pub enum CtlCommand {
     Shutdown(ShutdownCmd),
 }
 
-/// Ping the daemon or a peer.
+/// Ping a peer.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "ping")]
 pub struct PingCmd {

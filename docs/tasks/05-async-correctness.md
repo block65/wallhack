@@ -34,7 +34,7 @@ gated on a single readiness event:
 // send
 loop {
     self.socket.writable().await?;
-    match self.socket.try_send_to(buf, dest) {
+    match self.socket.try_send_to(buf, dst) {
         Ok(n) => return Ok(SessionStatus::DataIo { size: n }),
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue, // spurious wakeup
         Err(e) => return Err(e.into()),

@@ -193,7 +193,7 @@ fn print_help() {
 
     let mut tw = TabWriter::new(std::io::stdout());
     let _ = writeln!(tw, "Commands:");
-    let _ = writeln!(tw, "  ping [<peer>]\tPing the daemon or a peer");
+    let _ = writeln!(tw, "  ping [<peer>]\tPing a peer");
     let _ = writeln!(tw, "  info\tShow daemon info");
     let _ = writeln!(tw, "  version\tShow version");
     let _ = writeln!(tw, "  stats\tShow traffic statistics");
