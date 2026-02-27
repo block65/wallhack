@@ -176,26 +176,26 @@ pub trait NodeApi: Send + Sync {
     /// Get overall node status.
     fn status(&self) -> NodeStatus;
 
-    /// Connect to an upstream peer.
+    /// Connect to a peer.
     ///
     /// `addr` is a raw address string that may be a hostname, IP, or
     /// `host:port`. Implementations are responsible for applying default
     /// ports and DNS resolution.
     ///
-    /// Only supported on exit nodes. Returns error for entry nodes.
+    /// Only supported in exit mode. Returns error for entry nodes.
     /// If already connected, returns `AlreadyConnected` error.
     fn connect(&self, addr: &str) -> Result<ConnectInfo>;
 
-    /// Start listening for downstream connections.
+    /// Start listening for peer connections.
     ///
-    /// Only supported on exit nodes. Returns error for entry nodes.
+    /// Only supported in exit mode. Returns error for entry nodes.
     /// If already listening, returns `AlreadyListening` error.
     /// Enables relay capability when combined with connect.
     fn listen(&self, addr: SocketAddr) -> Result<ListenInfo>;
 
-    /// Disconnect from upstream peer.
+    /// Disconnect from the connected peer.
     ///
-    /// Only supported on exit nodes. Returns error for entry nodes.
+    /// Only supported in exit mode. Returns error for entry nodes.
     /// If relay capability is active, disables it (loses relay capability).
     fn disconnect(&self) -> Result<()>;
 
