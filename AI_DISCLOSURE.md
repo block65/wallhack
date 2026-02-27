@@ -9,9 +9,7 @@ In this project, AI handles a fair chunk of implementation, refactoring,
 research, and mechanical work — the stuff that used to take a lot longer.
 
 A human still provides ideation, judgment, architecture, true reasoning, domain
-decisions, and final arbiter of quality. AI produces code fast. Producing
-*correct, secure, well-reasoned* code still requires a human who knows what
-they're looking at.
+decisions, and serves as final arbiter of quality.
 
 ## How quality is maintained
 
@@ -37,10 +35,13 @@ make informed decisions about using it.
 The high impact of generative code generation was made possible by the fact that
 lots of highly intelligent and hardworking software engineers spent decades
 building the infrastructure to support exactly this: version control, automated
-testing, CI/CD, static analysis, type systems. That harness was already there.
-AI just stepped into it.
+testing, CI/CD, static analysis, type systems.
 
-AI slop is a skill issue, not an AI issue.
+That harness was already there. AI just stepped into it.
+
+AI produces mountains of code, fast. Producing *correct, secure, well-reasoned*
+code still requires a human who knows what they're looking at. AI slop is a
+skill issue, not an AI issue.
 
 The code is open source. Read it, test it, benchmark it, break it. Judge it on
 its merits.
