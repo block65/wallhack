@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    if: startsWith(github.event.release.tag_name, 'cli-v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.event.release.tag_name, 'wallhack-cli-v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     strategy:
