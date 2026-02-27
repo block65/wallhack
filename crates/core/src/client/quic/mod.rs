@@ -67,8 +67,8 @@ impl Client for QuicClient {
     type Error = Error;
     type Transport = QuicTransport;
 
-    fn try_new(args: ClientConfig) -> Result<Self, Error> {
-        let tls_config = tls_config::client_config(args.mtls, args.accept_fingerprint)?;
+    fn try_new(config: ClientConfig) -> Result<Self, Error> {
+        let tls_config = tls_config::client_config(config.mtls, config.accept_fingerprint)?;
 
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_idle_timeout(Some(IdleTimeout::from(VarInt::MAX)));
@@ -82,21 +82,21 @@ impl Client for QuicClient {
 
         client_config.transport_config(Arc::new(transport_config));
 
-        let mut endpoint = quinn::Endpoint::client(args.bind)?;
+        let mut endpoint = quinn::Endpoint::client(config.bind)?;
         endpoint.set_default_client_config(client_config);
 
-        let hostname = if let Some(host) = args.hostname {
+        let hostname = if let Some(host) = config.hostname {
             host
         } else {
             env!("CARGO_PKG_NAME").to_string()
         };
 
         Ok(Self {
-            addr: args.addr,
+            addr: config.addr,
             hostname,
             endpoint,
-            name: args.name,
-            psk: args.psk,
+            name: config.name,
+            psk: config.psk,
         })
     }
 
