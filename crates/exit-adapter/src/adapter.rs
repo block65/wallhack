@@ -75,36 +75,30 @@ impl From<TcpStreamResponse> for exit_node_response::Response {
 impl From<TcpStreamResponse> for data::ExitNodeResponse {
     fn from(response: TcpStreamResponse) -> Self {
         match response {
-            TcpStreamResponse::Connected { set } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(
-                    data::TcpResponse {
-                        response: Some(tcp_response::Response::Connected(
-                            data::TcpConnectedResponse {},
-                        )),
-                    },
-                )),
-                pair: Some(set.into()),
-            },
-            TcpStreamResponse::Refused { set } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(
-                    data::TcpResponse {
-                        response: Some(tcp_response::Response::ConnectionRefused(
-                            TcpConnectionRefusedResponse {},
-                        )),
-                    },
-                )),
-                pair: Some(set.into()),
-            },
-            TcpStreamResponse::Reset { set } => data::ExitNodeResponse {
-                response: Some(data::exit_node_response::Response::TcpResponse(
-                    data::TcpResponse {
-                        response: Some(tcp_response::Response::ConnectionClosed(
-                            TcpConnectionClosedResponse {},
-                        )),
-                    },
-                )),
-                pair: Some(set.into()),
-            },
+            TcpStreamResponse::Connected { set } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(data::TcpResponse {
+                    response: Some(tcp_response::Response::Connected(
+                        data::TcpConnectedResponse {},
+                    )),
+                }),
+            ),
+            TcpStreamResponse::Refused { set } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(data::TcpResponse {
+                    response: Some(tcp_response::Response::ConnectionRefused(
+                        TcpConnectionRefusedResponse {},
+                    )),
+                }),
+            ),
+            TcpStreamResponse::Reset { set } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(data::TcpResponse {
+                    response: Some(tcp_response::Response::ConnectionClosed(
+                        TcpConnectionClosedResponse {},
+                    )),
+                }),
+            ),
         }
     }
 }
@@ -147,35 +141,32 @@ impl From<SendResponse> for exit_node_response::Response {
 impl From<SendResponse> for data::ExitNodeResponse {
     fn from(response: SendResponse) -> Self {
         match response {
-            SendResponse::Ok { set, .. } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(TcpResponse {
+            SendResponse::Ok { set, .. } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(TcpResponse {
                     response: Some(tcp_response::Response::Ok(TcpOkResponse {})),
-                })),
-                pair: Some(set.into()),
-            },
-            SendResponse::Reset { set, .. } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(TcpResponse {
+                }),
+            ),
+            SendResponse::Reset { set, .. } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(TcpResponse {
                     response: Some(tcp_response::Response::ConnectionClosed(
                         TcpConnectionClosedResponse {},
                     )),
-                })),
-                pair: Some(set.into()),
-            },
-            SendResponse::RuntimeError { set: pair, e } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::RuntimeError(
-                    RuntimeErrorResponse { reason: e },
-                )),
-                pair: Some(pair.into()),
-            },
+                }),
+            ),
+            SendResponse::RuntimeError { set, e } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::RuntimeError(RuntimeErrorResponse { reason: e }),
+            ),
         }
     }
 }
 
-//TcpCloseResponse
 #[derive(Debug)]
 pub enum TcpCloseResponse {
-    Ok { pair: SocketSet },
-    Reset { reason: String, pair: SocketSet },
+    Ok { set: SocketSet },
+    Reset { reason: String, set: SocketSet },
 }
 
 impl From<TcpCloseResponse> for exit_node_response::Response {
@@ -201,7 +192,7 @@ impl From<TcpCloseResponse> for exit_node_response::Response {
 #[derive(Debug)]
 pub enum TcpListenResponse {
     Ok,
-    Reset { reason: String, pair: SocketSet },
+    Reset { reason: String, set: SocketSet },
 }
 
 impl From<TcpListenResponse> for exit_node_response::Response {
@@ -227,25 +218,22 @@ impl From<TcpListenResponse> for exit_node_response::Response {
 impl From<TcpListenResponse> for data::ExitNodeResponse {
     fn from(response: TcpListenResponse) -> Self {
         match response {
-            TcpListenResponse::Ok => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(TcpResponse {
+            TcpListenResponse::Ok => data::ExitNodeResponse::new(
+                None,
+                exit_node_response::Response::TcpResponse(TcpResponse {
                     response: Some(tcp_response::Response::Listening(
                         TcpListenerListeningResponse {},
                     )),
-                })),
-                pair: None,
-            },
-            TcpListenResponse::Reset {
-                pair: set,
-                reason: _,
-            } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(TcpResponse {
+                }),
+            ),
+            TcpListenResponse::Reset { set, reason: _ } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(TcpResponse {
                     response: Some(tcp_response::Response::ListenerClosed(
                         TcpListenerClosedResponse {},
                     )),
-                })),
-                pair: Some(set.into()), // Populate the outer pair
-            },
+                }),
+            ),
         }
     }
 }
@@ -280,29 +268,29 @@ impl From<TcpListenCloseResponse> for exit_node_response::Response {
 impl From<TcpListenCloseResponse> for data::ExitNodeResponse {
     fn from(response: TcpListenCloseResponse) -> Self {
         match response {
-            TcpListenCloseResponse::Ok { set } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(TcpResponse {
+            TcpListenCloseResponse::Ok { set } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(TcpResponse {
                     response: Some(tcp_response::Response::ListenerClosed(
                         TcpListenerClosedResponse {},
                     )),
-                })),
-                pair: Some(set.into()),
-            },
-            TcpListenCloseResponse::Reset { set, reason: _ } => data::ExitNodeResponse {
-                response: Some(exit_node_response::Response::TcpResponse(TcpResponse {
+                }),
+            ),
+            TcpListenCloseResponse::Reset { set, reason: _ } => data::ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::TcpResponse(TcpResponse {
                     response: Some(tcp_response::Response::ListenerClosed(
                         TcpListenerClosedResponse {},
                     )),
-                })),
-                pair: Some(set.into()), // Populate the outer pair
-            },
+                }),
+            ),
         }
     }
 }
 
 pub trait ExitAdapter: Send + Sync + 'static {
     /// # Errors
-    fn tcp_close(&self, pair: SocketSet) -> Result<TcpCloseResponse, RuntimeError>;
+    fn tcp_close(&self, set: SocketSet) -> Result<TcpCloseResponse, RuntimeError>;
 
     fn udp_send(
         &self,
