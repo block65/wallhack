@@ -308,10 +308,7 @@ impl crate::node_api::NodeApi for Handler {
         }
     }
 
-    fn connect(
-        &self,
-        _addr: std::net::SocketAddr,
-    ) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
+    fn connect(&self, _addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
         Err(crate::node_api::NodeApiError::NotSupported)
     }
 

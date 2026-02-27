@@ -178,9 +178,13 @@ pub trait NodeApi: Send + Sync {
 
     /// Connect to an upstream peer.
     ///
+    /// `addr` is a raw address string that may be a hostname, IP, or
+    /// `host:port`. Implementations are responsible for applying default
+    /// ports and DNS resolution.
+    ///
     /// Only supported on exit nodes. Returns error for entry nodes.
     /// If already connected, returns `AlreadyConnected` error.
-    fn connect(&self, addr: SocketAddr) -> Result<ConnectInfo>;
+    fn connect(&self, addr: &str) -> Result<ConnectInfo>;
 
     /// Start listening for downstream connections.
     ///
