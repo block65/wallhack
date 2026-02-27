@@ -94,6 +94,17 @@
       string to daemon without DNS resolution. `resolve_endpoint()` exists in
       daemon transport but REPL bypasses it. Results in `"invalid address:
       attacker"` when using hostnames.
+- [ ] Relay mode: `control_tx` dropped immediately — `relay.rs` and `exit.rs`
+      relay-capability paths call `.channels().clone()` then drop the
+      `ConnectResult`, killing the upstream control stream. Need to retain
+      `control_tx` (e.g. via `into_parts()` or holding the `ConnectResult`).
+- [ ] Relay mode: no peer registration — pure relay has no `Registry` at all;
+      exit relay-capability mode passes peers to `ServerOptions` but
+      `run_accept_bridge_loop` / `bridge_channels` never calls `register()` /
+      `unregister()`. REPL `peers` always empty in relay mode.
+- [ ] Relay mode: no reconnect loop — if the upstream connection drops, relay
+      just exits. Exit connector mode has `connect_loop` for this; relay has
+      nothing.
 - [ ] Noisy reconnect messages on exit node after entry exits — multiple
       overlapping messages ("Connection tasks died", "Transport disconnected",
       "Connection dropped") fire at non-verbose log levels. Consolidate into a
