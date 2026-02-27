@@ -6,20 +6,20 @@ export interface SyncDocEntry {
 	/** Path to the source markdown file (relative to plugin file). */
 	src: string;
 	/** Path to the destination .mdoc file (relative to plugin file). */
-	dest: string;
+	dst: string;
 	/** Extra frontmatter keys merged after extracted title/description. */
 	frontmatter?: Record<string, string | number>;
 }
 
 export function syncer(files: SyncDocEntry[]): Plugin {
-	const resolved = files.map(({ src, dest, frontmatter }) => ({
+	const resolved = files.map(({ src, dst, frontmatter }) => ({
 		src: fileURLToPath(new URL(src, import.meta.url)),
-		dest: fileURLToPath(new URL(dest, import.meta.url)),
+		dst: fileURLToPath(new URL(dst, import.meta.url)),
 		frontmatter,
 	}));
 
 	const sync = async () => {
-		for (const { src, dest, frontmatter } of resolved) {
+		for (const { src, dst, frontmatter } of resolved) {
 			const raw = await readFile(src, "utf-8");
 			const lines = raw.split("\n");
 
@@ -39,7 +39,7 @@ export function syncer(files: SyncDocEntry[]): Plugin {
 				"",
 			].join("\n");
 
-			await writeFile(dest, header + raw, "utf-8");
+			await writeFile(dst, header + raw, "utf-8");
 		}
 	};
 

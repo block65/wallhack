@@ -23,7 +23,7 @@ export default defineConfig({
 			syncer([
 				{
 					src: "../AI_DISCLOSURE.md",
-					dest: "src/content/docs/ai-disclosure.mdoc",
+					dst: "src/content/docs/ai-disclosure.mdoc",
 					frontmatter: { order: 100 },
 				},
 			]),
