@@ -72,7 +72,7 @@ impl SyscallExitAdapter {
 
         let key = SessionKey::Tcp(set);
 
-        let (_, dest) = set.into();
+        let (_, dst_addr) = set.into();
 
         let response = {
             let maybe_session = self.sessions.get(&key);
@@ -83,7 +83,7 @@ impl SyscallExitAdapter {
                         // Write data if present
                         if !buf.is_empty() {
                             tracing::trace!("Sending data");
-                            match session.send(dest, buf).await {
+                            match session.send(dst_addr, buf).await {
                                 Ok(sessions::common::SessionStatus::DataIo { size, .. }) => {
                                     tracing::trace!("Sent {size} bytes to socket");
                                     if fin {
