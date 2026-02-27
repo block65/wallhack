@@ -463,7 +463,7 @@ fn handle_icmp_send<A: ExitAdapter>(
 
     tasks.spawn(async move {
         let result: Result<(), Error> = async {
-            #[allow(clippy::cast_possible_truncation)]
+            #[allow(clippy::cast_possible_truncation)] // protobuf ident is u32; ICMP ident fits u16
             let session = match adapter.icmp_session(set, ident as u16).await {
                 Ok(Some(session)) => session,
                 Ok(None) => {
@@ -477,7 +477,7 @@ fn handle_icmp_send<A: ExitAdapter>(
             };
 
             let mut recv_buf = vec![0; 1500];
-            #[allow(clippy::cast_possible_truncation)]
+            #[allow(clippy::cast_possible_truncation)] // protobuf seq_no is u32; ICMP seq fits u16
             let session_status = session
                 .echo_request(&data, seq_no as u16, &mut recv_buf)
                 .await?;

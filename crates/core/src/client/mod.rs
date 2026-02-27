@@ -1,4 +1,4 @@
-#[allow(clippy::module_inception)]
+#[allow(clippy::module_inception)] // client::client defines the Client trait; intentional structure
 pub mod client;
 pub mod config;
 #[cfg(feature = "quic")]

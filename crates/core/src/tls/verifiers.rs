@@ -20,7 +20,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
         _end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
+        _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         Ok(rustls::client::danger::ServerCertVerified::assertion())
@@ -82,7 +82,7 @@ impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
         end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
+        _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         let actual = cert_fingerprint(end_entity.as_ref());

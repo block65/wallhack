@@ -164,7 +164,7 @@ impl TryFrom<SocketV4Address> for std::net::SocketAddrV4 {
     fn try_from(addr: SocketV4Address) -> Result<Self, Self::Error> {
         let ip_v4_proto = addr.ip.ok_or(Self::Error::MissingIpAddress)?;
         let ip: std::net::Ipv4Addr = ip_v4_proto.into();
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation)] // protobuf port is u32; valid ports fit u16
         Ok(std::net::SocketAddrV4::new(ip, addr.port as u16))
     }
 }
@@ -175,7 +175,7 @@ impl TryFrom<SocketV6Address> for std::net::SocketAddrV6 {
     fn try_from(addr: SocketV6Address) -> Result<Self, Self::Error> {
         let ip_v6_proto = addr.ip.ok_or(Self::Error::MissingIpAddress)?;
         let ip: std::net::Ipv6Addr = ip_v6_proto.into();
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation)] // protobuf port is u32; valid ports fit u16
         Ok(std::net::SocketAddrV6::new(
             ip,
             addr.port as u16,

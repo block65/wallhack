@@ -123,7 +123,7 @@ fn measure_peak<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
     )
 }
 
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss)] // display-only; sub-byte precision not needed
 fn fmt_bytes(n: usize) -> String {
     if n >= 1_048_576 {
         format!("{:.2} MB", n as f64 / 1_048_576.0)

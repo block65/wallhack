@@ -4,7 +4,7 @@ mod create;
 pub mod config;
 #[cfg(feature = "quic")]
 pub mod quic;
-#[allow(clippy::module_inception)]
+#[allow(clippy::module_inception)] // server::server defines the Server trait; intentional structure
 pub mod server;
 pub mod tls;
 #[cfg(feature = "websocket")]
