@@ -21,8 +21,7 @@ Every change passes through the same process regardless of origin:
 - Direct dependencies manually vetted before inclusion
 - Clean, intentional commit history
 
-The verification layer doesn't care who authored the code. It checks correctness
-either way.
+None of these checks care who authored the code.
 
 ## Why this disclosure exists
 
