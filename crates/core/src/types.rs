@@ -24,15 +24,21 @@ impl From<NodeRole> for ProtoNodeRole {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum NodeRoleError {
+    #[error("node role is unset")]
+    Unset,
+}
+
 impl TryFrom<ProtoNodeRole> for NodeRole {
-    type Error = String;
+    type Error = NodeRoleError;
 
     fn try_from(role: ProtoNodeRole) -> Result<Self, Self::Error> {
         match role {
             ProtoNodeRole::RoleEntry => Ok(NodeRole::Entry),
             ProtoNodeRole::RoleRelay => Ok(NodeRole::Relay),
             ProtoNodeRole::RoleExit => Ok(NodeRole::Exit),
-            ProtoNodeRole::RoleUnknown => Err("unknown node role".to_string()),
+            ProtoNodeRole::RoleUnknown => Err(NodeRoleError::Unset),
         }
     }
 }
