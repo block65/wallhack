@@ -1,59 +1,44 @@
 # AI Disclosure
 
-This project uses a generative AI-assisted development process. Here's what that
-means.
+This project uses generative AI throughout the development process. This
+document exists for transparency.
 
 ## How AI is used
 
-AI is a development tool in the same way an IDE, a compiler, linter, or debugger
-is a tool. Hell, even `rustc` and `clippy` write code for you.
+AI handles a lot of implementation, refactoring, research, and mechanical work —
+the stuff that used to take longer for no good reason. It's code generation on
+steroids, made possible by the fact that software engineering spent decades
+building the infrastructure to support exactly this: version control, automated
+testing, CI/CD, static analysis, type systems. The automation harness was
+already there. AI just stepped into it.
 
-In this project, AI assists with implementation, refactoring, research, and the
-kind of tedious mechanical work that would otherwise just take longer for no
-good reason.
+The human role is ideation, judgment, architecture, true reasoning, domain
+decisions, and final arbiter of quality. AI produces code fast. Producing
+*correct, secure, well-reasoned* code still requires a human who knows what
+they're looking at.
 
-It's worth clarifying however that many of the architectural decisions, design
-choices, and code reviews are human-driven.
+AI slop is a skill issue, not an AI issue.
 
-The development workflow is codified, structured and deliberate:
+## How quality is maintained
 
-- Specific guidelines have been created to define project conventions, naming
-  rules, and quality standards that AI must follow
-- All changes go through the same review process - unit tests, clippy with
-  pedantic warnings, formatting checks, benchmarks, and human review BEFORE pull
-  requests or merging
-- Feature branches, pull requests, and branch protection apply equally
-  regardless of who or what authored a commit
-- Commit history is kept clean and meaningful - not a stream-of-consciousness
-  log of AI prompts
-- Direct explicit dependencies are manually vetted before inclusion
+Every change passes through the same process regardless of origin:
 
-The workflow also involves a manual 3-phase process of planning, implementation
-and review. This is not "vibe-coding" and "type a sentence and ship whatever
-comes out."
+- Unit tests, `clippy` with pedantic warnings, formatting checks, and benchmarks
+- Human review before anything is merged
+- Feature branches, pull requests, and branch protection — non-negotiable
+- Direct dependencies manually vetted before inclusion
+- Clean, intentional commit history
 
-It's basically pair programming with a very fast, very literal colleague who
-never gets bored of renaming things and doesn't take lunch breaks. Followed by a
-pair-review with another colleague who has their own individual quirks, but is
-just as thorough.
+The verification layer doesn't care who authored the code. It checks correctness
+either way.
 
 ## Why this disclosure exists
 
 Transparency.
 
-Some people have strong opinions about AI's role in software development,
-particularly in open source products. And that's fine. You are entitled to know
-how this project is built so you can make your own informed decisions about
-using it.
+Some people have strong opinions about AI in software development, particularly
+in open source. You're entitled to know how this project is built so you can
+make informed decisions about using it.
 
-The code is open source. Clone it. Read it. Run the tests. Run the benchmarks.
-Check the commit history. Judge the work on its merits, not its authors.
-
-## Concerns
-
-If your concern is code quality or behaviour - great! Please file an issue.
-Quality matters here regardless of how the code was written.
-
-If your concern is philosophical - this file exists so you have all the facts.
-
-You're welcome. Enjoy! 
+The code is open source. Read it, test it, benchmark it, break it. Judge it on
+its merits.
