@@ -39,7 +39,7 @@ impl SyscallExitAdapter {
                 true
             };
 
-        let (_, dest) = set.into();
+        let (_, dst_addr) = set.into();
 
         let response = match self.sessions.get(&key) {
             Some(session) => {
@@ -47,7 +47,7 @@ impl SyscallExitAdapter {
 
                 if let Session::Udp(session) = &session.value().session {
                     tracing::trace!("Sending data");
-                    match session.send(dest, data).await {
+                    match session.send(dst_addr, data).await {
                         Ok(sessions::common::SessionStatus::DataIo { size, .. }) => {
                             tracing::trace!("Sent {} bytes to socket", size);
                             SendResponse::Ok {

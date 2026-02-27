@@ -12,7 +12,7 @@ pub trait RxSession {
 
     fn send(
         &self,
-        dest: SocketAddr,
+        dst_addr: SocketAddr,
         buf: &[u8],
     ) -> impl std::future::Future<Output = Result<SessionStatus, RuntimeError>> + Send;
 

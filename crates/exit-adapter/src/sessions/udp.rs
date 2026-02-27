@@ -18,10 +18,10 @@ impl UdpSession {
 }
 
 impl RxSession for UdpSession {
-    async fn send(&self, dest: SocketAddr, buf: &[u8]) -> Result<SessionStatus, RuntimeError> {
+    async fn send(&self, dst_addr: SocketAddr, buf: &[u8]) -> Result<SessionStatus, RuntimeError> {
         loop {
             self.socket.writable().await?;
-            match self.socket.try_send_to(buf, dest) {
+            match self.socket.try_send_to(buf, dst_addr) {
                 Ok(n) => return Ok(SessionStatus::DataIo { size: n }),
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
                 Err(io_err) => {

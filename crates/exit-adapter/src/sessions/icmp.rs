@@ -16,15 +16,15 @@ use super::common::{RxSession, SessionStatus};
 #[derive(Debug, Clone)]
 pub struct IcmpSession {
     socket: std::sync::Arc<tokio::io::unix::AsyncFd<socket2::Socket>>,
-    pair: SocketSet,
+    set: SocketSet,
 }
 
 impl IcmpSession {
     #[must_use]
-    pub fn new(socket: tokio::io::unix::AsyncFd<socket2::Socket>, pair: SocketSet) -> Self {
+    pub fn new(socket: tokio::io::unix::AsyncFd<socket2::Socket>, set: SocketSet) -> Self {
         Self {
             socket: std::sync::Arc::new(socket),
-            pair,
+            set,
         }
     }
 
@@ -41,7 +41,7 @@ impl IcmpSession {
         tracing::trace!(seq_no = seq_no, "Sending ICMP echo request");
         let default_caps = ChecksumCapabilities::default();
 
-        let echo_request_buf = match self.pair {
+        let echo_request_buf = match self.set {
             SocketSet::Ipv4(_) => {
                 let icmp_repr = Icmpv4Repr::EchoRequest {
                     ident: 0x0, // ident is ignored and assigned by the OS instead
@@ -73,7 +73,7 @@ impl IcmpSession {
             }
         };
 
-        let (_, dst_addr) = self.pair.into();
+        let (_, dst_addr) = self.set.into();
         let status = self.send(dst_addr, &echo_request_buf).await?;
 
         tracing::trace!("Sent ICMP echo request status {:?}. Waiting to rx", status);
@@ -86,7 +86,7 @@ impl IcmpSession {
 
 impl RxSession for IcmpSession {
     async fn send(&self, dst_addr: SocketAddr, buf: &[u8]) -> Result<SessionStatus, RuntimeError> {
-        let dst_addr2: socket2::SockAddr = dst_addr.into();
+        let dst_sock: socket2::SockAddr = dst_addr.into();
 
         loop {
             tracing::trace!("waiting to send some data to {:?}", dst_addr);
@@ -96,7 +96,7 @@ impl RxSession for IcmpSession {
             // Attempt to send the data
             tracing::trace!("Attempting to send data to {:?}", dst_addr);
 
-            match guard.try_io(|inner| inner.get_ref().send_to(buf, &dst_addr2)) {
+            match guard.try_io(|inner| inner.get_ref().send_to(buf, &dst_sock)) {
                 Ok(Ok(bytes_sent)) => {
                     tracing::trace!("Successfully sent {} bytes to {:?}", bytes_sent, dst_addr);
                     return Ok(SessionStatus::DataIo { size: bytes_sent });
@@ -112,7 +112,7 @@ impl RxSession for IcmpSession {
                     // continue;
                 }
                 Ok(Err(e)) => {
-                    tracing::error!(ip=?dst_addr2, error=%e, "Send operation failed");
+                    tracing::error!(ip=?dst_sock, error=%e, "Send operation failed");
                     return Err(RuntimeError::Io(e));
                 }
                 Err(_readiness_error) => {
