@@ -303,18 +303,12 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }
         }
 
-        Some(management_request::Request::Connect(req)) => match req.addr.parse() {
-            Ok(addr) => match api.connect(addr) {
-                Ok(info) => management_response::Response::Connect(ConnectResponse {
-                    peer_addr: info.peer_addr,
-                    protocol: info.protocol,
-                }),
-                Err(e) => error_response(&e),
-            },
-            Err(_) => management_response::Response::Error(ErrorResponse {
-                code: ErrorCode::InvalidAddress.into(),
-                message: format!("invalid address: {}", req.addr),
+        Some(management_request::Request::Connect(req)) => match api.connect(&req.addr) {
+            Ok(info) => management_response::Response::Connect(ConnectResponse {
+                peer_addr: info.peer_addr,
+                protocol: info.protocol,
             }),
+            Err(e) => error_response(&e),
         },
 
         Some(management_request::Request::Listen(req)) => match req.addr.parse() {

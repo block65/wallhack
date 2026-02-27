@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use wallhack_core::{
     NodeRole,
     client::client::ConnectResult,
-    control::metrics::Metrics,
+    control::{metrics::Metrics, peers::Registry},
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     server::server::Server,
     transport::{
@@ -44,6 +44,7 @@ pub async fn run(
     global: &GlobalConfig,
     cfg: &ExitConfig,
     metrics: Arc<Metrics>,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
     let security = SecurityParams {
         psk: global.psk.clone(),
@@ -55,9 +56,11 @@ pub async fn run(
             run_relay_capability_mode(global, &cfg.name, connect, listen, &metrics).await
         }
         ConnectivitySpec::Connect(spec) => {
-            run_connect_mode(global, &cfg.name, spec, &metrics, &security).await
+            run_connect_mode(global, &cfg.name, spec, &metrics, &security, &peers).await
         }
-        ConnectivitySpec::Listen(spec) => run_listen_mode(global, &cfg.name, spec, &metrics).await,
+        ConnectivitySpec::Listen(spec) => {
+            run_listen_mode(global, &cfg.name, spec, &metrics, &peers).await
+        }
     }
 }
 
@@ -68,6 +71,7 @@ async fn run_connect_mode(
     spec: &AddressSpec,
     metrics: &Arc<Metrics>,
     security: &SecurityParams,
+    peers: &Arc<Registry>,
 ) -> Result<(), NodeError> {
     tracing::info!("Connecting to {}...", spec.addr);
     let endpoint =
@@ -85,6 +89,7 @@ async fn run_connect_mode(
                     security,
                 );
                 let m = Arc::clone(metrics);
+                let p = Arc::clone(peers);
                 let pa = peer_addr.clone();
                 crate::transport::connect_loop(
                     || {
@@ -97,8 +102,9 @@ async fn run_connect_mode(
                     },
                     |connect_result| {
                         let m = Arc::clone(&m);
+                        let p = Arc::clone(&p);
                         let pa = pa.clone();
-                        async move { run_exit_loop(connect_result, &m, &pa).await }
+                        async move { run_exit_loop(connect_result, &m, &pa, &p).await }
                     },
                     RECONNECT_DELAY,
                 )
@@ -119,6 +125,7 @@ async fn run_connect_mode(
                     security,
                 );
                 let m = Arc::clone(metrics);
+                let p = Arc::clone(peers);
                 let pa = peer_addr.clone();
                 crate::transport::connect_loop(
                     || {
@@ -130,8 +137,9 @@ async fn run_connect_mode(
                     },
                     |connect_result| {
                         let m = Arc::clone(&m);
+                        let p = Arc::clone(&p);
                         let pa = pa.clone();
-                        async move { run_exit_loop(connect_result, &m, &pa).await }
+                        async move { run_exit_loop(connect_result, &m, &pa, &p).await }
                     },
                     RECONNECT_DELAY,
                 )
@@ -321,6 +329,7 @@ async fn run_listen_mode(
     _node_name: &str,
     spec: &AddressSpec,
     metrics: &Arc<Metrics>,
+    peers: &Arc<Registry>,
 ) -> Result<(), NodeError> {
     use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
 
@@ -349,7 +358,7 @@ async fn run_listen_mode(
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
                 let bound = server.local_addr()?;
                 tracing::info!("Listening on {bound} ({})", server.protocol_name());
-                run_listen_server_loop(server, metrics).await
+                run_listen_server_loop(server, metrics, peers).await
             }
             #[cfg(not(feature = "quic"))]
             Err(NodeError::TransportUnavailable("quic"))
@@ -363,7 +372,7 @@ async fn run_listen_mode(
                 )?;
                 let bound = server.local_addr()?;
                 tracing::info!("Listening on {bound} ({})", server.protocol_name());
-                run_listen_server_loop(server, metrics).await
+                run_listen_server_loop(server, metrics, peers).await
             }
             #[cfg(not(feature = "websocket"))]
             Err(NodeError::TransportUnavailable("websocket"))
@@ -375,6 +384,7 @@ async fn run_listen_mode(
 async fn run_listen_server_loop<S: Server>(
     mut server: S,
     metrics: &Arc<Metrics>,
+    peers: &Arc<Registry>,
 ) -> Result<(), NodeError>
 where
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -383,7 +393,15 @@ where
     loop {
         match server.accept(NodeRole::Exit).await {
             Ok(Some(accept_result)) => {
-                tracing::info!("Peer connected: {}", accept_result.peer_addr());
+                let peer_addr = accept_result.peer_addr().to_string();
+                tracing::info!("Peer connected: {peer_addr}");
+
+                // Register the connecting peer.
+                let peer_name = accept_result
+                    .exit_hello()
+                    .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
+                peers.register(peer_name.clone(), peer_addr, NodeRole::Entry);
+
                 let transport = accept_result.transport();
                 let adapter = SyscallExitAdapter::new();
                 let _reaper = adapter.start_reaper(
@@ -393,6 +411,7 @@ where
                 let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
                 let stream_fut = run_stream_listener(transport);
                 let ((instr, resp), control_tx) = accept_result.channels();
+                let conn_peers = Arc::clone(peers);
                 tokio::spawn(async move {
                     let _keep_alive = control_tx;
                     tokio::select! {
@@ -407,6 +426,8 @@ where
                             }
                         }
                     }
+                    // Unregister peer when connection ends.
+                    conn_peers.unregister(&peer_name);
                 });
             }
             Ok(None) => break,
@@ -426,8 +447,17 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
     connect_result: ConnectResult<T>,
     metrics: &Arc<Metrics>,
     peer_addr: &str,
+    peers: &Arc<Registry>,
 ) -> Result<(), NodeError> {
     tracing::info!("Connected to {peer_addr}");
+
+    // Register the entry node as a peer. ConnectResult carries no peer
+    // identity (no hello exchange in this direction), so use addr as id.
+    peers.register(
+        peer_addr.to_string(),
+        peer_addr.to_string(),
+        NodeRole::Entry,
+    );
 
     // Create syscall adapter for local network access
     let adapter = SyscallExitAdapter::new();
@@ -462,6 +492,9 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
             tracing::debug!("Connection tasks died - transport disconnected");
         }
     }
+
+    // Unregister the peer when connection drops.
+    peers.unregister(peer_addr);
 
     Ok(())
 }
