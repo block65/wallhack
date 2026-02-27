@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/block65/wallhack/compare/wallhack-cli-v0.2.7...wallhack-cli-v0.2.8) (2026-02-27)
+
+
+### Bug Fixes
+
+* **cli:** suppress collapsible_match lint in IPC reader ([1fd8249](https://github.com/block65/wallhack/commit/1fd8249e4c8c0dce631400cf30cc411453c1ce38))
+
 ## [0.2.7](https://github.com/block65/wallhack/compare/wallhack-cli-v0.2.6...wallhack-cli-v0.2.7) (2026-02-25)
 
 
