@@ -228,6 +228,7 @@ mod tests {
         let ports = [5000u16, 5001, 5002];
         for &port in &ports {
             let mut inner = stack.shared.inner.lock();
+            // intentional truncation: low byte of port used as a marker tag
             #[allow(clippy::cast_possible_truncation)]
             let tag = port as u8;
             inner

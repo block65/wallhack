@@ -225,7 +225,7 @@ pub async fn run_control_loop<S: BiStream>(
 
             // Periodic ping
             _ = ping_timer.tick() => {
-                #[allow(clippy::cast_possible_truncation)]
+                #[allow(clippy::cast_possible_truncation)] // millis since epoch fits u64 until ~year 584M
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()

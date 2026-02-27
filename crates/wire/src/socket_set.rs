@@ -1,3 +1,4 @@
+// All casts in this module are protobuf u32 → u16 port conversions; valid ports fit u16.
 #![allow(clippy::cast_possible_truncation)]
 use std::fmt::Display;
 

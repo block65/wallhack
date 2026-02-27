@@ -202,7 +202,7 @@ impl WsClient {
     /// # Errors
     ///
     /// Returns an error if TLS configuration fails.
-    #[allow(clippy::result_large_err)]
+    #[allow(clippy::result_large_err)] // Error carries TLS/IO context; not worth boxing for this call path
     pub fn new(config: WsClientConfig) -> Result<Self, Error> {
         let tls_connector = if config.use_tls {
             let tls_config = if let Some(ref mtls) = config.base.mtls {
@@ -229,7 +229,7 @@ impl WsClient {
     /// # Errors
     ///
     /// Returns an error if the connection fails.
-    #[allow(clippy::result_large_err)]
+    #[allow(clippy::result_large_err)] // Error carries TLS/IO context; not worth boxing for this call path
     #[allow(clippy::too_many_lines)] // refactor candidate
     pub async fn connect(
         &mut self,

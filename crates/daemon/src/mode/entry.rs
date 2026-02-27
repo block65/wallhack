@@ -634,7 +634,7 @@ async fn send_ping(
 ) -> Result<f64, NodeError> {
     use wallhack_wire::control::{ControlMessage, control_message};
 
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation)] // millis since epoch fits u64 until ~year 584M
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

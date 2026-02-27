@@ -457,7 +457,7 @@ async fn test_throughput_baseline() {
     }
 
     let elapsed = start_io.elapsed();
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss)] // display-only throughput calculation
     let mb_ps = (data_size as f64 / 1024.0 / 1024.0) / elapsed.as_secs_f64();
     println!("Throughput baseline: {mb_ps:.2} MB/s ({elapsed:?} for 1 MB)");
 
