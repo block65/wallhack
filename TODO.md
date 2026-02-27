@@ -54,6 +54,9 @@
 
 ## REST API
 
+- [ ] `connect` and `listen` endpoints — expose `NodeApi::connect` and
+      `NodeApi::listen` over the REST API so nodes can be managed
+      programmatically (e.g. orchestration scripts, web dashboards).
 - [ ] Periodic latency measurement via control channel ping/pong
 
 ## Security
@@ -85,9 +88,9 @@
       — logfmt at most (e.g. `tracing-logfmt`) for `wallhackd`
       background/systemd (non-slim only), consistent prefixed format for
       foreground/REPL (slim always uses this). Watch bloat.
-- [ ] No connected message on exit node when a peer connects — entry logs
+- [x] No connected message on exit node when a peer connects — entry logs
       `"Connected to {peer_addr}"` but exit connect-only mode does not.
-- [ ] REPL `connect` command doesn't resolve hostnames — passes raw address
+- [x] REPL `connect` command doesn't resolve hostnames — passes raw address
       string to daemon without DNS resolution. `resolve_endpoint()` exists in
       daemon transport but REPL bypasses it. Results in `"invalid address:
       attacker"` when using hostnames.
