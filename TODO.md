@@ -7,7 +7,7 @@
       defaults, poll loop wakeup latency under egress load, and mutex contention
       between smoltcp writes and the poll loop.
 - [ ] Buffer pooling for UDP packets and TUN reads
-- [ ] Reduce global lock contention in netstack
+- [ ] Reduce global lock contention in entry-stack
 - [ ] `arc-swap` for route table and peer registry — both are read-heavy,
       write-rare; `arc-swap` gives wait-free reads on the data path vs the
       current `parking_lot::Mutex`
@@ -171,3 +171,9 @@
   environment so someone cant hijack wallhackd, whilst remaining compatible with
   something like systemd in future
 - [ ] If not in-memory, make sure we are windows + macos compatible
+
+
+## Website
+
+- [ ] Stale claim "QUIC (UDP) and WebSockets (TCP) both reach 2.4 Gbps in
+  loopback benchmarks" - can just be replaced with "multi gigabit"?
