@@ -69,3 +69,11 @@ Follow the rules in `./website/WRITING.md`
 - CLI consistency: eg REPL route add examples must explicitly include the --name
   <peer> flag on exit/relay commands to ensure routing examples remain
   self-documenting.
+
+## TRIPLE PR Process for lead-agent only
+
+When ready, lead agent will do this. Use `just --show <recipe>` to understand
+first
+
+PR: `just open-pr`
+Merge: `just do-merge`
