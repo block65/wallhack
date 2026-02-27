@@ -24,9 +24,9 @@ use crate::sessions::icmp::IcmpSession;
 pub struct NullExitAdapter {}
 
 impl ExitAdapter for NullExitAdapter {
-	fn tcp_close(&self, pair: crate::SocketSet) -> Result<TcpCloseResponse, RuntimeError> {
-		tracing::trace!("Closing connection for pair: {}", pair);
-		Ok(TcpCloseResponse::Ok { pair })
+	fn tcp_close(&self, set: crate::SocketSet) -> Result<TcpCloseResponse, RuntimeError> {
+		tracing::trace!("Closing connection for {}", set);
+		Ok(TcpCloseResponse::Ok { set })
 	}
 
 	async fn tcp_send(
@@ -51,7 +51,7 @@ impl ExitAdapter for NullExitAdapter {
 
 	async fn tcp_listen(
 		&self,
-		_pair: crate::SocketSet,
+		_set: crate::SocketSet,
 	) -> Result<TcpListenResponse, RuntimeError> {
 		todo!()
 	}
@@ -65,7 +65,7 @@ impl ExitAdapter for NullExitAdapter {
 
 	async fn udp_send(
 		&self,
-		_pair: crate::SocketSet,
+		_set: crate::SocketSet,
 		_data: &[u8],
 	) -> Result<SendResponse, RuntimeError> {
 		todo!()
@@ -74,7 +74,7 @@ impl ExitAdapter for NullExitAdapter {
 	#[cfg(unix)]
 	async fn icmp_session(
 		&self,
-		_pair: crate::SocketSet,
+		_set: crate::SocketSet,
 		_ident: u16,
 	) -> Result<Option<IcmpSession>, RuntimeError> {
 		todo!()
@@ -82,14 +82,14 @@ impl ExitAdapter for NullExitAdapter {
 
 	fn udp_recv_session(
 		&self,
-		_pair: crate::SocketSet,
+		_set: crate::SocketSet,
 	) -> Result<Option<sessions::udp::UdpSession>, RuntimeError> {
 		todo!()
 	}
 
 	fn tcp_recv_session(
 		&self,
-		_pair: crate::SocketSet,
+		_set: crate::SocketSet,
 	) -> std::result::Result<Option<sessions::tcp::TcpSession>, RuntimeError> {
 		todo!()
 	}

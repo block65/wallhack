@@ -100,10 +100,10 @@ impl ExitAdapter for SyscallExitAdapter {
     async fn tcp_send(
         &self,
         set: SocketSet,
-        buf: &[u8],
+        data: &[u8],
         fin: bool,
     ) -> Result<SendResponse, RuntimeError> {
-        self.tcp_send_impl(set, buf, fin).await
+        self.tcp_send_impl(set, data, fin).await
     }
 
     fn tcp_recv_session(
@@ -113,8 +113,8 @@ impl ExitAdapter for SyscallExitAdapter {
         self.tcp_recv_session_impl(set)
     }
 
-    async fn tcp_listen(&self, pair: SocketSet) -> Result<TcpListenResponse, RuntimeError> {
-        self.tcp_listen_impl(pair)
+    async fn tcp_listen(&self, set: SocketSet) -> Result<TcpListenResponse, RuntimeError> {
+        self.tcp_listen_impl(set)
     }
 
     async fn tcp_listen_close(

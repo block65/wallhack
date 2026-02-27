@@ -58,12 +58,12 @@ pub struct Orchestrator<A: ExitAdapter> {
     metrics: SharedMetrics,
 }
 
-fn extract_socket_set(pair: Option<data::SocketAddressPair>) -> Result<SocketSet, Error> {
-    let pair = pair.ok_or_else(|| {
-        tracing::error!("Invalid instruction: missing pair");
+fn extract_socket_set(set: Option<data::SocketAddressPair>) -> Result<SocketSet, Error> {
+    let set = set.ok_or_else(|| {
+        tracing::error!("Invalid instruction: missing socket address set");
         Error::InvalidInstruction
     })?;
-    pair.try_into().map_err(|e| {
+    set.try_into().map_err(|e| {
         tracing::error!("Invalid instruction: {e}");
         Error::InvalidInstruction
     })
@@ -138,16 +138,14 @@ fn handle_tcp_connect<A: ExitAdapter>(
         match adapter.tcp_connect(set).await {
             Ok(TcpStreamResponse::Connected { set }) => {
                 tracing::debug!("Connected to remote for {set}, sending Connected response");
-                if let Err(e) = responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::TcpResponse(
-                        data::TcpResponse {
-                            response: Some(data::tcp_response::Response::Connected(
-                                data::TcpConnectedResponse {},
-                            )),
-                        },
-                    )),
-                }) {
+                if let Err(e) = responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::TcpResponse(data::TcpResponse {
+                        response: Some(data::tcp_response::Response::Connected(
+                            data::TcpConnectedResponse {},
+                        )),
+                    }),
+                )) {
                     tracing::error!("TcpConnect: Error sending Connected response for {set}: {e}");
                     return;
                 }
@@ -159,16 +157,14 @@ fn handle_tcp_connect<A: ExitAdapter>(
             }
             Ok(TcpStreamResponse::Reset { set }) => {
                 tracing::warn!("Connection to remote for {set} reset");
-                if let Err(e) = responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::TcpResponse(
-                        data::TcpResponse {
-                            response: Some(data::tcp_response::Response::ConnectionClosed(
-                                data::TcpConnectionClosedResponse {},
-                            )),
-                        },
-                    )),
-                }) {
+                if let Err(e) = responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::TcpResponse(data::TcpResponse {
+                        response: Some(data::tcp_response::Response::ConnectionClosed(
+                            data::TcpConnectionClosedResponse {},
+                        )),
+                    }),
+                )) {
                     tracing::error!(
                         "TcpConnect: Error sending ConnectionRefused response for {set}: {e}"
                     );
@@ -176,16 +172,14 @@ fn handle_tcp_connect<A: ExitAdapter>(
             }
             Ok(TcpStreamResponse::Refused { set }) => {
                 tracing::warn!("Connection to remote for {set} refused");
-                if let Err(e) = responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::TcpResponse(
-                        data::TcpResponse {
-                            response: Some(data::tcp_response::Response::ConnectionRefused(
-                                data::TcpConnectionRefusedResponse {},
-                            )),
-                        },
-                    )),
-                }) {
+                if let Err(e) = responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::TcpResponse(data::TcpResponse {
+                        response: Some(data::tcp_response::Response::ConnectionRefused(
+                            data::TcpConnectionRefusedResponse {},
+                        )),
+                    }),
+                )) {
                     tracing::error!(
                         "TcpConnect: Error sending ConnectionRefused response for {set}: {e}"
                     );
@@ -193,14 +187,12 @@ fn handle_tcp_connect<A: ExitAdapter>(
             }
             Err(e) => {
                 tracing::error!("Connection to remote for {set} failed with runtime error: {e}");
-                if let Err(send_e) = responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::RuntimeError(
-                        RuntimeErrorResponse {
-                            reason: e.to_string(),
-                        },
-                    )),
-                }) {
+                if let Err(send_e) = responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::RuntimeError(RuntimeErrorResponse {
+                        reason: e.to_string(),
+                    }),
+                )) {
                     tracing::error!(
                         "TcpConnect: Error sending RuntimeError response for {set}: {send_e}"
                     );
@@ -236,47 +228,41 @@ async fn run_tcp_recv<A: ExitAdapter>(
         match session.recv(&mut recv_buf).await {
             Ok(sessions::common::SessionStatus::DataIo { size }) => {
                 tracing::trace!("Received {size} bytes {set}. DataRecv");
-                responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::TcpResponse(
-                        data::TcpResponse {
-                            response: Some(data::tcp_response::Response::DataRecv(
-                                data::TcpDataRecvResponse {
-                                    data: Bytes::copy_from_slice(&recv_buf[..size]),
-                                    fin: false,
-                                },
-                            )),
-                        },
-                    )),
-                })?;
+                responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::TcpResponse(data::TcpResponse {
+                        response: Some(data::tcp_response::Response::DataRecv(
+                            data::TcpDataRecvResponse {
+                                data: Bytes::copy_from_slice(&recv_buf[..size]),
+                                fin: false,
+                            },
+                        )),
+                    }),
+                ))?;
             }
             Ok(sessions::common::SessionStatus::PeerClosed) => {
                 tracing::trace!("Peer closed {set}. Sending DataRecv with fin");
-                responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::TcpResponse(
-                        data::TcpResponse {
-                            response: Some(data::tcp_response::Response::DataRecv(
-                                data::TcpDataRecvResponse {
-                                    data: Bytes::new(),
-                                    fin: true,
-                                },
-                            )),
-                        },
-                    )),
-                })?;
+                responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::TcpResponse(data::TcpResponse {
+                        response: Some(data::tcp_response::Response::DataRecv(
+                            data::TcpDataRecvResponse {
+                                data: Bytes::new(),
+                                fin: true,
+                            },
+                        )),
+                    }),
+                ))?;
                 break;
             }
             Err(e) => {
                 tracing::error!("Error receiving TCP data for {set}: {e}");
-                responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::RuntimeError(
-                        data::RuntimeErrorResponse {
-                            reason: e.to_string(),
-                        },
-                    )),
-                })?;
+                responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::RuntimeError(data::RuntimeErrorResponse {
+                        reason: e.to_string(),
+                    }),
+                ))?;
                 break;
             }
         }
@@ -321,16 +307,14 @@ fn handle_tcp_close<A: ExitAdapter>(
     let set = extract_socket_set(instr.pair)?;
     adapter.tcp_close(set)?;
 
-    responses.send(ExitNodeResponse {
-        pair: Some(set.into()),
-        response: Some(exit_node_response::Response::TcpResponse(
-            data::TcpResponse {
-                response: Some(data::tcp_response::Response::ConnectionClosed(
-                    data::TcpConnectionClosedResponse {},
-                )),
-            },
-        )),
-    })?;
+    responses.send(ExitNodeResponse::new(
+        Some(set.into()),
+        exit_node_response::Response::TcpResponse(data::TcpResponse {
+            response: Some(data::tcp_response::Response::ConnectionClosed(
+                data::TcpConnectionClosedResponse {},
+            )),
+        }),
+    ))?;
 
     Ok(())
 }
@@ -401,18 +385,16 @@ async fn run_udp_recv<A: ExitAdapter>(
         match session.recv(&mut recv_buf).await {
             Ok(sessions::common::SessionStatus::DataIo { size }) => {
                 tracing::debug!("Received {size} bytes from UDP session {set}");
-                responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::UdpResponse(
-                        data::UdpResponse {
-                            response: Some(data::udp_response::Response::DataRecv(
-                                data::UdpDataRecvResponse {
-                                    data: Bytes::copy_from_slice(&recv_buf[..size]),
-                                },
-                            )),
-                        },
-                    )),
-                })?;
+                responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::UdpResponse(data::UdpResponse {
+                        response: Some(data::udp_response::Response::DataRecv(
+                            data::UdpDataRecvResponse {
+                                data: Bytes::copy_from_slice(&recv_buf[..size]),
+                            },
+                        )),
+                    }),
+                ))?;
             }
             Ok(sessions::common::SessionStatus::PeerClosed) => {
                 tracing::debug!("UDP session {set} closed");
@@ -420,14 +402,12 @@ async fn run_udp_recv<A: ExitAdapter>(
             }
             Err(e) => {
                 tracing::error!("UDP recv error for {set}: {e}");
-                responses.send(ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::RuntimeError(
-                        RuntimeErrorResponse {
-                            reason: e.to_string(),
-                        },
-                    )),
-                })?;
+                responses.send(ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::RuntimeError(RuntimeErrorResponse {
+                        reason: e.to_string(),
+                    }),
+                ))?;
                 break;
             }
         }
@@ -493,19 +473,17 @@ fn handle_icmp_send<A: ExitAdapter>(
                 }
             }
 
-            responses.send(ExitNodeResponse {
-                pair: Some(set.into()),
-                response: Some(exit_node_response::Response::IcmpResponse(
-                    data::IcmpResponse {
-                        response: Some(icmp_response::Response::DataRecv(
-                            data::IcmpDataRecvResponse {
-                                data: recv_buf.into(),
-                                echo_ident: ident,
-                            },
-                        )),
-                    },
-                )),
-            })?;
+            responses.send(ExitNodeResponse::new(
+                Some(set.into()),
+                exit_node_response::Response::IcmpResponse(data::IcmpResponse {
+                    response: Some(icmp_response::Response::DataRecv(
+                        data::IcmpDataRecvResponse {
+                            data: recv_buf.into(),
+                            echo_ident: ident,
+                        },
+                    )),
+                }),
+            ))?;
 
             Ok(())
         }
@@ -529,25 +507,23 @@ fn handle_tcp_listen<A: ExitAdapter>(
     let adapter = Arc::clone(adapter);
     let responses = responses.clone();
 
-    tracing::debug!("Spawning tcp_listen task for pair: {:?}", set);
+    tracing::debug!("Spawning tcp_listen task for {set:?}");
     tasks.spawn(async move {
         match adapter.tcp_listen(set).await {
             Ok(tcp_listen_response) => {
-                tracing::debug!("tcp_listen successful for pair: {:?}", set);
+                tracing::debug!("tcp_listen successful for {set:?}");
                 if let Err(e) = responses.send(tcp_listen_response.into()) {
                     tracing::error!("TcpListen Error sending response on channel: {e}");
                 }
             }
             Err(e) => {
-                tracing::error!("Error in tcp_listen for pair {:?}: {e}", set);
-                let response = ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::RuntimeError(
-                        RuntimeErrorResponse {
-                            reason: e.to_string(),
-                        },
-                    )),
-                };
+                tracing::error!("Error in tcp_listen for {set:?}: {e}");
+                let response = ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::RuntimeError(RuntimeErrorResponse {
+                        reason: e.to_string(),
+                    }),
+                );
                 if let Err(e) = responses.send(response) {
                     tracing::error!("TcpListen Error sending error response on channel: {e}");
                 }
@@ -569,25 +545,23 @@ fn handle_tcp_listen_close<A: ExitAdapter>(
     let adapter = Arc::clone(adapter);
     let responses = responses.clone();
 
-    tracing::debug!("Spawning tcp_listen_close task for pair: {:?}", set);
+    tracing::debug!("Spawning tcp_listen_close task for {set:?}");
     tasks.spawn(async move {
         match adapter.tcp_listen_close(set).await {
             Ok(tcp_listen_close_response) => {
-                tracing::debug!("tcp_listen_close successful for pair: {:?}", set);
+                tracing::debug!("tcp_listen_close successful for {set:?}");
                 if let Err(e) = responses.send(tcp_listen_close_response.into()) {
                     tracing::error!("TcpListenClose Error sending response on channel: {e}");
                 }
             }
             Err(e) => {
-                tracing::error!("Error in tcp_listen_close for pair {:?}: {e}", set);
-                let response = ExitNodeResponse {
-                    pair: Some(set.into()),
-                    response: Some(exit_node_response::Response::RuntimeError(
-                        RuntimeErrorResponse {
-                            reason: e.to_string(),
-                        },
-                    )),
-                };
+                tracing::error!("Error in tcp_listen_close for {set:?}: {e}");
+                let response = ExitNodeResponse::new(
+                    Some(set.into()),
+                    exit_node_response::Response::RuntimeError(RuntimeErrorResponse {
+                        reason: e.to_string(),
+                    }),
+                );
                 if let Err(e) = responses.send(response) {
                     tracing::error!("TcpListenClose Error sending error response on channel: {e}");
                 }

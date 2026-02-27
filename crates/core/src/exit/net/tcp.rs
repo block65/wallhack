@@ -14,19 +14,19 @@ use wallhack_exit_adapter::{
 };
 
 impl SyscallExitAdapter {
-    pub fn tcp_close_impl(&self, pair: SocketSet) -> Result<TcpCloseResponse, RuntimeError> {
-        tracing::debug!("Received close request {}", pair);
+    pub fn tcp_close_impl(&self, set: SocketSet) -> Result<TcpCloseResponse, RuntimeError> {
+        tracing::debug!("Received close request {}", set);
 
-        let key = SessionKey::Tcp(pair);
+        let key = SessionKey::Tcp(set);
         let maybe_session = self.sessions.remove(&key);
 
         let response = if maybe_session.is_some() {
-            tracing::debug!("closed session for pair {}", pair);
-            TcpCloseResponse::Ok { pair }
+            tracing::debug!("closed session for {}", set);
+            TcpCloseResponse::Ok { set }
         } else {
-            tracing::debug!("session not found: {}", pair);
+            tracing::debug!("session not found: {}", set);
             TcpCloseResponse::Reset {
-                pair,
+                set,
                 reason: "session not found".to_string(),
             }
         };

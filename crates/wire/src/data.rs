@@ -299,6 +299,15 @@ impl Display for RuntimeErrorResponse {
     }
 }
 
+impl ExitNodeResponse {
+    pub fn new(pair: Option<SocketAddressPair>, response: exit_node_response::Response) -> Self {
+        Self {
+            pair,
+            response: Some(response),
+        }
+    }
+}
+
 impl Display for ExitNodeResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.response {
