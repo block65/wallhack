@@ -1,5 +1,3 @@
-// All casts in this module are protobuf u32 → u16 port conversions; valid ports fit u16.
-#![allow(clippy::cast_possible_truncation)]
 use std::fmt::Display;
 
 use crate::{data, helpers::ConversionError};
@@ -37,9 +35,11 @@ impl TryFrom<(data::SocketV4Address, data::SocketV4Address)> for SocketSet {
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(pair) = src.ip.zip(dst.ip) {
             let (src_ip, dst_ip) = pair;
+            let src_port = u16::try_from(src.port).map_err(|_| ConversionError::InvalidPort)?;
+            let dst_port = u16::try_from(dst.port).map_err(|_| ConversionError::InvalidPort)?;
             Ok(SocketSet::Ipv4((
-                std::net::SocketAddrV4::new(std::net::Ipv4Addr::from(src_ip), src.port as u16),
-                std::net::SocketAddrV4::new(std::net::Ipv4Addr::from(dst_ip), dst.port as u16),
+                std::net::SocketAddrV4::new(src_ip.try_into()?, src_port),
+                std::net::SocketAddrV4::new(dst_ip.try_into()?, dst_port),
             )))
         } else {
             Err(Self::Error::InvalidSocketAddrPair)
@@ -102,16 +102,18 @@ impl TryFrom<(data::SocketV6Address, data::SocketV6Address)> for SocketSet {
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(pair) = src.ip.zip(dst.ip) {
             let (src_ip, dst_ip) = pair;
+            let src_port = u16::try_from(src.port).map_err(|_| ConversionError::InvalidPort)?;
+            let dst_port = u16::try_from(dst.port).map_err(|_| ConversionError::InvalidPort)?;
             Ok(SocketSet::Ipv6((
                 std::net::SocketAddrV6::new(
-                    std::net::Ipv6Addr::from(src_ip),
-                    src.port as u16,
+                    src_ip.try_into()?,
+                    src_port,
                     src.flowinfo,
                     src.scope_id,
                 ),
                 std::net::SocketAddrV6::new(
-                    std::net::Ipv6Addr::from(dst_ip),
-                    dst.port as u16,
+                    dst_ip.try_into()?,
+                    dst_port,
                     dst.flowinfo,
                     dst.scope_id,
                 ),
@@ -195,5 +197,22 @@ impl TryFrom<data::SocketAddressPair> for SocketSet {
             Some(data::socket_address_pair::Pair::Ipv6(pair)) => SocketSet::try_from(pair),
             _ => Err(Self::Error::InvalidSocketAddrPair),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_port_rejected() {
+        let addr = data::SocketV4Address {
+            ip: Some(data::IpV4Address {
+                ip: vec![127, 0, 0, 1],
+            }),
+            port: 70_000,
+        };
+        let result = std::net::SocketAddrV4::try_from(addr);
+        assert!(matches!(result, Err(ConversionError::InvalidPort)));
     }
 }

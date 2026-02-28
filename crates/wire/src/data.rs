@@ -133,27 +133,33 @@ impl From<(SocketV6Address, SocketV6Address)> for SocketAddressPair {
 }
 
 // std::net
-impl From<IpV4Address> for std::net::Ipv4Addr {
-    fn from(addr: IpV4Address) -> Self {
-        vec_to_sized_array::<4>(&addr.ip).into()
+impl TryFrom<IpV4Address> for std::net::Ipv4Addr {
+    type Error = ConversionError;
+
+    fn try_from(addr: IpV4Address) -> Result<Self, Self::Error> {
+        Ok(vec_to_sized_array::<4>(&addr.ip)?.into())
     }
 }
 
-impl From<IpV6Address> for std::net::Ipv6Addr {
-    fn from(addr: IpV6Address) -> Self {
-        vec_to_sized_array::<16>(&addr.ip).into()
+impl TryFrom<IpV6Address> for std::net::Ipv6Addr {
+    type Error = ConversionError;
+
+    fn try_from(addr: IpV6Address) -> Result<Self, Self::Error> {
+        Ok(vec_to_sized_array::<16>(&addr.ip)?.into())
     }
 }
 
-impl From<ip_address::IpAddress> for std::net::IpAddr {
-    fn from(addr: ip_address::IpAddress) -> Self {
+impl TryFrom<ip_address::IpAddress> for std::net::IpAddr {
+    type Error = ConversionError;
+
+    fn try_from(addr: ip_address::IpAddress) -> Result<Self, Self::Error> {
         match addr {
-            ip_address::IpAddress::Ipv4(addr) => {
-                std::net::IpAddr::V4(vec_to_sized_array::<4>(&addr.ip).into())
-            }
-            ip_address::IpAddress::Ipv6(addr) => {
-                std::net::IpAddr::V6(vec_to_sized_array::<16>(&addr.ip).into())
-            }
+            ip_address::IpAddress::Ipv4(addr) => Ok(std::net::IpAddr::V4(
+                vec_to_sized_array::<4>(&addr.ip)?.into(),
+            )),
+            ip_address::IpAddress::Ipv6(addr) => Ok(std::net::IpAddr::V6(
+                vec_to_sized_array::<16>(&addr.ip)?.into(),
+            )),
         }
     }
 }
@@ -163,9 +169,9 @@ impl TryFrom<SocketV4Address> for std::net::SocketAddrV4 {
 
     fn try_from(addr: SocketV4Address) -> Result<Self, Self::Error> {
         let ip_v4_proto = addr.ip.ok_or(Self::Error::MissingIpAddress)?;
-        let ip: std::net::Ipv4Addr = ip_v4_proto.into();
-        #[allow(clippy::cast_possible_truncation)] // protobuf port is u32; valid ports fit u16
-        Ok(std::net::SocketAddrV4::new(ip, addr.port as u16))
+        let ip: std::net::Ipv4Addr = ip_v4_proto.try_into()?;
+        let port = u16::try_from(addr.port).map_err(|_| ConversionError::InvalidPort)?;
+        Ok(std::net::SocketAddrV4::new(ip, port))
     }
 }
 
@@ -174,11 +180,11 @@ impl TryFrom<SocketV6Address> for std::net::SocketAddrV6 {
 
     fn try_from(addr: SocketV6Address) -> Result<Self, Self::Error> {
         let ip_v6_proto = addr.ip.ok_or(Self::Error::MissingIpAddress)?;
-        let ip: std::net::Ipv6Addr = ip_v6_proto.into();
-        #[allow(clippy::cast_possible_truncation)] // protobuf port is u32; valid ports fit u16
+        let ip: std::net::Ipv6Addr = ip_v6_proto.try_into()?;
+        let port = u16::try_from(addr.port).map_err(|_| ConversionError::InvalidPort)?;
         Ok(std::net::SocketAddrV6::new(
             ip,
-            addr.port as u16,
+            port,
             addr.flowinfo,
             addr.scope_id,
         ))
@@ -201,15 +207,19 @@ impl From<std::net::Ipv6Addr> for IpV6Address {
     }
 }
 
-impl From<IpV4Address> for std::net::IpAddr {
-    fn from(addr: IpV4Address) -> Self {
-        std::net::IpAddr::V4(addr.into())
+impl TryFrom<IpV4Address> for std::net::IpAddr {
+    type Error = ConversionError;
+
+    fn try_from(addr: IpV4Address) -> Result<Self, Self::Error> {
+        Ok(std::net::IpAddr::V4(addr.try_into()?))
     }
 }
 
-impl From<IpV6Address> for std::net::IpAddr {
-    fn from(addr: IpV6Address) -> Self {
-        std::net::IpAddr::V6(addr.into())
+impl TryFrom<IpV6Address> for std::net::IpAddr {
+    type Error = ConversionError;
+
+    fn try_from(addr: IpV6Address) -> Result<Self, Self::Error> {
+        Ok(std::net::IpAddr::V6(addr.try_into()?))
     }
 }
 
