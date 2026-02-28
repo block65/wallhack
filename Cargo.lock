@@ -3401,6 +3401,7 @@ dependencies = [
  "wallhack-core",
  "wallhack-wire",
  "wallhackd",
+ "zeroize",
 ]
 
 [[package]]
@@ -3438,6 +3439,7 @@ dependencies = [
  "wallhack-transport",
  "wallhack-wire",
  "yamux",
+ "zeroize",
 ]
 
 [[package]]
@@ -3508,13 +3510,13 @@ dependencies = [
  "parking_lot",
  "prost",
  "quinn",
- "subtle",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "wallhack-api",
  "wallhack-core",
  "wallhack-wire",
+ "zeroize",
 ]
 
 [[package]]

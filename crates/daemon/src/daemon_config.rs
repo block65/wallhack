@@ -21,7 +21,7 @@ pub struct GlobalConfig {
     pub hostname: Option<String>,
     pub dns_server: Option<String>,
     pub timeout: Duration,
-    pub psk: Option<String>,
+    pub psk: Option<zeroize::Zeroizing<String>>,
 }
 
 /// TLS certificate/key paths.

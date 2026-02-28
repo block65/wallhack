@@ -1,6 +1,6 @@
 //! Length-delimited protobuf framing over byte streams.
 //!
-//! Local copy of the framing helpers from `wallhack-core::transport::bridge`,
+//! Local copy of the framing helpers from `wallhack-core::transport::protocol`,
 //! keeping this crate free of heavy transport dependencies.
 
 use prost::Message;

@@ -7,7 +7,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use parking_lot::Mutex;
-use subtle::ConstantTimeEq;
 
 use wallhack_core::{
     NodeRole,
@@ -146,6 +145,18 @@ async fn run_entry_listen(
         metrics: Some(Arc::clone(&res.metrics)),
         peers: Some(Arc::clone(&res.peers)),
         routes: Some(Arc::clone(&res.routes)),
+        local_handshake: Some(wallhack_wire::data::Handshake {
+            capabilities: Some(wallhack_wire::data::Capabilities {
+                tun_capable: true,
+                listening: true,
+                connecting: false,
+            }),
+            name: cfg.name.clone(),
+            version: crate::built_info::PKG_VERSION.to_string(),
+            psk_proof: Vec::new(),
+            routes: Vec::new(),
+            hint: None,
+        }),
     };
     let server_config = crate::config::build_server_config(&global.tls, addr, psk, cfg.max_peers);
 
@@ -378,7 +389,7 @@ where
         max_peers,
         fast_mode,
     } = options;
-    let server_psk = server.psk().map(String::from);
+    let server_psk = server.psk().map(|s| zeroize::Zeroizing::new(s.to_string()));
     let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(
         max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
     ));
@@ -386,7 +397,7 @@ where
     // Main loop: handle incoming connections
     loop {
         match server.accept(NodeRole::Entry).await {
-            Ok(Some(accept_result)) => {
+            Ok(Some(mut accept_result)) => {
                 // Enforce max peers limit
                 let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() else {
                     tracing::info!(
@@ -402,8 +413,8 @@ where
                 let conn_routes = Arc::clone(&routes);
                 let peer_addr = accept_result.peer_addr().to_string();
                 let peer = accept_result
-                    .exit_hello()
-                    .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
+                    .peer_handshake()
+                    .map_or_else(|| peer_addr.clone(), |c| c.name.clone());
 
                 // Register peer in the registry
                 conn_peers.register(peer.clone(), peer_addr.clone(), NodeRole::Exit);
@@ -413,21 +424,29 @@ where
                 let mut ping_rx = conn_peers.register_ping_channel(&peer);
                 let transport = accept_result.transport();
 
+                // Take latency receiver before moving accept_result.
+                let latency_rx = accept_result
+                    .take_latency_rx()
+                    .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+
                 // Spawn handler for this connection (each exit node gets its own TUN)
                 let conn_psk = server_psk.clone();
                 tokio::spawn(async move {
                     // Hold the permit for the lifetime of this connection
                     let _permit = permit;
                     let result = handle_connection(
-                        conn_metrics,
-                        accept_result,
-                        conn_sessions.clone(),
+                        ConnectionParams {
+                            metrics: conn_metrics,
+                            accept_result,
+                            sessions: conn_sessions.clone(),
+                            transport,
+                            peers: Arc::clone(&conn_peers),
+                            server_psk: conn_psk,
+                            fast_mode,
+                            peer_addr: peer_addr.clone(),
+                        },
                         &mut ping_rx,
-                        &transport,
-                        &conn_peers,
-                        conn_psk,
-                        fast_mode,
-                        peer_addr.clone(),
+                        latency_rx,
                     )
                     .await;
                     // Unregister peer when connection closes
@@ -492,51 +511,65 @@ pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
     }
 }
 
-// TODO: refactor into a ConnectionContext struct to reduce argument count
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
+/// Arguments for [`handle_connection`].
+struct ConnectionParams<T: wallhack_core::transport::Transport + 'static> {
     metrics: Arc<Metrics>,
-    mut accept_result: wallhack_core::server::server::AcceptResult<T>,
+    accept_result: wallhack_core::server::server::AcceptResult<T>,
     sessions: SessionManager,
-    ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
-    transport: &Arc<T>,
-    peers: &Arc<wallhack_core::control::peers::Registry>,
-    server_psk: Option<String>,
+    transport: Arc<T>,
+    peers: Arc<wallhack_core::control::peers::Registry>,
+    server_psk: Option<zeroize::Zeroizing<String>>,
     fast_mode: bool,
     peer_addr: String,
-) -> Result<String, NodeError> {
-    // Get ExitNodeHello directly from accept result (already read during accept)
-    let peer = if let Some(hello) = accept_result.take_exit_hello() {
-        // Validate PSK if configured
-        if let Some(ref expected_psk) = server_psk {
-            let token_bytes = hello.auth_token.as_bytes();
-            let expected_bytes = expected_psk.as_bytes();
-            if token_bytes.len() != expected_bytes.len()
-                || !bool::from(token_bytes.ct_eq(expected_bytes))
-            {
-                tracing::warn!("Peer {} failed PSK authentication, dropping", hello.name);
-                return Err(NodeError::PskAuth(hello.name));
-            }
-        }
+}
 
-        tracing::debug!("Peer {} identified (v{})", hello.name, hello.version);
-        Some(hello.name)
-    } else {
-        tracing::debug!("No ExitNodeHello received, using anonymous session");
-        None
+/// Validate the peer's handshake (PSK proof + identity).
+///
+/// Returns the peer name if identified, or `None` for anonymous peers.
+fn validate_handshake<T: wallhack_core::transport::Transport + 'static>(
+    accept_result: &mut wallhack_core::server::server::AcceptResult<T>,
+    server_psk: Option<&str>,
+    peers: &Registry,
+) -> Result<Option<String>, NodeError> {
+    let channel_binding = accept_result.channel_binding().copied();
+    let Some(hs) = accept_result.take_peer_handshake() else {
+        tracing::debug!("No Handshake received, peer unidentified");
+        return Ok(None);
     };
 
-    // Spawn data tasks AFTER PSK validation (structural guarantee: no data before auth)
-    let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
+    if let Some(expected_psk) = server_psk {
+        let valid = channel_binding.as_ref().is_some_and(|binding| {
+            wallhack_core::psk::verify_proof(expected_psk.as_bytes(), binding, &hs)
+        });
+        if !valid {
+            tracing::warn!("Peer {} failed PSK authentication, dropping", hs.name);
+            return Err(NodeError::PskAuth(hs.name));
+        }
+    }
 
-    // Data task: incoming data (accept uni stream, read data messages)
+    if !hs.name.is_empty() {
+        let capabilities = hs.capabilities.unwrap_or_default();
+        peers.update_capabilities(&hs.name, &capabilities);
+    }
+
+    tracing::debug!("Peer {} identified (v{})", hs.name, hs.version);
+    Ok(Some(hs.name))
+}
+
+/// Spawn background tasks that bridge transport data streams.
+fn spawn_data_tasks<T: wallhack_core::transport::Transport + 'static>(
+    transport: &Arc<T>,
+    instructions_tx: &tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    responses_tx: &tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
+) {
+    // Incoming data: accept uni stream, read data messages.
     let transport_data = Arc::clone(transport);
     let instructions_in = instructions_tx.clone();
     let responses_in = responses_tx.clone();
     tokio::spawn(async move {
         match transport_data.accept_uni().await {
             Ok(Some(mut recv)) => {
-                if let Err(e) = wallhack_core::transport::bridge::run_data_in(
+                if let Err(e) = wallhack_core::transport::protocol::run_data_in(
                     &mut recv,
                     &instructions_in,
                     &responses_in,
@@ -551,13 +584,13 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
         }
     });
 
-    // Data task: send instructions to peer (open uni stream, write instructions).
+    // Send instructions to peer: open uni stream, write instructions.
     let transport_out = Arc::clone(transport);
     let instructions_rx = instructions_tx.subscribe();
     tokio::spawn(async move {
         match transport_out.open_uni().await {
             Ok(mut send) => {
-                if let Err(e) = wallhack_core::transport::bridge::run_send_instructions(
+                if let Err(e) = wallhack_core::transport::protocol::run_send_instructions(
                     &mut send,
                     instructions_rx,
                 )
@@ -569,38 +602,26 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
             Err(e) => tracing::debug!("Failed to open send stream: {e}"),
         }
     });
+}
 
-    // Get or create TUN adapter via session manager
-    let name = if let Some(ref id) = peer {
-        sessions.get_or_create(id)
-    } else {
-        SessionManager::create_anonymous()
-    };
-
-    let actor = create_tun_with_retry(name.clone()).await?;
-
-    // Announce connection after TUN is created
-    let peer_display = peer.as_deref().unwrap_or(&peer_addr);
-    tracing::info!("Peer connected: {peer_display} ({peer_addr}, tun: {name})");
-
-    let responses_rx = responses_tx.subscribe();
-    drop(responses_tx);
-    let (manager, _syn_proxy_state) = ConnectionManager::new(
-        actor,
-        Arc::clone(transport),
-        metrics,
-        fast_mode,
-        instructions_tx.clone(),
-        responses_rx,
-    );
-
-    // Run the connection manager alongside ping handling
-    let mut manager_handle = tokio::spawn(async move { manager.run().await });
+/// Run the connection manager alongside ping/latency handling.
+///
+/// Latency updates arrive from the control loop's periodic ping/pong
+/// exchange. One-shot REPL pings inject a Ping via `control_tx` and then
+/// wait for the next latency measurement from `latency_rx`.
+async fn run_connection_loop(
+    mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    mut latency_rx: tokio::sync::mpsc::Receiver<f64>,
+    ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
+    peer: Option<&str>,
+    peers: &Arc<Registry>,
+) -> Result<(), NodeError> {
+    let mut pending_ping: Option<tokio::sync::oneshot::Sender<f64>> = None;
 
     loop {
         tokio::select! {
             result = &mut manager_handle => {
-                // Connection ended
                 match result {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => return Err(e.into()),
@@ -608,13 +629,18 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
                 }
                 break;
             }
+            Some(ms) = latency_rx.recv() => {
+                if let Some(id) = peer {
+                    peers.update_latency(id, ms);
+                }
+                if let Some(tx) = pending_ping.take() {
+                    let _ = tx.send(ms);
+                }
+            }
             Some(result_tx) = ping_rx.recv() => {
                 match send_ping(&control_tx).await {
-                    Ok(ms) => {
-                        if let Some(ref id) = peer {
-                            peers.update_latency(id, ms);
-                        }
-                        let _ = result_tx.send(ms);
+                    Ok(()) => {
+                        pending_ping = Some(result_tx);
                     }
                     Err(e) => {
                         tracing::debug!("Ping failed: {e}");
@@ -624,17 +650,78 @@ async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
             }
         }
     }
+    Ok(())
+}
+
+async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
+    params: ConnectionParams<T>,
+    ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
+    latency_rx: tokio::sync::mpsc::Receiver<f64>,
+) -> Result<String, NodeError> {
+    let ConnectionParams {
+        metrics,
+        mut accept_result,
+        sessions,
+        transport,
+        peers,
+        server_psk,
+        fast_mode,
+        peer_addr,
+    } = params;
+
+    let peer = validate_handshake(
+        &mut accept_result,
+        server_psk.as_ref().map(|s| s.as_str()),
+        &peers,
+    )?;
+
+    // Spawn data tasks AFTER PSK validation (structural guarantee: no data before auth).
+    let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
+    spawn_data_tasks(&transport, &instructions_tx, &responses_tx);
+
+    // Get or create TUN adapter via session manager
+    let name = if let Some(ref id) = peer {
+        sessions.get_or_create(id)
+    } else {
+        SessionManager::create_anonymous()
+    };
+    let actor = create_tun_with_retry(name.clone()).await?;
+
+    let peer_display = peer.as_deref().unwrap_or(&peer_addr);
+    tracing::info!("Peer connected: {peer_display} ({peer_addr}, tun: {name})");
+
+    let responses_rx = responses_tx.subscribe();
+    drop(responses_tx);
+    let (manager, _syn_proxy_state) = ConnectionManager::new(
+        actor,
+        Arc::clone(&transport),
+        metrics,
+        fast_mode,
+        instructions_tx.clone(),
+        responses_rx,
+    );
+
+    let manager_handle = tokio::spawn(async move { manager.run().await });
+    run_connection_loop(
+        manager_handle,
+        control_tx,
+        latency_rx,
+        ping_rx,
+        peer.as_deref(),
+        &peers,
+    )
+    .await?;
 
     Ok(name)
 }
 
-/// Send a ping via the control stream and measure round-trip time.
+/// Inject a Ping message into the control stream.
 async fn send_ping(
     control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-) -> Result<f64, NodeError> {
+) -> Result<(), NodeError> {
     use wallhack_wire::control::{ControlMessage, control_message};
 
-    #[allow(clippy::cast_possible_truncation)] // millis since epoch fits u64 until ~year 584M
+    #[allow(clippy::cast_possible_truncation)]
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -646,15 +733,10 @@ async fn send_ping(
         })),
     };
 
-    let start = std::time::Instant::now();
-
-    // Send ping via control stream
     control_tx
         .send(ping_msg)
         .await
-        .map_err(|_| NodeError::ChannelClosed)?;
-
-    Ok(start.elapsed().as_secs_f64() * 1000.0)
+        .map_err(|_| NodeError::ChannelClosed)
 }
 
 #[cfg(feature = "http-api")]

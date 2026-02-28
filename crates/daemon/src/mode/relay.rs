@@ -46,6 +46,18 @@ pub async fn run(
         metrics: Some(Arc::clone(&metrics)),
         peers: None,
         routes: None,
+        local_handshake: Some(wallhack_wire::data::Handshake {
+            capabilities: Some(wallhack_wire::data::Capabilities {
+                tun_capable: false,
+                listening: true,
+                connecting: true,
+            }),
+            name: cfg.name.clone(),
+            version: crate::built_info::PKG_VERSION.to_string(),
+            psk_proof: Vec::new(),
+            routes: Vec::new(),
+            hint: None,
+        }),
     };
 
     tracing::info!("Connecting to {}...", cfg.connect.addr);

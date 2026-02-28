@@ -14,7 +14,7 @@ use wallhack_core::client::config::{ClientConfig, MtlsConfig};
 
 /// Security-related connection parameters for peer connections.
 pub(crate) struct SecurityParams {
-    pub psk: Option<String>,
+    pub psk: Option<zeroize::Zeroizing<String>>,
     pub accept_fingerprint: Option<String>,
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn build_mtls_config(tls: &TlsParams) -> Option<MtlsConfig> {
 pub(crate) fn build_server_config(
     tls: &TlsParams,
     addr: SocketAddr,
-    psk: Option<String>,
+    psk: Option<zeroize::Zeroizing<String>>,
     max_peers: Option<usize>,
 ) -> ServerConfig {
     ServerConfig {

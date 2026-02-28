@@ -69,9 +69,8 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                 println!("No connected peers.");
             } else {
                 let mut tw = TabWriter::new(std::io::stdout());
-                let _ = writeln!(tw, "NAME\tCAPABILITY\tADDR\tSTATUS\tLATENCY");
+                let _ = writeln!(tw, "NAME\tADDR\tSTATUS\tLATENCY\tTUN\tLISTEN\tCONNECT");
                 for peer in &p.peers {
-                    let cap = peer.capability();
                     let status = peer.status();
                     let latency = if peer.latency_ms > 0.0 {
                         format!("{:.1}ms", peer.latency_ms)
@@ -80,8 +79,14 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                     };
                     let _ = writeln!(
                         tw,
-                        "{}\t{}\t{}\t{}\t{}",
-                        peer.name, cap, peer.addr, status, latency
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        peer.name,
+                        peer.addr,
+                        status,
+                        latency,
+                        if peer.tun_capable { "yes" } else { "no" },
+                        if peer.listening { "yes" } else { "no" },
+                        if peer.connecting { "yes" } else { "no" },
                     );
                 }
                 let _ = tw.flush();

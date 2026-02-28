@@ -385,7 +385,7 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
         hostname: cli.hostname.clone(),
         dns_server: cli.dns.clone(),
         timeout: Duration::from_secs(cli.timeout),
-        psk: resolve_psk(cli.psk.as_ref()),
+        psk: resolve_psk(cli.psk.as_ref()).map(zeroize::Zeroizing::new),
     };
 
     let command = cli.command.clone().unwrap_or_default();

@@ -16,7 +16,7 @@ use wallhack_core::{
     server::server::Server,
     transport::{
         BiStream, Transport,
-        bridge::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited},
+        protocol::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited},
     },
 };
 
@@ -61,7 +61,7 @@ pub async fn run(
 
     match &cfg.connectivity {
         ConnectivitySpec::Both { connect, listen } => {
-            run_relay_capability_mode(global, &cfg.name, connect, listen, &ctx).await
+            run_exit_both(global, &cfg.name, connect, listen, &ctx).await
         }
         ConnectivitySpec::Connect(spec) => {
             run_exit_connector(global, &cfg.name, spec, &security, &ctx).await
@@ -154,8 +154,11 @@ async fn run_exit_connector(
     }
 }
 
-/// Run with relay capability (both connect and listen).
-async fn run_relay_capability_mode(
+/// Run with both connect and listen (`ConnectivitySpec::Both`).
+// TODO(13c): ConnectivitySpec::Both should resolve to the relay role via
+// auto-negotiation, not run as exit. This entire code path goes away once
+// Phase 13c lands.
+async fn run_exit_both(
     global: &GlobalConfig,
     name: &str,
     connect_spec: &AddressSpec,
@@ -178,8 +181,7 @@ async fn run_relay_capability_mode(
         Protocol::Udp => {
             #[cfg(feature = "quic")]
             {
-                run_quic_relay_capability(global, peer_addr, listen_addr, name, ctx, &security)
-                    .await
+                run_quic_exit_both(global, peer_addr, listen_addr, name, ctx, &security).await
             }
             #[cfg(not(feature = "quic"))]
             Err(NodeError::TransportUnavailable("quic"))
@@ -187,7 +189,7 @@ async fn run_relay_capability_mode(
         Protocol::Tcp => {
             #[cfg(feature = "websocket")]
             {
-                run_ws_relay_capability(global, peer_addr, listen_addr, name, ctx, &security).await
+                run_ws_exit_both(global, peer_addr, listen_addr, name, ctx, &security).await
             }
             #[cfg(not(feature = "websocket"))]
             Err(NodeError::TransportUnavailable("websocket"))
@@ -196,7 +198,7 @@ async fn run_relay_capability_mode(
 }
 
 #[cfg(feature = "quic")]
-async fn run_quic_relay_capability(
+async fn run_quic_exit_both(
     global: &GlobalConfig,
     peer_addr: std::net::SocketAddr,
     listen_addr: std::net::SocketAddr,
@@ -234,6 +236,18 @@ async fn run_quic_relay_capability(
         metrics: Some(Arc::clone(&ctx.metrics)),
         peers: Some(Arc::clone(&ctx.peers)),
         routes: None,
+        local_handshake: Some(wallhack_wire::data::Handshake {
+            capabilities: Some(wallhack_wire::data::Capabilities {
+                tun_capable: false,
+                listening: true,
+                connecting: true,
+            }),
+            name: name.to_string(),
+            version: crate::built_info::PKG_VERSION.to_string(),
+            psk_proof: Vec::new(),
+            routes: Vec::new(),
+            hint: None,
+        }),
     };
     let server_config =
         crate::config::build_server_config(&global.tls, listen_addr, global.psk.clone(), None);
@@ -242,14 +256,14 @@ async fn run_quic_relay_capability(
             .map_err(|e| NodeError::Transport(Box::new(e)))?;
     let bound = server.local_addr()?;
     tracing::info!(
-        "Relay capability active: connected to {peer_addr}, listening on {bound} ({})",
+        "Exit (both): connected to {peer_addr}, listening on {bound} ({})",
         server.protocol_name()
     );
     run_accept_bridge_loop(&mut server, &source_instr, &source_resp).await
 }
 
 #[cfg(feature = "websocket")]
-async fn run_ws_relay_capability(
+async fn run_ws_exit_both(
     global: &GlobalConfig,
     peer_addr: std::net::SocketAddr,
     listen_addr: std::net::SocketAddr,
@@ -282,6 +296,18 @@ async fn run_ws_relay_capability(
         metrics: Some(Arc::clone(&ctx.metrics)),
         peers: Some(Arc::clone(&ctx.peers)),
         routes: None,
+        local_handshake: Some(wallhack_wire::data::Handshake {
+            capabilities: Some(wallhack_wire::data::Capabilities {
+                tun_capable: false,
+                listening: true,
+                connecting: true,
+            }),
+            name: name.to_string(),
+            version: crate::built_info::PKG_VERSION.to_string(),
+            psk_proof: Vec::new(),
+            routes: Vec::new(),
+            hint: None,
+        }),
     };
     let server_config =
         crate::config::build_server_config(&global.tls, listen_addr, global.psk.clone(), None);
@@ -289,7 +315,7 @@ async fn run_ws_relay_capability(
         wallhack_core::server::ws::WebSocketServer::try_new(server_config, server_options)?;
     let bound = server.local_addr()?;
     tracing::info!(
-        "Relay capability active: connected to {peer_addr}, listening on {bound} ({})",
+        "Exit (both): connected to {peer_addr}, listening on {bound} ({})",
         server.protocol_name()
     );
     run_accept_bridge_loop(&mut server, &source_instr, &source_resp).await
@@ -326,7 +352,7 @@ where
 /// Run in listen mode.
 async fn run_exit_listener(
     global: &GlobalConfig,
-    _node_name: &str,
+    node_name: &str,
     spec: &AddressSpec,
     ctx: &Arc<ExitContext>,
 ) -> Result<(), NodeError> {
@@ -343,6 +369,18 @@ async fn run_exit_listener(
         metrics: Some(Arc::clone(&ctx.metrics)),
         peers: Some(Arc::clone(&ctx.peers)),
         routes: None,
+        local_handshake: Some(wallhack_wire::data::Handshake {
+            capabilities: Some(wallhack_wire::data::Capabilities {
+                tun_capable: false,
+                listening: true,
+                connecting: false,
+            }),
+            name: node_name.to_string(),
+            version: crate::built_info::PKG_VERSION.to_string(),
+            psk_proof: Vec::new(),
+            routes: Vec::new(),
+            hint: None,
+        }),
     };
 
     let server_config =
@@ -393,7 +431,7 @@ where
 
                 // Register the connecting peer.
                 let peer_name = accept_result
-                    .exit_hello()
+                    .peer_handshake()
                     .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
                 ctx.peers
                     .register(peer_name.clone(), peer_addr, NodeRole::Entry);
