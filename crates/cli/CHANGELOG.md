@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.9](https://github.com/block65/wallhack/compare/wallhack-cli-v0.2.8...wallhack-cli-v0.2.9) (2026-02-28)
+
+
+### Features
+
+* **daemon:** integrate handshake exchange and PSK validation ([57c07ae](https://github.com/block65/wallhack/commit/57c07aef9cccf5054fd3308e4f8bea013affc4c9))
+
 ## [0.2.8](https://github.com/block65/wallhack/compare/wallhack-cli-v0.2.7...wallhack-cli-v0.2.8) (2026-02-27)
 
 
