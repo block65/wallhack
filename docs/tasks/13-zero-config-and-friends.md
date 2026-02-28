@@ -467,9 +467,9 @@ Ordered sequence. Dependencies are noted.
 
 | # | Task | Depends on | Rationale |
 |---|------|-----------|-----------|
-| 1 | **13a** Handshake | — | **In progress.** Foundation for all 13x phases. |
-| 2 | **relay-reconnect** bug fix | — | Relay has no upstream reconnect loop. Hard blocker for 13c — auto-negotiation assumes ordering independence. |
-| 3 | **13b** Indeterminate role | 13a | Small. Adds fourth role variant + transport-survives-role-events audit. Unlocks 13c. |
+| 1 | **13a** Handshake | — | **Done.** Foundation for all 13x phases. |
+| 2 | **relay-reconnect** bug fix | — | **Done.** Relay now reconnects upstream on disconnect. |
+| 3 | **13b** Indeterminate role | 13a | **Done.** Fourth role variant, data plane paused, transport survives. |
 | 4 | **12** Delete dual TCP path B | — | Remove dead orchestrator TCP path. Less code to touch in 07 and 11. |
 | 5 | **07** Broadcast → mpsc | 12 | **Critical correctness fix.** Silent packet loss on data path under load. Must land before 13e/13g. |
 | 6 | **13c** Auto-negotiation | 13b, relay-reconnect | Pure function, testable in isolation. Core negotiation logic. |
