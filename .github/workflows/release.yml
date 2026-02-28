@@ -59,7 +59,7 @@ jobs:
             --package "$CARGO_PACKAGE" \
             --latest-tag "$LATEST_TAG" \
             --repo-url "$REPO_URL" \
-            < /tmp/commit_messages.txt
+            < /tmp/commits.json
 
       - name: Emit outputs
         if: steps.guard.outputs.skip == 'false'
@@ -75,6 +75,8 @@ jobs:
           TAG: ${{ steps.prepare.outputs.tag }}
           VERSION: ${{ steps.prepare.outputs.version }}
           HEAD_SHA: ${{ github.sha }}
+          LATEST_TAG: ${{ steps.tag.outputs.latest }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: bash "$SHELL_SCRIPT" create-release
 
       # --- Path B: releasable commits → open/update release PR ---

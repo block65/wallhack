@@ -32,17 +32,20 @@ def log(msg: str) -> None:
 
 COMMIT_RE = re.compile(
     r"^(?P<type>[a-z]+)"
-    r"(?:\([^)]*\))?"
+    r"(?:\((?P<scope>[^)]*)\))?"
     r"(?P<bang>!)?"
     r":\s*(?P<desc>.+)",
 )
 
 
-def parse_commits(messages: str) -> list[dict]:
-    """Parse NUL-separated commit messages into structured commits."""
+def parse_commits(raw: str) -> list[dict]:
+    """Parse a JSON array of {sha, message} objects into structured commits."""
+    import json as _json
+    entries = _json.loads(raw)
     commits = []
-    for block in messages.split("\x00"):
-        block = block.strip()
+    for entry in entries:
+        sha = entry.get("sha", "")
+        block = entry.get("message", "").strip()
         if not block:
             continue
         lines = block.splitlines()
@@ -60,15 +63,18 @@ def parse_commits(messages: str) -> list[dict]:
                         "bang": False,
                         "description": subject,
                         "breaking": True,
+                        "sha": sha,
                     }
                 )
             continue
         commits.append(
             {
                 "type": m.group("type"),
+                "scope": m.group("scope") or "",
                 "bang": bool(m.group("bang")),
                 "description": m.group("desc"),
                 "breaking": bool(m.group("bang")) or has_breaking_footer,
+                "sha": sha,
             }
         )
     return commits
@@ -110,22 +116,32 @@ def version_gt(a: str, b: str) -> bool:
     return parse_version(a) > parse_version(b)
 
 
-def generate_changelog(version: str, commits: list[dict], url: str = "") -> str:
+def format_entry(c: dict, repo_url: str) -> str:
+    scope = c.get("scope", "")
+    text = f"**{scope}:** {c['description']}" if scope else c["description"]
+    sha = c.get("sha", "")
+    if sha and repo_url:
+        text += f" ([{sha[:7]}]({repo_url}/commit/{sha}))"
+    return text
+
+
+def generate_changelog(version: str, commits: list[dict], url: str = "", repo_url: str = "") -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     sections: dict[str, list[str]] = {
         "Breaking Changes": [],
-        "Added": [],
-        "Fixed": [],
+        "Features": [],
+        "Bug Fixes": [],
     }
     for c in commits:
+        entry = format_entry(c, repo_url)
         if c["breaking"]:
-            sections["Breaking Changes"].append(c["description"])
+            sections["Breaking Changes"].append(entry)
         if c["type"] == "feat":
-            sections["Added"].append(c["description"])
+            sections["Features"].append(entry)
         elif c["type"] in ("fix", "perf"):
-            sections["Fixed"].append(c["description"])
+            sections["Bug Fixes"].append(entry)
 
-    header = f"## [{version}]({url}) - {today}" if url else f"## [{version}] - {today}"
+    header = f"## [{version}]({url}) ({today})" if url else f"## [{version}] ({today})"
     lines = [header, ""]
     for heading, items in sections.items():
         if not items:
@@ -133,7 +149,7 @@ def generate_changelog(version: str, commits: list[dict], url: str = "") -> str:
         lines.append(f"### {heading}")
         lines.append("")
         for item in items:
-            lines.append(f"- {item}")
+            lines.append(f"* {item}")
         lines.append("")
     return "\n".join(lines)
 
@@ -216,7 +232,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         )
     else:
         url = ""
-    changelog = generate_changelog(new_version, commits, url=url)
+    changelog = generate_changelog(new_version, commits, url=url, repo_url=args.repo_url)
 
     result = {
         "action": "bump",

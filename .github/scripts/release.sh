@@ -57,22 +57,16 @@ cmd_fetch_commits() {
   if [ -n "${LATEST_TAG:-}" ]; then
     # Compare API: max 300 commits (sufficient for typical release cadence)
     gh api "repos/${REPO}/compare/${LATEST_TAG}...HEAD" \
-      --jq '[.commits[].commit.message] | join("\u0000")' \
-      > /tmp/commit_messages.txt
+      --jq '[.commits[] | {sha: .sha, message: .commit.message}]' \
+      > /tmp/commits.json
   else
-    # No prior tag — get all commits. --paginate applies --jq per page,
-    # so each page emits a NUL-joined string on its own line. Replace
-    # the newlines between pages with NUL to get one continuous stream.
-    # Caveat: tr '\n' '\0' also converts newlines within multi-line
-    # commit bodies to NUL, so BREAKING CHANGE: footers are lost on
-    # this path. Only affects the first-ever release (no prior tags).
-    # Bang-style breaking changes (feat!:) in subject lines are fine.
+    # No prior tag — paginate all commits and flatten into one JSON array.
     gh api "repos/${REPO}/commits" --paginate \
-      --jq '[.[].commit.message] | join("\u0000")' \
-      | tr '\n' '\0' \
-      > /tmp/commit_messages.txt
+      --jq '[.[] | {sha: .sha, message: .commit.message}]' \
+      | jq -s 'flatten' \
+      > /tmp/commits.json
   fi
-  notice "fetched $(wc -c < /tmp/commit_messages.txt) bytes of commit messages"
+  notice "fetched $(jq length /tmp/commits.json) commits"
 }
 
 # --------------------------------------------------------------------------
@@ -91,6 +85,11 @@ cmd_create_release() {
   fi
   if [ ! -s "$notes_file" ]; then
     echo "Release ${TAG}" > "$notes_file"
+  fi
+
+  if [ -n "${LATEST_TAG:-}" ] && [ -n "${REPO_URL:-}" ]; then
+    printf "\n\n**Full Changelog**: %s/compare/%s...%s\n" \
+      "$REPO_URL" "$LATEST_TAG" "$TAG" >> "$notes_file"
   fi
 
   # Push the tag explicitly first — gh release create --draft does not create

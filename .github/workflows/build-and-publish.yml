@@ -1,5 +1,8 @@
 name: Build and Publish
 
+env:
+  CROSS_VERSION: v0.2.5
+
 on:
   workflow_dispatch:
     inputs:
@@ -85,14 +88,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cross
-          key: cross-v0.2.5-x86_64-unknown-linux-musl
+          key: cross-${{ env.CROSS_VERSION }}-x86_64-unknown-linux-musl
 
       - name: Install cross
         if: matrix.cross && steps.cache-cross.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download --repo cross-rs/cross --tag v0.2.5 --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
+          gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
           tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
 
       - name: Build (native)
