@@ -169,3 +169,68 @@ pub(crate) fn bridge_channels<T: wallhack_core::transport::Transport>(
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn connect_loop_reconnects_after_session_ends() {
+        let connect_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&connect_count);
+
+        // connect_loop runs forever, so we timeout after it has reconnected
+        // multiple times.
+        let _ = tokio::time::timeout(
+            Duration::from_millis(200),
+            connect_loop(
+                || {
+                    let cc = Arc::clone(&cc);
+                    async move {
+                        cc.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, std::io::Error>(())
+                    }
+                },
+                |()| async { Ok(()) },
+                Duration::from_millis(1),
+            ),
+        )
+        .await;
+
+        // Should have reconnected multiple times within the timeout.
+        assert!(
+            connect_count.load(Ordering::SeqCst) >= 3,
+            "expected at least 3 connections, got {}",
+            connect_count.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_loop_session_error_propagates() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            connect_loop(
+                || async { Ok::<_, std::io::Error>(()) },
+                |()| async { Err(NodeError::TransportUnavailable("test")) },
+                Duration::from_millis(1),
+            ),
+        )
+        .await;
+
+        let err = result
+            .expect("should not timeout")
+            .expect_err("session error should propagate");
+        assert!(
+            matches!(err, NodeError::TransportUnavailable("test")),
+            "expected TransportUnavailable, got {err:?}"
+        );
+    }
+}
