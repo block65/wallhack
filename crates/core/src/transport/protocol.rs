@@ -93,21 +93,6 @@ pub async fn read_length_delimited_buf<M: Message + Default, S: tokio::io::Async
     M::decode(&buf[..]).map_err(|e| TransportError::stream(e.to_string()))
 }
 
-/// Write a length-delimited protobuf to the stream.
-///
-/// Uses a caller-provided buffer to avoid per-call allocation. Falls back to
-/// an internal buffer when `None` is passed.
-///
-/// # Errors
-///
-/// Returns an error if encoding or writing fails.
-pub async fn write_length_delimited<M: Message, S: tokio::io::AsyncWrite + Unpin>(
-    stream: &mut S,
-    msg: &M,
-) -> Result<(), TransportError> {
-    write_length_delimited_buf(stream, msg, &mut Vec::new()).await
-}
-
 /// Write a length-delimited protobuf, reusing the provided buffer.
 pub async fn write_length_delimited_buf<M: Message, S: tokio::io::AsyncWrite + Unpin>(
     stream: &mut S,
@@ -146,7 +131,7 @@ pub enum ControlLoopExit {
     StreamClosed,
 }
 
-/// Channels consumed by `run_control_loop`.
+/// Channels consumed by `ControlChannels::run`.
 pub struct ControlChannels {
     /// Outgoing control messages injected by the caller.
     pub outgoing_rx: mpsc::Receiver<ControlMessage>,
@@ -158,141 +143,155 @@ pub struct ControlChannels {
     pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
 }
 
-/// Runs the persistent control bidi-stream loop.
-///
-/// Multiplexes:
-/// - **Reading** `ControlMessage`s from the bidi stream and dispatching them.
-/// - **Writing** outgoing `ControlMessage`s injected via `channels.outgoing_rx`.
-/// - **Ping timer** that periodically writes `Ping` messages.
-///
-/// The `handler` is `Some` on the server side (to process incoming
-/// `ControlRequest`s) and `None` on the client side.
-///
-/// When `channels.latency_tx` is provided, each received Pong is converted to a
-/// round-trip latency measurement (in milliseconds) and forwarded through
-/// the channel. Callers can use this to update the peer registry or
-/// respond to one-shot ping requests.
-#[allow(clippy::too_many_lines)] // refactor candidate
-pub async fn run_control_loop<S: BiStream>(
-    stream: &mut S,
-    channels: &mut ControlChannels,
-    handler: Option<&Handler>,
-    ping_interval: std::time::Duration,
-) -> ControlLoopExit {
-    let mut read_buf = Vec::with_capacity(CONTROL_MTU);
-    let mut write_buf = Vec::with_capacity(CONTROL_MTU);
-    let mut ping_timer = tokio::time::interval(ping_interval);
-    // Don't fire immediately — the first tick should be after the interval.
-    ping_timer.reset();
+impl ControlChannels {
+    /// Runs the persistent control bidi-stream loop.
+    ///
+    /// Multiplexes:
+    /// - **Reading** `ControlMessage`s from the bidi stream and dispatching them.
+    /// - **Writing** outgoing `ControlMessage`s injected via `self.outgoing_rx`.
+    /// - **Ping timer** that periodically writes `Ping` messages.
+    ///
+    /// The `handler` is `Some` on the server side (to process incoming
+    /// `ControlRequest`s) and `None` on the client side.
+    pub async fn run<S: BiStream>(
+        &mut self,
+        stream: &mut S,
+        handler: Option<&Handler>,
+        ping_interval: std::time::Duration,
+    ) -> ControlLoopExit {
+        let mut read_buf = Vec::with_capacity(CONTROL_MTU);
+        let mut write_buf = Vec::with_capacity(CONTROL_MTU);
+        let mut ping_timer = tokio::time::interval(ping_interval);
+        // Don't fire immediately — the first tick should be after the interval.
+        ping_timer.reset();
 
-    loop {
-        tokio::select! {
-            // Read incoming control messages
-            result = read_length_delimited_buf::<ControlMessage, _>(
-                stream, CONTROL_MTU, &mut read_buf,
-            ) => {
-                let msg = match result {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::trace!("Control stream ended: {e}");
-                        return ControlLoopExit::StreamClosed;
-                    }
-                };
-
-                match msg.message {
-                    Some(control_message::Message::Handshake(hs)) => {
-                        tracing::info!(
-                            "Control: received Handshake name={} version={}",
-                            hs.name, hs.version,
-                        );
-                        if let Some(tx) = channels.handshake_tx.take() {
-                            let _ = tx.send(hs);
-                        }
-                    }
-                    Some(control_message::Message::Ping(ping_msg)) => {
-                        tracing::trace!("Control: received Ping, auto-replying Pong");
-                        let reply = ControlMessage {
-                            message: Some(control_message::Message::Pong(
-                                wallhack_wire::data::Pong { timestamp_ms: ping_msg.timestamp_ms },
-                            )),
-                        };
-                        if let Err(e) = write_length_delimited_buf(stream, &reply, &mut write_buf).await {
-                            tracing::warn!("Failed to write Pong: {e}");
+        loop {
+            tokio::select! {
+                // Read incoming control messages
+                result = read_length_delimited_buf::<ControlMessage, _>(
+                    stream, CONTROL_MTU, &mut read_buf,
+                ) => {
+                    let msg = match result {
+                        Ok(m) => m,
+                        Err(e) => {
+                            tracing::trace!("Control stream ended: {e}");
                             return ControlLoopExit::StreamClosed;
                         }
-                    }
-                    Some(control_message::Message::Pong(pong)) => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        #[allow(clippy::cast_precision_loss)] // ms-resolution latency; f64 mantissa exceeds plausible RTT range
-                        let latency_ms = now_ms.saturating_sub(pong.timestamp_ms) as f64;
-                        tracing::trace!(latency_ms, "Control: received Pong");
-                        if let Some(ref tx) = channels.latency_tx {
-                            let _ = tx.send(latency_ms).await;
-                        }
-                    }
-                    Some(control_message::Message::ControlRequest(req)) => {
-                        if let Some(h) = handler {
-                            tracing::trace!("Control: handling ControlRequest");
-                            let resp = h.handle(req);
-                            let msg = ControlMessage {
-                                message: Some(control_message::Message::ControlResponse(resp)),
-                            };
-                            if let Err(e) = write_length_delimited_buf(stream, &msg, &mut write_buf).await {
-                                tracing::warn!("Failed to write ControlResponse: {e}");
-                                return ControlLoopExit::StreamClosed;
-                            }
-                        }
-                    }
-                    Some(control_message::Message::ControlResponse(resp)) => {
-                        tracing::trace!("Control: received ControlResponse");
-                        if let Some(ref tx) = channels.control_response_tx {
-                            let _ = tx.send(resp).await;
-                        }
-                    }
-                    Some(control_message::Message::Disconnect(dc)) => {
-                        tracing::info!("Control: received Disconnect: {}", dc.reason);
-                        return ControlLoopExit::Disconnect(dc.reason);
-                    }
-                    None => {
-                        tracing::warn!("Control: received empty ControlMessage");
+                    };
+
+                    if let Some(exit) = self.handle_message(stream, msg, handler, &mut write_buf).await {
+                        return exit;
                     }
                 }
-            }
 
-            // Write outgoing control messages injected by the caller
-            msg = channels.outgoing_rx.recv() => {
-                let Some(msg) = msg else {
-                    tracing::debug!("Control outgoing channel closed");
-                    return ControlLoopExit::StreamClosed;
-                };
-                if let Err(e) = write_length_delimited_buf(stream, &msg, &mut write_buf).await {
-                    tracing::warn!("Failed to write outgoing control message: {e}");
-                    return ControlLoopExit::StreamClosed;
+                // Write outgoing control messages injected by the caller
+                msg = self.outgoing_rx.recv() => {
+                    let Some(msg) = msg else {
+                        tracing::debug!("Control outgoing channel closed");
+                        return ControlLoopExit::StreamClosed;
+                    };
+                    if let Err(e) = write_length_delimited_buf(stream, &msg, &mut write_buf).await {
+                        tracing::warn!("Failed to write outgoing control message: {e}");
+                        return ControlLoopExit::StreamClosed;
+                    }
                 }
-            }
 
-            // Periodic ping
-            _ = ping_timer.tick() => {
-                #[allow(clippy::cast_possible_truncation)] // millis since epoch fits u64 until ~year 584M
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                let ping = ControlMessage {
-                    message: Some(control_message::Message::Ping(
-                        wallhack_wire::data::Ping { timestamp_ms: ts },
-                    )),
-                };
-                if let Err(e) = write_length_delimited_buf(stream, &ping, &mut write_buf).await {
-                    tracing::warn!("Failed to write Ping: {e}");
-                    return ControlLoopExit::StreamClosed;
+                // Periodic ping
+                _ = ping_timer.tick() => {
+                    #[allow(clippy::cast_possible_truncation)] // millis since epoch fits u64 until ~year 584M
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    let ping = ControlMessage {
+                        message: Some(control_message::Message::Ping(
+                            wallhack_wire::data::Ping { timestamp_ms: ts },
+                        )),
+                    };
+                    if let Err(e) = write_length_delimited_buf(stream, &ping, &mut write_buf).await {
+                        tracing::warn!("Failed to write Ping: {e}");
+                        return ControlLoopExit::StreamClosed;
+                    }
                 }
             }
         }
+    }
+
+    /// Process a single incoming `ControlMessage`.
+    ///
+    /// Returns `Some(exit_reason)` if the loop should terminate.
+    async fn handle_message<S: BiStream>(
+        &mut self,
+        stream: &mut S,
+        msg: ControlMessage,
+        handler: Option<&Handler>,
+        write_buf: &mut Vec<u8>,
+    ) -> Option<ControlLoopExit> {
+        match msg.message {
+            Some(control_message::Message::Handshake(hs)) => {
+                tracing::info!(
+                    "Control: received Handshake name={} version={}",
+                    hs.name,
+                    hs.version,
+                );
+                if let Some(tx) = self.handshake_tx.take() {
+                    let _ = tx.send(hs);
+                }
+            }
+            Some(control_message::Message::Ping(ping_msg)) => {
+                tracing::trace!("Control: received Ping, auto-replying Pong");
+                let reply = ControlMessage {
+                    message: Some(control_message::Message::Pong(wallhack_wire::data::Pong {
+                        timestamp_ms: ping_msg.timestamp_ms,
+                    })),
+                };
+                if let Err(e) = write_length_delimited_buf(stream, &reply, write_buf).await {
+                    tracing::warn!("Failed to write Pong: {e}");
+                    return Some(ControlLoopExit::StreamClosed);
+                }
+            }
+            Some(control_message::Message::Pong(pong)) => {
+                #[allow(clippy::cast_possible_truncation)]
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                #[allow(clippy::cast_precision_loss)]
+                // ms-resolution latency; f64 mantissa exceeds plausible RTT range
+                let latency_ms = now_ms.saturating_sub(pong.timestamp_ms) as f64;
+                tracing::trace!(latency_ms, "Control: received Pong");
+                if let Some(ref tx) = self.latency_tx {
+                    let _ = tx.send(latency_ms).await;
+                }
+            }
+            Some(control_message::Message::ControlRequest(req)) => {
+                if let Some(h) = handler {
+                    tracing::trace!("Control: handling ControlRequest");
+                    let resp = h.handle(req);
+                    let msg = ControlMessage {
+                        message: Some(control_message::Message::ControlResponse(resp)),
+                    };
+                    if let Err(e) = write_length_delimited_buf(stream, &msg, write_buf).await {
+                        tracing::warn!("Failed to write ControlResponse: {e}");
+                        return Some(ControlLoopExit::StreamClosed);
+                    }
+                }
+            }
+            Some(control_message::Message::ControlResponse(resp)) => {
+                tracing::trace!("Control: received ControlResponse");
+                if let Some(ref tx) = self.control_response_tx {
+                    let _ = tx.send(resp).await;
+                }
+            }
+            Some(control_message::Message::Disconnect(dc)) => {
+                tracing::info!("Control: received Disconnect: {}", dc.reason);
+                return Some(ControlLoopExit::Disconnect(dc.reason));
+            }
+            None => {
+                tracing::warn!("Control: received empty ControlMessage");
+            }
+        }
+        None
     }
 }
 
@@ -308,7 +307,7 @@ pub async fn run_control_stream_initiator<T: Transport>(
     ping_interval: std::time::Duration,
 ) -> Result<ControlLoopExit, TransportError> {
     let mut stream = transport.open_bi().await?;
-    Ok(run_control_loop(&mut stream, channels, handler, ping_interval).await)
+    Ok(channels.run(&mut stream, handler, ping_interval).await)
 }
 
 /// Accepts the first bidi stream on the transport and runs the control loop (server side).
@@ -325,7 +324,7 @@ pub async fn run_control_stream_acceptor<T: Transport>(
     let Some(mut stream) = transport.accept_bi().await? else {
         return Ok(ControlLoopExit::StreamClosed);
     };
-    Ok(run_control_loop(&mut stream, channels, handler, ping_interval).await)
+    Ok(channels.run(&mut stream, handler, ping_interval).await)
 }
 
 /// Reads `TunnelMessage`s from a receive stream, dispatching only data
@@ -684,13 +683,9 @@ mod tests {
                 latency_tx: None,
                 control_response_tx: None,
             };
-            run_control_loop(
-                &mut stream_a,
-                &mut channels,
-                None,
-                std::time::Duration::from_mins(10),
-            )
-            .await
+            channels
+                .run(&mut stream_a, None, std::time::Duration::from_mins(10))
+                .await
         });
 
         let b_handle = tokio::spawn(async move {
@@ -700,13 +695,9 @@ mod tests {
                 latency_tx: None,
                 control_response_tx: None,
             };
-            run_control_loop(
-                &mut stream_b,
-                &mut channels,
-                None,
-                std::time::Duration::from_mins(10),
-            )
-            .await
+            channels
+                .run(&mut stream_b, None, std::time::Duration::from_mins(10))
+                .await
         });
 
         // A should receive B's handshake and vice versa.
@@ -757,13 +748,9 @@ mod tests {
             control_response_tx: None,
         };
 
-        let exit = run_control_loop(
-            &mut stream_b,
-            &mut channels,
-            None,
-            std::time::Duration::from_mins(10),
-        )
-        .await;
+        let exit = channels
+            .run(&mut stream_b, None, std::time::Duration::from_mins(10))
+            .await;
 
         // Stream closed after the bad message.
         assert!(matches!(exit, ControlLoopExit::StreamClosed));
@@ -788,13 +775,9 @@ mod tests {
 
         // Spawn the control loop on side B (will read from stream_b).
         let b_handle = tokio::spawn(async move {
-            run_control_loop(
-                &mut stream_b,
-                &mut channels,
-                None,
-                std::time::Duration::from_mins(10),
-            )
-            .await
+            channels
+                .run(&mut stream_b, None, std::time::Duration::from_mins(10))
+                .await
         });
 
         // First, verify Ping auto-reply: send a Ping, read the Pong.
@@ -871,13 +854,9 @@ mod tests {
 
         // Control loop with 1-second ping interval.
         let b_handle = tokio::spawn(async move {
-            run_control_loop(
-                &mut stream_b,
-                &mut channels,
-                None,
-                std::time::Duration::from_secs(1),
-            )
-            .await
+            channels
+                .run(&mut stream_b, None, std::time::Duration::from_secs(1))
+                .await
         });
 
         // Advance time past the first ping interval.

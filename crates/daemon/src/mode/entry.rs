@@ -435,21 +435,17 @@ where
                 tokio::spawn(async move {
                     // Hold the permit for the lifetime of this connection
                     let _permit = permit;
-                    let result = handle_connection(
-                        ConnectionParams {
-                            metrics: conn_metrics,
-                            accept_result,
-                            sessions: conn_sessions.clone(),
-                            transport,
-                            peers: Arc::clone(&conn_peers),
-                            server_psk: conn_psk,
-                            fast_mode,
-                            peer_addr: peer_addr.clone(),
-                        },
-                        &mut ping_rx,
-                        latency_rx,
-                    )
-                    .await;
+                    let params = ConnectionParams {
+                        metrics: conn_metrics,
+                        accept_result,
+                        sessions: conn_sessions.clone(),
+                        transport,
+                        peers: Arc::clone(&conn_peers),
+                        server_psk: conn_psk,
+                        fast_mode,
+                        peer_addr: peer_addr.clone(),
+                    };
+                    let result = params.run(&mut ping_rx, latency_rx).await;
                     // Unregister peer when connection closes
                     conn_peers.unregister(&peer);
                     // Clean up routes for this peer
@@ -525,8 +521,6 @@ struct ConnectionParams<T: wallhack_core::transport::Transport + 'static> {
 }
 
 /// Validate the peer's handshake (PSK proof + identity).
-///
-/// Returns the peer name if identified, or `None` for anonymous peers.
 fn validate_handshake<T: wallhack_core::transport::Transport + 'static>(
     accept_result: &mut wallhack_core::server::server::AcceptResult<T>,
     server_psk: Option<&str>,
@@ -606,10 +600,6 @@ fn spawn_data_tasks<T: wallhack_core::transport::Transport + 'static>(
 }
 
 /// Run the connection manager alongside ping/latency handling.
-///
-/// Latency updates arrive from the control loop's periodic ping/pong
-/// exchange. One-shot REPL pings inject a Ping via `control_tx` and then
-/// wait for the next latency measurement from `latency_rx`.
 async fn run_connection_loop(
     mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
@@ -654,66 +644,72 @@ async fn run_connection_loop(
     Ok(())
 }
 
-async fn handle_connection<T: wallhack_core::transport::Transport + 'static>(
-    params: ConnectionParams<T>,
-    ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
-    latency_rx: tokio::sync::mpsc::Receiver<f64>,
-) -> Result<String, NodeError> {
-    let ConnectionParams {
-        metrics,
-        mut accept_result,
-        sessions,
-        transport,
-        peers,
-        server_psk,
-        fast_mode,
-        peer_addr,
-    } = params;
+impl<T: wallhack_core::transport::Transport + 'static> ConnectionParams<T> {
+    /// Main entry point for the connection handler.
+    pub async fn run(
+        self,
+        ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
+        latency_rx: tokio::sync::mpsc::Receiver<f64>,
+    ) -> Result<String, NodeError> {
+        let ConnectionParams {
+            metrics,
+            mut accept_result,
+            sessions,
+            transport,
+            peers,
+            server_psk,
+            fast_mode,
+            peer_addr,
+        } = self;
 
-    let peer = validate_handshake(
-        &mut accept_result,
-        server_psk.as_ref().map(|s| s.as_str()),
-        &peers,
-    )?;
+        let peer = validate_handshake(
+            &mut accept_result,
+            server_psk.as_ref().map(|s| s.as_str()),
+            &peers,
+        )?;
 
-    // Spawn data tasks AFTER PSK validation (structural guarantee: no data before auth).
-    let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
-    spawn_data_tasks(&transport, &instructions_tx, &responses_tx);
+        // Spawn data tasks AFTER PSK validation (structural guarantee: no data before auth).
+        let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
+        spawn_data_tasks(&transport, &instructions_tx, &responses_tx);
 
-    // Get or create TUN adapter via session manager
-    let name = if let Some(ref id) = peer {
-        sessions.get_or_create(id)
-    } else {
-        SessionManager::create_anonymous()
-    };
-    let actor = create_tun_with_retry(name.clone()).await?;
+        // Get or create TUN adapter via session manager
+        let name = if let Some(ref id) = peer {
+            sessions.get_or_create(id)
+        } else {
+            SessionManager::create_anonymous()
+        };
+        let actor = create_tun_with_retry(name.clone()).await?;
 
-    let peer_display = peer.as_deref().unwrap_or(&peer_addr);
-    tracing::info!("Peer connected: {peer_display} ({peer_addr}, tun: {name})");
+        let peer_display = peer.as_deref().unwrap_or(&peer_addr);
+        tracing::info!(
+            "Peer connected: {peer_display} ({}, tun: {name})",
+            peer_addr
+        );
 
-    let responses_rx = responses_tx.subscribe();
-    drop(responses_tx);
-    let (manager, _syn_proxy_state) = ConnectionManager::new(
-        actor,
-        Arc::clone(&transport),
-        metrics,
-        fast_mode,
-        instructions_tx.clone(),
-        responses_rx,
-    );
+        let responses_rx = responses_tx.subscribe();
+        drop(responses_tx);
+        let (manager, _syn_proxy_state) = ConnectionManager::new(
+            actor,
+            Arc::clone(&transport),
+            Arc::clone(&metrics),
+            fast_mode,
+            instructions_tx.clone(),
+            responses_rx,
+        );
 
-    let manager_handle = tokio::spawn(async move { manager.run().await });
-    run_connection_loop(
-        manager_handle,
-        control_tx,
-        latency_rx,
-        ping_rx,
-        peer.as_deref(),
-        &peers,
-    )
-    .await?;
+        let manager_handle = tokio::spawn(async move { manager.run().await });
+        run_connection_loop(
+            manager_handle,
+            control_tx,
+            latency_rx,
+            ping_rx,
+            peer.as_deref(),
+            &peers,
+        )
+        .await?;
 
-    Ok(name)
+        Ok(name)
+    }
 }
 
 /// Inject a Ping message into the control stream.
