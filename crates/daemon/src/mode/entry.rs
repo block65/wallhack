@@ -7,6 +7,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use parking_lot::Mutex;
+use wallhack_core::psk::HandshakeExt;
 
 use wallhack_core::{
     NodeRole,
@@ -538,9 +539,9 @@ fn validate_handshake<T: wallhack_core::transport::Transport + 'static>(
     };
 
     if let Some(expected_psk) = server_psk {
-        let valid = channel_binding.as_ref().is_some_and(|binding| {
-            wallhack_core::psk::verify_proof(expected_psk.as_bytes(), binding, &hs)
-        });
+        let valid = channel_binding
+            .as_ref()
+            .is_some_and(|binding| hs.verify_psk_proof(expected_psk.as_bytes(), binding));
         if !valid {
             tracing::warn!("Peer {} failed PSK authentication, dropping", hs.name);
             return Err(NodeError::PskAuth(hs.name));

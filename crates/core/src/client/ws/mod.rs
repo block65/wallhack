@@ -26,6 +26,7 @@ use yamux::Mode;
 use crate::{
     NodeRole,
     client::config::ClientConfig,
+    psk::HandshakeExt,
     transport::{
         Transport, protocol,
         websocket::{WebSocketByteStream, WebSocketTransport, WebSocketTransportConfig},
@@ -361,8 +362,7 @@ impl WsClient {
 
             if let Some(ref psk) = self.config.base.psk {
                 if let Some(ref binding) = channel_binding {
-                    handshake.psk_proof =
-                        crate::psk::compute_proof(psk.as_bytes(), binding, &handshake);
+                    handshake.psk_proof = handshake.compute_psk_proof(psk.as_bytes(), binding);
                 } else {
                     tracing::warn!("PSK configured but channel binding extraction failed");
                 }
