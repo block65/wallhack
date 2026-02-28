@@ -4,7 +4,7 @@ package wallhack.management;
 
 // === Framing ===
 // Length-delimited protobuf over Unix socket / named pipe.
-// Same read_length_delimited / write_length_delimited pattern as transport/bridge.rs.
+// Same read_length_delimited / write_length_delimited pattern as transport/protocol.rs.
 
 // === Inbound (to daemon) ===
 message ManagementRequest {
@@ -106,12 +106,6 @@ enum NodeRole {
   NODE_ROLE_EXIT = 2;
 }
 
-enum NodeCapability {
-  NODE_CAPABILITY_UNSPECIFIED = 0;
-  NODE_CAPABILITY_EXIT = 1;
-  NODE_CAPABILITY_RELAY = 2;
-}
-
 enum PeerStatus {
   PEER_STATUS_UNSPECIFIED = 0;
   PEER_STATUS_CONNECTED = 1;
@@ -128,11 +122,15 @@ message StatusResponse {
   NodeRole role = 1;
   bool connected = 2;
   string peer_addr = 3;
-  NodeCapability capability = 4;
+  reserved 4;
+  reserved "capability";
   string listen_addr = 5;
   string version = 6;
   uint64 uptime_ms = 7;
   string package_name = 8;
+  bool tun_capable = 9;
+  bool listening = 10;
+  bool connecting = 11;
 }
 
 message StatsResponse {
@@ -148,11 +146,15 @@ message StatsResponse {
 message PeerInfo {
   string name = 1;
   string addr = 2;
-  NodeCapability capability = 3;
+  reserved 3;
+  reserved "capability";
   PeerStatus status = 4;
   uint64 connected_at_secs = 5;
   uint64 bytes_transferred = 6;
   double latency_ms = 7;
+  bool tun_capable = 8;
+  bool listening = 9;
+  bool connecting = 10;
 }
 
 message PeersResponse {

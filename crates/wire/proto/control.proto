@@ -35,14 +35,7 @@ message PingRequest {}
 message PingResponse {
   uint64 uptime_ms = 1;
   string version = 2;
-  NodeRole node_role = 3;
-}
-
-enum NodeRole {
-  ROLE_UNKNOWN = 0;
-  ROLE_ENTRY = 1;
-  ROLE_RELAY = 2;
-  ROLE_EXIT = 3;
+  wallhack.data.NodeRole node_role = 3;
 }
 
 message StatsRequest {}
@@ -64,7 +57,7 @@ message PeersResponse {
 message PeerInfo {
   string name = 1;
   string addr = 2;
-  NodeRole role = 3;
+  wallhack.data.NodeRole role = 3;
   uint64 connected_at = 4;
   uint64 bytes_transferred = 5;
   double latency_ms = 6;
@@ -114,7 +107,7 @@ message ErrorResponse {
 // Wrapper for all messages sent over the persistent control bidi stream.
 message ControlMessage {
   oneof message {
-    wallhack.data.ExitNodeHello hello = 1;
+    wallhack.data.Handshake handshake = 1;
     wallhack.data.Ping ping = 2;
     wallhack.data.Pong pong = 3;
     ControlRequest control_request = 4;
