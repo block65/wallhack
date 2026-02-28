@@ -1,20 +1,18 @@
-name: Publish
+name: Build and Publish
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag to upload binaries to (e.g. cli-v0.1.0)"
+        description: "Release tag to upload binaries to (e.g. wallhack-cli-v0.3.0)"
         required: true
 
 concurrency:
-  group: publish-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+  group: publish-${{ github.event.inputs.tag_name }}
 
 jobs:
   build:
-    if: startsWith(github.event.release.tag_name, 'wallhack-cli-v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.event.inputs.tag_name, 'wallhack-cli-v')
     permissions:
       contents: write
     strategy:
@@ -62,6 +60,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag_name }}
 
       - name: Install Rust toolchain
         run: |
@@ -79,11 +79,21 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.variant }}-cargo-
 
-      - name: Install cross
+      - name: Cache cross binary
         if: matrix.cross
-        uses: taiki-e/install-action@v2
+        id: cache-cross
+        uses: actions/cache@v4
         with:
-          tool: cross
+          path: ~/.cargo/bin/cross
+          key: cross-v0.2.5-x86_64-unknown-linux-musl
+
+      - name: Install cross
+        if: matrix.cross && steps.cache-cross.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo cross-rs/cross --tag v0.2.5 --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
+          tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
@@ -100,8 +110,20 @@ jobs:
       - name: Upload binary
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG_NAME: ${{ github.event.inputs.tag_name }}
         run: |
           ARTIFACT="${{ matrix.artifact }}${{ matrix.suffix }}"
           cp "target/${{ matrix.target }}/release/wallhack" "$ARTIFACT"
           gh release upload --clobber "$TAG_NAME" "$ARTIFACT"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.inputs.tag_name }}
+        run: gh release edit "$TAG_NAME" --draft=false --repo "$GITHUB_REPOSITORY"

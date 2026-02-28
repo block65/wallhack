@@ -4,14 +4,88 @@ on:
   push:
     branches: ["main"]
 
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+env:
+  TAG_PREFIX: wallhack-cli-v
+  VERSION_FILE: crates/cli/Cargo.toml
+  CARGO_PACKAGE: wallhack-cli
+  SCRIPT: .github/scripts/prepare-release.py
+  SHELL_SCRIPT: .github/scripts/release.sh
+  BUILD_WORKFLOW: build-and-publish.yml
+
 jobs:
-  release-please:
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
-      - uses: googleapis/release-please-action@v4
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+      - uses: actions/checkout@v4
+
+      - name: Find latest tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash "$SHELL_SCRIPT" find-latest-tag
+
+      - name: Check if HEAD is already tagged
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          LATEST_TAG: ${{ steps.tag.outputs.latest }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bash "$SHELL_SCRIPT" check-tagged
+
+      - name: Fetch commit messages
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          LATEST_TAG: ${{ steps.tag.outputs.latest }}
+        run: bash "$SHELL_SCRIPT" fetch-commits
+
+      - name: Analyze commits
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          LATEST_TAG: ${{ steps.tag.outputs.latest }}
+        run: |
+          python3 "$SCRIPT" analyze \
+            --tag-prefix "$TAG_PREFIX" \
+            --version-file "$VERSION_FILE" \
+            --package "$CARGO_PACKAGE" \
+            --latest-tag "$LATEST_TAG" \
+            < /tmp/commit_messages.txt
+
+      - name: Emit outputs
+        if: steps.guard.outputs.skip == 'false'
+        id: prepare
+        run: python3 "$SCRIPT" emit-outputs >> "$GITHUB_OUTPUT"
+
+      # --- Path A: version already bumped → tag + draft release + dispatch build ---
+
+      - name: Create tag and draft release
+        if: steps.prepare.outputs.action == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bash "$SHELL_SCRIPT" create-release
+
+      # --- Path B: releasable commits → open/update release PR ---
+
+      - name: Install Rust toolchain
+        if: steps.prepare.outputs.action == 'bump'
+        run: rustup show
+
+      - name: Open or update release PR
+        if: steps.prepare.outputs.action == 'bump'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.prepare.outputs.new_version }}
+          PACKAGE: ${{ steps.prepare.outputs.package }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: bash "$SHELL_SCRIPT" open-pr
