@@ -101,9 +101,11 @@ message ShutdownRequest {}
 // ── Response messages ───────────────────────────────────────────────
 
 enum NodeRole {
-  NODE_ROLE_UNSPECIFIED = 0;
+  NODE_ROLE_UNSPECIFIED = 0;      // proto3 default; field was not set
   NODE_ROLE_ENTRY = 1;
   NODE_ROLE_EXIT = 2;
+  NODE_ROLE_RELAY = 3;
+  NODE_ROLE_INDETERMINATE = 4;    // role not yet resolved (distinct from unset)
 }
 
 enum PeerStatus {

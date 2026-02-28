@@ -16,6 +16,8 @@ impl fmt::Display for NodeRole {
         match self {
             Self::Entry => f.write_str("entry"),
             Self::Exit => f.write_str("exit"),
+            Self::Relay => f.write_str("relay"),
+            Self::Indeterminate => f.write_str("indeterminate"),
             Self::Unspecified => f.write_str("unknown"),
         }
     }

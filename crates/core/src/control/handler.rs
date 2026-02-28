@@ -556,6 +556,61 @@ mod tests {
     }
 
     #[test]
+    fn test_ping_indeterminate_role() {
+        let metrics = Arc::new(Metrics::default());
+        let peers = Arc::new(Registry::new());
+        let routes = RouteTable::shared();
+        let handler = Handler::new(
+            HandlerConfig::new(
+                NodeRole::Indeterminate,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            metrics,
+            peers,
+            routes,
+        );
+
+        let request = ControlRequest {
+            request: Some(control_request::Request::Ping(
+                wallhack_wire::control::PingRequest {},
+            )),
+        };
+        let response = handler.handle(request);
+
+        match response.response {
+            Some(control_response::Response::Ping(ping)) => {
+                assert_eq!(
+                    ping.node_role,
+                    i32::from(ProtoNodeRole::RoleIndeterminate),
+                    "indeterminate handler should report RoleIndeterminate"
+                );
+            }
+            _ => panic!("Expected ping response"),
+        }
+    }
+
+    #[test]
+    fn test_status_indeterminate_role() {
+        let metrics = Arc::new(Metrics::default());
+        let peers = Arc::new(Registry::new());
+        let routes = RouteTable::shared();
+        let handler = Handler::new(
+            HandlerConfig::new(
+                NodeRole::Indeterminate,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            metrics,
+            peers,
+            routes,
+        );
+
+        let status = crate::node_api::NodeApi::status(&handler);
+        assert_eq!(status.role, NodeRole::Indeterminate);
+    }
+
+    #[test]
     fn test_route_list() {
         let handler = test_handler();
 

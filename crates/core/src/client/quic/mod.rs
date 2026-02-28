@@ -208,8 +208,14 @@ impl Client for QuicClient {
             }
         });
 
-        // Data task 2: Outgoing data based on role
+        // Data task 2: Outgoing data based on role.
+        // Indeterminate nodes do not open data streams — the data plane is paused
+        // until the role is resolved.
         let outgoing_handle = match role {
+            NodeRole::Indeterminate => {
+                tracing::info!("Data plane paused: role is indeterminate");
+                tokio::spawn(std::future::ready(()))
+            }
             NodeRole::Entry | NodeRole::Relay => {
                 tracing::debug!("Opening stream to send instructions to peer");
                 let transport_out = Arc::clone(&transport);

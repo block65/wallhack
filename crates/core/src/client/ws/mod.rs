@@ -429,7 +429,13 @@ impl WsClient {
         // yamux driver and is not instantaneous; a fast echo (e.g. UDP loopback)
         // can produce a response before the subscription is established if we
         // subscribe inside the task.
+        // Indeterminate nodes do not open data streams — the data plane is paused
+        // until the role is resolved.
         let outgoing_handle = match role {
+            NodeRole::Indeterminate => {
+                tracing::info!("Data plane paused: role is indeterminate");
+                tokio::spawn(std::future::ready(()))
+            }
             NodeRole::Entry | NodeRole::Relay => {
                 tracing::debug!("Opening stream to send instructions to peer");
                 let transport_out = Arc::clone(&transport);
