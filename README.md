@@ -11,5 +11,4 @@
 
 Read the docs at **[wallhack.net](https://wallhack.net)**
 
-The repo was co-authored with generative AI. Read the (AI
-disclosure)[AI_DISCLOSURE.md]
+The repo was co-authored with generative AI. Read the [AI disclosure](AI_DISCLOSURE.md)
