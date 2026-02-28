@@ -11,7 +11,7 @@ use smoltcp::wire::IpVersion;
 use wallhack_transport::{BiStream, Transport};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
-use crate::transport::protocol::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited};
+use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESSION_INIT_MTU};
 
 /// Probe the exit node to check if a TCP target is reachable.
 ///
@@ -42,12 +42,12 @@ async fn probe_inner<T: Transport + 'static>(
         source_addr: String::new(), // Not needed for probe
         protocol: SessionProtocol::Tcp as i32,
     };
-    write_length_delimited(&mut stream, &init).await?;
+    stream.write_proto(&init).await?;
 
     // Signal we're done writing so the exit doesn't wait for more data.
     stream.finish().await?;
 
-    let status: SessionStatus = read_length_delimited(&mut stream, SESSION_INIT_MTU).await?;
+    let status: SessionStatus = stream.read_proto(SESSION_INIT_MTU).await?;
 
     Ok(status.status() == ResponseStatus::Success)
 }

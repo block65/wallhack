@@ -24,11 +24,12 @@ use wallhack_wire::{
 use yamux::Mode;
 
 use crate::{
-    NodeRole,
+    NodeRole, SocketAddrExt as _,
     control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
     psk::HandshakeExt,
     transport::{
         protocol,
+        protocol::{AsyncProtoRead as _, AsyncProtoWrite as _},
         websocket::{
             self as ws_upgrade, WebSocketByteStream, WebSocketTransport, WebSocketTransportConfig,
         },
@@ -178,7 +179,7 @@ impl Server for WebSocketServer {
         tracing::debug!("waiting for next WebSocket connection...");
 
         let (tcp_stream, raw_addr) = self.listener.accept().await?;
-        let peer_addr = crate::normalize_socket_addr(raw_addr);
+        let peer_addr = raw_addr.normalize();
         tracing::debug!("TCP connection from {peer_addr}");
 
         // Wrap in TLS and perform WebSocket upgrade.
@@ -218,10 +219,7 @@ impl Server for WebSocketServer {
         // Read the first message — must be a ControlMessage::Handshake (with timeout).
         let handshake_result = tokio::time::timeout(
             Duration::from_secs(10),
-            protocol::read_length_delimited::<ControlMessage, _>(
-                &mut control_stream,
-                protocol::CONTROL_MTU,
-            ),
+            control_stream.read_proto::<ControlMessage>(protocol::CONTROL_MTU),
         )
         .await;
 
@@ -261,7 +259,7 @@ impl Server for WebSocketServer {
             let msg = ControlMessage {
                 message: Some(control_message::Message::Handshake(handshake.clone())),
             };
-            if let Err(e) = protocol::write_length_delimited(&mut control_stream, &msg).await {
+            if let Err(e) = control_stream.write_proto(&msg).await {
                 tracing::warn!("Failed to send Handshake: {e}");
             } else {
                 tracing::debug!(
@@ -311,13 +309,9 @@ impl Server for WebSocketServer {
                 latency_tx: Some(latency_tx),
                 control_response_tx: None, // server doesn't issue ControlRequests
             };
-            let exit = protocol::run_control_loop(
-                &mut control_stream,
-                &mut channels,
-                Some(&handler),
-                Duration::from_secs(30),
-            )
-            .await;
+            let exit = channels
+                .run(&mut control_stream, Some(&handler), Duration::from_secs(30))
+                .await;
             tracing::debug!("Control stream finished: {exit:?}");
         });
 

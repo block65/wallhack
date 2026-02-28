@@ -122,19 +122,26 @@ impl fmt::Display for Cidr {
     }
 }
 
-/// Normalize an IPv4-mapped IPv6 socket address to plain IPv4.
-///
-/// Dual-stack sockets present IPv4 peers as `[::ffff:x.x.x.x]:port`.
-/// This converts them to `x.x.x.x:port` for cleaner display and consistent
-/// matching. Pure IPv6 addresses are returned unchanged.
-#[must_use]
-pub fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
-    if let SocketAddr::V6(v6) = addr
-        && let Some(ipv4) = v6.ip().to_ipv4_mapped()
-    {
-        return SocketAddr::new(IpAddr::V4(ipv4), v6.port());
+/// Extension trait for normalizing IPv4-mapped IPv6 socket addresses.
+pub trait SocketAddrExt {
+    /// Normalize an IPv4-mapped IPv6 address to plain IPv4.
+    ///
+    /// Dual-stack sockets present IPv4 peers as `[::ffff:x.x.x.x]:port`.
+    /// This converts them to `x.x.x.x:port` for cleaner display and consistent
+    /// matching. Pure IPv6 addresses are returned unchanged.
+    #[must_use]
+    fn normalize(self) -> SocketAddr;
+}
+
+impl SocketAddrExt for SocketAddr {
+    fn normalize(self) -> SocketAddr {
+        if let SocketAddr::V6(v6) = self
+            && let Some(ipv4) = v6.ip().to_ipv4_mapped()
+        {
+            return SocketAddr::new(IpAddr::V4(ipv4), v6.port());
+        }
+        self
     }
-    addr
 }
 
 #[cfg(test)]
@@ -205,7 +212,7 @@ mod tests {
             0,
             0,
         ));
-        let normalized = normalize_socket_addr(mapped);
+        let normalized = mapped.normalize();
         assert_eq!(normalized.to_string(), "127.0.0.1:6565");
 
         // Pure IPv6 unchanged
@@ -215,11 +222,11 @@ mod tests {
             0,
             0,
         ));
-        assert_eq!(normalize_socket_addr(v6), v6);
+        assert_eq!(v6.normalize(), v6);
 
         // Plain IPv4 unchanged
         let v4: SocketAddr = "10.0.0.1:1234".parse().unwrap();
-        assert_eq!(normalize_socket_addr(v4), v4);
+        assert_eq!(v4.normalize(), v4);
     }
 
     #[test]

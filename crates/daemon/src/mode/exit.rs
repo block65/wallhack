@@ -16,7 +16,7 @@ use wallhack_core::{
     server::server::Server,
     transport::{
         BiStream, Transport,
-        protocol::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited},
+        protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESSION_INIT_MTU},
     },
 };
 
@@ -555,10 +555,10 @@ where
 }
 
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
-    let init =
-        read_length_delimited::<wallhack_wire::data::SessionInit, _>(stream, SESSION_INIT_MTU)
-            .await
-            .map_err(|e| NodeError::Stream(Box::new(e)))?;
+    let init: wallhack_wire::data::SessionInit = stream
+        .read_proto(SESSION_INIT_MTU)
+        .await
+        .map_err(|e| NodeError::Stream(Box::new(e)))?;
     tracing::trace!(target = %init.target_addr, source = %init.source_addr, protocol = init.protocol, "SessionInit received");
     let target: std::net::SocketAddr = init.target_addr.parse()?;
     let source: Option<std::net::SocketAddr> = if init.source_addr.is_empty() {
@@ -574,7 +574,8 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
                         status: wallhack_wire::data::ResponseStatus::Success.into(),
                         reason: String::new(),
                     };
-                    write_length_delimited(&mut *stream, &status)
+                    stream
+                        .write_proto(&status)
                         .await
                         .map_err(|e| NodeError::Stream(Box::new(e)))?;
                     let _ = tokio::io::copy_bidirectional(&mut *stream, &mut socket).await?;
@@ -590,7 +591,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
                         status: status_code.into(),
                         reason: e.to_string(),
                     };
-                    let _ = write_length_delimited(&mut *stream, &status).await;
+                    let _ = stream.write_proto(&status).await;
                     return Err(
                         std::io::Error::new(e.kind(), format!("connect to {target}: {e}")).into(),
                     );

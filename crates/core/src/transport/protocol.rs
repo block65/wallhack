@@ -26,19 +26,51 @@ const TUNNEL_MTU: usize = 2000;
 /// Maximum size for control messages (4KB).
 pub const CONTROL_MTU: usize = 4096;
 
-/// Read a length-delimited protobuf from the stream.
-///
-/// # Errors
-///
-/// Returns an error if the stream closes unexpectedly or decoding fails.
-pub async fn read_length_delimited<M: Message + Default, S: tokio::io::AsyncRead + Unpin>(
-    stream: &mut S,
-    max_len: usize,
-) -> Result<M, TransportError> {
-    read_length_delimited_buf(stream, max_len, &mut Vec::new()).await
+/// Extension trait for reading length-delimited protobuf messages.
+pub trait AsyncProtoRead {
+    /// Read a length-delimited protobuf message from this stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stream closes unexpectedly or decoding fails.
+    fn read_proto<M: Message + Default>(
+        &mut self,
+        max_len: usize,
+    ) -> impl std::future::Future<Output = Result<M, TransportError>> + Send;
 }
 
-/// Read a length-delimited protobuf from the stream, reusing the provided buffer.
+impl<S: tokio::io::AsyncRead + Unpin + Send> AsyncProtoRead for S {
+    async fn read_proto<M: Message + Default>(
+        &mut self,
+        max_len: usize,
+    ) -> Result<M, TransportError> {
+        read_length_delimited_buf(self, max_len, &mut Vec::new()).await
+    }
+}
+
+/// Extension trait for writing length-delimited protobuf messages.
+pub trait AsyncProtoWrite {
+    /// Write a length-delimited protobuf message to this stream.
+    ///
+    /// The `Sync` bound on `M` ensures that the returned future is `Send`
+    /// (references to `M` cross an `.await` point).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encoding or writing fails.
+    fn write_proto<M: Message + Sync>(
+        &mut self,
+        msg: &M,
+    ) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin + Send> AsyncProtoWrite for S {
+    async fn write_proto<M: Message + Sync>(&mut self, msg: &M) -> Result<(), TransportError> {
+        write_length_delimited_buf(self, msg, &mut Vec::new()).await
+    }
+}
+
+/// Read a length-delimited protobuf from a read stream, reusing the provided buffer.
 pub async fn read_length_delimited_buf<M: Message + Default, S: tokio::io::AsyncRead + Unpin>(
     stream: &mut S,
     max_len: usize,
@@ -783,7 +815,8 @@ mod tests {
             .unwrap();
 
         // The control loop auto-replies Pong. Read it from stream A.
-        let pong: ControlMessage = read_length_delimited(&mut stream_a, CONTROL_MTU)
+        let pong: ControlMessage = stream_a
+            .read_proto::<ControlMessage>(CONTROL_MTU)
             .await
             .unwrap();
         match pong.message {
@@ -855,7 +888,7 @@ mod tests {
         // Read the Ping from stream A.
         let msg: ControlMessage = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            read_length_delimited(&mut stream_a, CONTROL_MTU),
+            stream_a.read_proto::<ControlMessage>(CONTROL_MTU),
         )
         .await
         .expect("timed out")
