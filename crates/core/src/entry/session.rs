@@ -5,7 +5,7 @@ use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream, Transport, TransportError};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
-use crate::transport::protocol::{read_length_delimited, write_length_delimited};
+use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -38,13 +38,14 @@ where
         source_addr: source.to_string(),
         protocol: SessionProtocol::Tcp as i32,
     };
-    write_length_delimited(&mut remote, &init).await?;
+    remote.write_proto(&init).await?;
 
     // Wait for exit node to confirm the connection succeeded before copying data.
     // Without this, smoltcp has already SYN-ACKed the client but we don't know
     // if the real target is reachable. On failure, dropping `local` sends RST.
-    let status: SessionStatus =
-        read_length_delimited(&mut remote, crate::transport::protocol::SESSION_INIT_MTU).await?;
+    let status: SessionStatus = remote
+        .read_proto(crate::transport::protocol::SESSION_INIT_MTU)
+        .await?;
     if status.status() != ResponseStatus::Success {
         tracing::debug!(?target, status = ?status.status(), reason = %status.reason, "exit rejected connection");
         return Err(
@@ -85,12 +86,10 @@ mod tests {
             status: ResponseStatus::Success.into(),
             reason: String::new(),
         };
-        write_length_delimited(&mut writer, &status).await.unwrap();
+        writer.write_proto(&status).await.unwrap();
         drop(writer);
 
-        let read_status: SessionStatus = read_length_delimited(&mut reader, SESSION_INIT_MTU)
-            .await
-            .unwrap();
+        let read_status: SessionStatus = reader.read_proto(SESSION_INIT_MTU).await.unwrap();
         assert_eq!(read_status.status(), ResponseStatus::Success);
     }
 
@@ -103,12 +102,10 @@ mod tests {
             status: ResponseStatus::ConnectionRefused.into(),
             reason: "Connection refused".to_string(),
         };
-        write_length_delimited(&mut writer, &status).await.unwrap();
+        writer.write_proto(&status).await.unwrap();
         drop(writer);
 
-        let read_status: SessionStatus = read_length_delimited(&mut reader, SESSION_INIT_MTU)
-            .await
-            .unwrap();
+        let read_status: SessionStatus = reader.read_proto(SESSION_INIT_MTU).await.unwrap();
         assert_eq!(read_status.status(), ResponseStatus::ConnectionRefused);
         assert_eq!(read_status.reason, "Connection refused");
     }

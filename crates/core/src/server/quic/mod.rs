@@ -8,11 +8,15 @@ use wallhack_wire::{
 };
 
 use crate::{
-    NodeRole,
+    NodeRole, SocketAddrExt as _,
     control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
     psk::HandshakeExt,
     server::tls::{ALPN_QUIC_HTTP, configure_crypto},
-    transport::{protocol, quic::QuicTransport},
+    transport::{
+        protocol,
+        protocol::{AsyncProtoRead as _, AsyncProtoWrite as _},
+        quic::QuicTransport,
+    },
 };
 
 use super::{
@@ -112,7 +116,7 @@ impl Server for QuicServer {
         };
 
         let connection = incoming.await?;
-        let remote_addr = crate::normalize_socket_addr(connection.remote_address()).to_string();
+        let remote_addr = connection.remote_address().normalize().to_string();
 
         // Wrap connection in transport abstraction
         let transport = Arc::new(QuicTransport::new(connection));
@@ -130,10 +134,7 @@ impl Server for QuicServer {
         // Read the first message — must be a ControlMessage::Handshake (with timeout).
         let handshake_result = tokio::time::timeout(
             Duration::from_secs(10),
-            protocol::read_length_delimited::<ControlMessage, _>(
-                &mut control_stream,
-                protocol::CONTROL_MTU,
-            ),
+            control_stream.read_proto::<ControlMessage>(protocol::CONTROL_MTU),
         )
         .await;
 
@@ -177,7 +178,7 @@ impl Server for QuicServer {
             let msg = ControlMessage {
                 message: Some(control_message::Message::Handshake(handshake.clone())),
             };
-            if let Err(e) = protocol::write_length_delimited(&mut control_stream, &msg).await {
+            if let Err(e) = control_stream.write_proto(&msg).await {
                 tracing::warn!("Failed to send Handshake: {e}");
             } else {
                 tracing::debug!(

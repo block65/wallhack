@@ -25,7 +25,7 @@ use wallhack_wire::management::{
 use crate::{
     control::peers::PeerEvent,
     node_api::{NodeApi, NodeApiError},
-    transport::protocol::{CONTROL_MTU, read_length_delimited, write_length_delimited},
+    transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, CONTROL_MTU},
 };
 
 /// Default socket filename within the runtime directory.
@@ -128,7 +128,7 @@ pub async fn handle_connection(
     // Writer task: drains the channel and writes frames.
     let writer_task = tokio::spawn(async move {
         while let Some(msg) = write_rx.recv().await {
-            if let Err(e) = write_length_delimited(&mut writer, &msg).await {
+            if let Err(e) = writer.write_proto(&msg).await {
                 tracing::trace!(error = %e, "IPC write ended");
                 break;
             }
@@ -142,7 +142,7 @@ pub async fn handle_connection(
             loop {
                 match rx.recv().await {
                     Ok(event) => {
-                        let notification = peer_event_to_proto(event);
+                        let notification = DaemonNotification::from(event);
                         let msg = DaemonMessage {
                             message: Some(daemon_message::Message::Notification(notification)),
                         };
@@ -177,8 +177,7 @@ pub async fn handle_connection(
 
     // Request loop: read requests, dispatch, send responses.
     let result = loop {
-        let request: ManagementRequest = match read_length_delimited(&mut reader, CONTROL_MTU).await
-        {
+        let request: ManagementRequest = match reader.read_proto(CONTROL_MTU).await {
             Ok(req) => req,
             Err(e) => {
                 tracing::trace!(error = %e, "IPC read ended");
@@ -219,7 +218,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 management_response::Response::Ping(PingResponse {
                     uptime_ms: status.uptime_ms,
                     version: status.version,
-                    node_role: node_role_to_proto(status.role).into(),
+                    node_role: management::NodeRole::from(status.role).into(),
                 })
             } else {
                 // Peer pinging is not yet implemented
@@ -236,7 +235,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         Some(management_request::Request::Status(_)) => {
             let s = api.status();
             management_response::Response::Status(StatusResponse {
-                role: node_role_to_proto(s.role).into(),
+                role: management::NodeRole::from(s.role).into(),
                 connected: s.connected,
                 peer_addr: s.peer_addr.unwrap_or_default(),
                 listen_addr: s.listen_addr.map_or_else(String::new, |a| a.to_string()),
@@ -265,13 +264,16 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         Some(management_request::Request::Peers(_)) => {
             let peers = api.peers();
             management_response::Response::Peers(PeersResponse {
-                peers: peers.into_iter().map(peer_to_proto).collect(),
+                peers: peers.into_iter().map(management::PeerInfo::from).collect(),
             })
         }
 
         Some(management_request::Request::Routes(_)) => match api.routes() {
             Ok(routes) => management_response::Response::Routes(RoutesResponse {
-                routes: routes.into_iter().map(route_to_proto).collect(),
+                routes: routes
+                    .into_iter()
+                    .map(management::RouteEntry::from)
+                    .collect(),
             }),
             Err(e) => error_response(&e),
         },
@@ -354,28 +356,30 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
 // ── Conversion helpers ──────────────────────────────────────────────
 
-fn peer_event_to_proto(event: PeerEvent) -> DaemonNotification {
-    let event = match event {
-        PeerEvent::Connected {
-            name,
-            addr,
-            role: _,
-        } => daemon_notification::Event::PeerConnected(PeerConnected {
-            peer: Some(management::PeerInfo {
+impl From<PeerEvent> for DaemonNotification {
+    fn from(event: PeerEvent) -> Self {
+        let event = match event {
+            PeerEvent::Connected {
                 name,
                 addr,
-                status: management::PeerStatus::Connected.into(),
-                ..Default::default()
+                role: _,
+            } => daemon_notification::Event::PeerConnected(PeerConnected {
+                peer: Some(management::PeerInfo {
+                    name,
+                    addr,
+                    status: management::PeerStatus::Connected.into(),
+                    ..Default::default()
+                }),
             }),
-        }),
-        PeerEvent::Disconnected { name } => {
-            daemon_notification::Event::PeerDisconnected(PeerDisconnected {
-                name,
-                reason: String::new(),
-            })
-        }
-    };
-    DaemonNotification { event: Some(event) }
+            PeerEvent::Disconnected { name } => {
+                daemon_notification::Event::PeerDisconnected(PeerDisconnected {
+                    name,
+                    reason: String::new(),
+                })
+            }
+        };
+        DaemonNotification { event: Some(event) }
+    }
 }
 
 fn error_response(e: &NodeApiError) -> management_response::Response {
@@ -413,39 +417,54 @@ fn error_response(e: &NodeApiError) -> management_response::Response {
     })
 }
 
-fn node_role_to_proto(role: crate::NodeRole) -> management::NodeRole {
-    match role {
-        crate::NodeRole::Entry => management::NodeRole::Entry,
-        crate::NodeRole::Exit | crate::NodeRole::Relay => management::NodeRole::Exit,
+/// Maps domain `NodeRole` to management proto `NodeRole`.
+///
+/// The management API has no Relay variant — relays appear as Exit to IPC
+/// clients.
+impl From<crate::NodeRole> for management::NodeRole {
+    fn from(role: crate::NodeRole) -> Self {
+        match role {
+            crate::NodeRole::Entry => management::NodeRole::Entry,
+            crate::NodeRole::Exit | crate::NodeRole::Relay => management::NodeRole::Exit,
+        }
     }
 }
 
-fn peer_to_proto(p: crate::node_api::PeerInfo) -> management::PeerInfo {
-    management::PeerInfo {
-        name: p.name,
-        addr: p.addr,
-        status: match p.status {
+impl From<crate::node_api::PeerStatus> for management::PeerStatus {
+    fn from(status: crate::node_api::PeerStatus) -> Self {
+        match status {
             crate::node_api::PeerStatus::Connected => management::PeerStatus::Connected,
             crate::node_api::PeerStatus::Disconnected => management::PeerStatus::Disconnected,
         }
-        .into(),
-        connected_at_secs: p.connected_at_secs,
-        bytes_transferred: p.bytes_transferred,
-        latency_ms: p.latency_ms.unwrap_or(0.0),
-        tun_capable: p.capabilities.tun_capable,
-        listening: p.capabilities.listening,
-        connecting: p.capabilities.connecting,
     }
 }
 
-fn route_to_proto(r: crate::node_api::RouteEntry) -> management::RouteEntry {
-    let elapsed = r.added_at.elapsed();
-    let added_at_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |now| now.as_secs().saturating_sub(elapsed.as_secs()));
-    management::RouteEntry {
-        cidr: r.cidr.to_string(),
-        peer: r.peer,
-        added_at_secs,
+impl From<crate::node_api::PeerInfo> for management::PeerInfo {
+    fn from(p: crate::node_api::PeerInfo) -> Self {
+        management::PeerInfo {
+            name: p.name,
+            addr: p.addr,
+            status: management::PeerStatus::from(p.status).into(),
+            connected_at_secs: p.connected_at_secs,
+            bytes_transferred: p.bytes_transferred,
+            latency_ms: p.latency_ms.unwrap_or(0.0),
+            tun_capable: p.capabilities.tun_capable,
+            listening: p.capabilities.listening,
+            connecting: p.capabilities.connecting,
+        }
+    }
+}
+
+impl From<crate::node_api::RouteEntry> for management::RouteEntry {
+    fn from(r: crate::node_api::RouteEntry) -> Self {
+        let elapsed = r.added_at.elapsed();
+        let added_at_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |now| now.as_secs().saturating_sub(elapsed.as_secs()));
+        management::RouteEntry {
+            cidr: r.cidr.to_string(),
+            peer: r.peer,
+            added_at_secs,
+        }
     }
 }
