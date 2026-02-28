@@ -1,12 +1,15 @@
-/// Helper function to convert Vec<u8> to a fixed-size array [u8; N]
-/// Creates a zeroed array of size N and copies bytes from the vector into it.
-/// If the vector is larger than N, the extra bytes are truncated.
-/// If the vector is smaller than N, the remaining bytes in the array stay zero.
-pub fn vec_to_sized_array<const N: usize>(vec: &[u8]) -> [u8; N] {
-    let mut arr = [0u8; N]; // Create a zeroed array
-    let len_to_copy = std::cmp::min(vec.len(), N); // Determine the number of bytes to copy
-    arr[..len_to_copy].copy_from_slice(&vec[..len_to_copy]); // Copy bytes from the vector
-    arr // Return the array
+/// Helper function to convert Vec<u8> to a fixed-size array [u8; N].
+/// Returns `Err(ConversionError::InvalidLength)` if `vec.len() != N`.
+pub fn vec_to_sized_array<const N: usize>(vec: &[u8]) -> Result<[u8; N], ConversionError> {
+    if vec.len() != N {
+        return Err(ConversionError::InvalidLength {
+            expected: N,
+            got: vec.len(),
+        });
+    }
+    let mut arr = [0u8; N];
+    arr.copy_from_slice(vec);
+    Ok(arr)
 }
 
 // Define a custom error type for TryFrom conversions using thiserror
@@ -28,4 +31,31 @@ pub enum ConversionError {
     MissingAddrInSocketV6Pair,
     #[error("Invalid socket address pair")]
     InvalidSocketAddrPair,
+    #[error("Invalid length: expected {expected}, got {got}")]
+    InvalidLength { expected: usize, got: usize },
+    #[error("Invalid port: value out of u16 range")]
+    InvalidPort,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vec_to_sized_array_wrong_length() {
+        let result = vec_to_sized_array::<4>(&[1, 2, 3, 4, 5]);
+        assert!(matches!(
+            result,
+            Err(ConversionError::InvalidLength {
+                expected: 4,
+                got: 5
+            })
+        ));
+    }
+
+    #[test]
+    fn vec_to_sized_array_correct_length() {
+        let result = vec_to_sized_array::<4>(&[1, 2, 3, 4]);
+        assert_eq!(result.unwrap(), [1, 2, 3, 4]);
+    }
 }
