@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use wallhack_wire::control::NodeRole as ProtoNodeRole;
+use wallhack_wire::data::NodeRole as ProtoNodeRole;
 
 /// Node role for configuration and identification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +38,7 @@ impl TryFrom<ProtoNodeRole> for NodeRole {
             ProtoNodeRole::RoleEntry => Ok(NodeRole::Entry),
             ProtoNodeRole::RoleRelay => Ok(NodeRole::Relay),
             ProtoNodeRole::RoleExit => Ok(NodeRole::Exit),
-            ProtoNodeRole::RoleUnknown => Err(NodeRoleError::Unset),
+            ProtoNodeRole::RoleIndeterminate => Err(NodeRoleError::Unset),
         }
     }
 }
