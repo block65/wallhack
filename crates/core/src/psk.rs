@@ -4,8 +4,6 @@
 //! knowledge without transmitting the key. The proof is bound to the TLS
 //! session via `export_keying_material()` (RFC 9266, `tls-exporter`).
 
-use prost::Message;
-
 use crate::hmac;
 
 /// TLS exporter label for channel binding (RFC 9266, `tls-exporter`).
@@ -48,17 +46,6 @@ pub fn channel_binding_rustls_server(
     Some(output)
 }
 
-/// Serialize handshake fields into canonical bytes for HMAC input.
-///
-/// Uses protobuf's deterministic encoding. The `psk_proof` field is zeroed
-/// before encoding — it's the output of the proof, not an input.
-#[must_use]
-pub fn serialize_handshake_fields(handshake: &wallhack_wire::data::Handshake) -> Vec<u8> {
-    let mut canonical = handshake.clone();
-    canonical.psk_proof = Vec::new();
-    canonical.encode_to_vec()
-}
-
 /// Compute a PSK proof over a handshake and channel binding.
 ///
 /// Returns the HMAC-SHA256 proof bytes. The caller sets this as
@@ -69,7 +56,7 @@ pub fn compute_proof(
     channel_binding: &[u8; CHANNEL_BINDING_LEN],
     handshake: &wallhack_wire::data::Handshake,
 ) -> Vec<u8> {
-    let message = serialize_handshake_fields(handshake);
+    let message = handshake.serialize_for_proof();
     hmac::compute(psk, channel_binding, &message)
 }
 
@@ -82,7 +69,7 @@ pub fn verify_proof(
     channel_binding: &[u8; CHANNEL_BINDING_LEN],
     handshake: &wallhack_wire::data::Handshake,
 ) -> bool {
-    let message = serialize_handshake_fields(handshake);
+    let message = handshake.serialize_for_proof();
     hmac::verify(psk, channel_binding, &message, &handshake.psk_proof)
 }
 
@@ -153,44 +140,44 @@ mod tests {
     fn serialization_is_deterministic() {
         let handshake = test_handshake();
         assert_eq!(
-            serialize_handshake_fields(&handshake),
-            serialize_handshake_fields(&handshake),
+            handshake.serialize_for_proof(),
+            handshake.serialize_for_proof(),
         );
     }
 
     #[test]
     fn serialization_includes_all_fields() {
         let mut handshake = test_handshake();
-        let base = serialize_handshake_fields(&handshake);
+        let base = handshake.serialize_for_proof();
 
         handshake.capabilities.as_mut().unwrap().tun_capable = false;
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
         handshake.capabilities.as_mut().unwrap().tun_capable = true;
 
         handshake.capabilities.as_mut().unwrap().listening = false;
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
         handshake.capabilities.as_mut().unwrap().listening = true;
 
         handshake.capabilities.as_mut().unwrap().connecting = true;
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
         handshake.capabilities.as_mut().unwrap().connecting = false;
 
         handshake.name = "changed".to_string();
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
         handshake.name = "test-node".to_string();
 
         handshake.version = "0.2.0".to_string();
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
         handshake.version = "0.1.0".to_string();
 
         handshake.routes = Vec::new();
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
         handshake.routes = vec!["10.0.0.0/8".to_string()];
 
         handshake.hint = Some(wallhack_wire::data::RoleHint {
             level: 1,
             target: 1,
         });
-        assert_ne!(serialize_handshake_fields(&handshake), base);
+        assert_ne!(handshake.serialize_for_proof(), base);
     }
 }
