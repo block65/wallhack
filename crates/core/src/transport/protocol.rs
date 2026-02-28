@@ -883,4 +883,218 @@ mod tests {
         drop(stream_a);
         let _ = b_handle.await;
     }
+
+    /// Control plane continues normally when handler role is Indeterminate.
+    ///
+    /// Sends a Ping to the server-side control loop, which has a Handler
+    /// configured with `NodeRole::Indeterminate`, and verifies the auto-reply
+    /// Pong arrives — proving the control loop keeps running.
+    #[tokio::test]
+    async fn test_control_plane_indeterminate() {
+        use crate::{
+            NodeRole,
+            control::{
+                handler::{Handler, HandlerConfig},
+                metrics::Metrics,
+                peers::Registry,
+                routes::RouteTable,
+            },
+        };
+
+        let (mut client_stream, mut server_stream) = bidi_pair();
+
+        let handler = Handler::new(
+            HandlerConfig::new(
+                NodeRole::Indeterminate,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            std::sync::Arc::new(Metrics::default()),
+            std::sync::Arc::new(Registry::new()),
+            RouteTable::shared(),
+        );
+
+        let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+        let mut channels = ControlChannels {
+            outgoing_rx: ctrl_rx,
+            handshake_tx: None,
+            latency_tx: None,
+            control_response_tx: None,
+        };
+
+        let server_handle = tokio::spawn(async move {
+            channels
+                .run(
+                    &mut server_stream,
+                    Some(&handler),
+                    std::time::Duration::from_mins(10),
+                )
+                .await
+        });
+
+        // Send Ping, expect Pong back.
+        let outgoing = ControlMessage {
+            message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
+                timestamp_ms: 42,
+            })),
+        };
+        let mut buf = Vec::new();
+        write_length_delimited_buf(&mut client_stream, &outgoing, &mut buf)
+            .await
+            .unwrap();
+
+        let reply: ControlMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client_stream.read_proto::<ControlMessage>(CONTROL_MTU),
+        )
+        .await
+        .expect("timed out")
+        .expect("read error");
+
+        match reply.message {
+            Some(control_message::Message::Pong(p)) => {
+                assert_eq!(p.timestamp_ms, 42);
+            }
+            other => panic!("expected Pong, got: {other:?}"),
+        }
+
+        drop(client_stream);
+        let _ = server_handle.await;
+    }
+
+    /// Data plane is paused for `NodeRole::Indeterminate`: the outgoing data
+    /// task completes immediately without opening a uni stream, so no data
+    /// is sent even though the broadcast channel has messages.
+    #[tokio::test]
+    async fn test_data_plane_paused_indeterminate() {
+        use crate::NodeRole;
+
+        let (transport_a, transport_b) = MockTransport::pair();
+        let (responses_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
+        let (instructions_tx, _) = broadcast::channel::<EntryNodeInstruction>(16);
+
+        // Simulate the Indeterminate arm from client/quic and client/ws:
+        // spawns a no-op future instead of opening a data stream.
+        let role = NodeRole::Indeterminate;
+        let outgoing_handle = match role {
+            NodeRole::Indeterminate => tokio::spawn(std::future::ready(())),
+            NodeRole::Entry | NodeRole::Relay => {
+                let rx = instructions_tx.subscribe();
+                tokio::spawn(async move {
+                    match transport_a.open_uni().await {
+                        Ok(mut send) => {
+                            let _ = run_send_instructions(&mut send, rx).await;
+                        }
+                        Err(e) => panic!("open_uni failed: {e}"),
+                    }
+                })
+            }
+            NodeRole::Exit => {
+                let rx = responses_tx.subscribe();
+                tokio::spawn(async move {
+                    match transport_a.open_uni().await {
+                        Ok(mut send) => {
+                            let _ = run_send_responses(&mut send, rx).await;
+                        }
+                        Err(e) => panic!("open_uni failed: {e}"),
+                    }
+                })
+            }
+        };
+
+        // The outgoing task should complete immediately.
+        tokio::time::timeout(std::time::Duration::from_secs(1), outgoing_handle)
+            .await
+            .expect("outgoing task should complete immediately for Indeterminate")
+            .expect("task panicked");
+
+        // No uni stream should have been opened on the other side.
+        let accept_result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            transport_b.accept_uni(),
+        )
+        .await;
+        assert!(
+            accept_result.is_err(),
+            "no data stream should be opened in Indeterminate mode"
+        );
+    }
+
+    /// Transport connection survives with an Indeterminate handler: multiple
+    /// sequential ping/pong exchanges succeed, proving the connection stays
+    /// open and the control loop remains responsive.
+    #[tokio::test]
+    async fn test_transport_survives_indeterminate() {
+        use crate::{
+            NodeRole,
+            control::{
+                handler::{Handler, HandlerConfig},
+                metrics::Metrics,
+                peers::Registry,
+                routes::RouteTable,
+            },
+        };
+
+        let (mut client_stream, mut server_stream) = bidi_pair();
+
+        let handler = Handler::new(
+            HandlerConfig::new(
+                NodeRole::Indeterminate,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            std::sync::Arc::new(Metrics::default()),
+            std::sync::Arc::new(Registry::new()),
+            RouteTable::shared(),
+        );
+
+        let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+        let mut channels = ControlChannels {
+            outgoing_rx: ctrl_rx,
+            handshake_tx: None,
+            latency_tx: None,
+            control_response_tx: None,
+        };
+
+        let server_handle = tokio::spawn(async move {
+            channels
+                .run(
+                    &mut server_stream,
+                    Some(&handler),
+                    std::time::Duration::from_mins(10),
+                )
+                .await
+        });
+
+        // Send multiple pings over the same connection to prove it stays open.
+        let mut buf = Vec::new();
+        for seq in 0..5_u64 {
+            let outgoing = ControlMessage {
+                message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
+                    timestamp_ms: seq,
+                })),
+            };
+            write_length_delimited_buf(&mut client_stream, &outgoing, &mut buf)
+                .await
+                .unwrap();
+
+            let reply: ControlMessage = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                client_stream.read_proto::<ControlMessage>(CONTROL_MTU),
+            )
+            .await
+            .expect("timed out — connection did not survive")
+            .expect("read error");
+
+            match reply.message {
+                Some(control_message::Message::Pong(p)) => {
+                    assert_eq!(p.timestamp_ms, seq);
+                }
+                other => panic!("expected Pong #{seq}, got: {other:?}"),
+            }
+        }
+
+        drop(client_stream);
+        let _ = server_handle.await;
+    }
 }

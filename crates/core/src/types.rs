@@ -9,6 +9,7 @@ use wallhack_wire::data::NodeRole as ProtoNodeRole;
 /// Node role for configuration and identification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRole {
+    Indeterminate,
     Entry,
     Relay,
     Exit,
@@ -17,6 +18,7 @@ pub enum NodeRole {
 impl From<NodeRole> for ProtoNodeRole {
     fn from(role: NodeRole) -> Self {
         match role {
+            NodeRole::Indeterminate => ProtoNodeRole::RoleIndeterminate,
             NodeRole::Entry => ProtoNodeRole::RoleEntry,
             NodeRole::Relay => ProtoNodeRole::RoleRelay,
             NodeRole::Exit => ProtoNodeRole::RoleExit,
@@ -24,21 +26,13 @@ impl From<NodeRole> for ProtoNodeRole {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum NodeRoleError {
-    #[error("node role is unset")]
-    Unset,
-}
-
-impl TryFrom<ProtoNodeRole> for NodeRole {
-    type Error = NodeRoleError;
-
-    fn try_from(role: ProtoNodeRole) -> Result<Self, Self::Error> {
+impl From<ProtoNodeRole> for NodeRole {
+    fn from(role: ProtoNodeRole) -> Self {
         match role {
-            ProtoNodeRole::RoleEntry => Ok(NodeRole::Entry),
-            ProtoNodeRole::RoleRelay => Ok(NodeRole::Relay),
-            ProtoNodeRole::RoleExit => Ok(NodeRole::Exit),
-            ProtoNodeRole::RoleIndeterminate => Err(NodeRoleError::Unset),
+            ProtoNodeRole::RoleIndeterminate => NodeRole::Indeterminate,
+            ProtoNodeRole::RoleEntry => NodeRole::Entry,
+            ProtoNodeRole::RoleRelay => NodeRole::Relay,
+            ProtoNodeRole::RoleExit => NodeRole::Exit,
         }
     }
 }
@@ -46,6 +40,7 @@ impl TryFrom<ProtoNodeRole> for NodeRole {
 impl fmt::Display for NodeRole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            NodeRole::Indeterminate => write!(f, "indeterminate"),
             NodeRole::Entry => write!(f, "entry"),
             NodeRole::Relay => write!(f, "relay"),
             NodeRole::Exit => write!(f, "exit"),
@@ -227,6 +222,28 @@ mod tests {
         // Plain IPv4 unchanged
         let v4: SocketAddr = "10.0.0.1:1234".parse().unwrap();
         assert_eq!(v4.normalize(), v4);
+    }
+
+    #[test]
+    fn node_role_data_proto_round_trip() {
+        let roles = [
+            (NodeRole::Indeterminate, ProtoNodeRole::RoleIndeterminate),
+            (NodeRole::Entry, ProtoNodeRole::RoleEntry),
+            (NodeRole::Relay, ProtoNodeRole::RoleRelay),
+            (NodeRole::Exit, ProtoNodeRole::RoleExit),
+        ];
+        for (domain, proto) in roles {
+            assert_eq!(ProtoNodeRole::from(domain), proto);
+            assert_eq!(NodeRole::from(proto), domain);
+        }
+    }
+
+    #[test]
+    fn node_role_display() {
+        assert_eq!(NodeRole::Indeterminate.to_string(), "indeterminate");
+        assert_eq!(NodeRole::Entry.to_string(), "entry");
+        assert_eq!(NodeRole::Relay.to_string(), "relay");
+        assert_eq!(NodeRole::Exit.to_string(), "exit");
     }
 
     #[test]

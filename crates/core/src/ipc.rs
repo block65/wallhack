@@ -418,14 +418,13 @@ fn error_response(e: &NodeApiError) -> management_response::Response {
 }
 
 /// Maps domain `NodeRole` to management proto `NodeRole`.
-///
-/// The management API has no Relay variant — relays appear as Exit to IPC
-/// clients.
 impl From<crate::NodeRole> for management::NodeRole {
     fn from(role: crate::NodeRole) -> Self {
         match role {
+            crate::NodeRole::Indeterminate => management::NodeRole::Indeterminate,
             crate::NodeRole::Entry => management::NodeRole::Entry,
-            crate::NodeRole::Exit | crate::NodeRole::Relay => management::NodeRole::Exit,
+            crate::NodeRole::Relay => management::NodeRole::Relay,
+            crate::NodeRole::Exit => management::NodeRole::Exit,
         }
     }
 }
@@ -465,6 +464,28 @@ impl From<crate::node_api::RouteEntry> for management::RouteEntry {
             cidr: r.cidr.to_string(),
             peer: r.peer,
             added_at_secs,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_role_management_proto_round_trip() {
+        let cases = [
+            (
+                crate::NodeRole::Indeterminate,
+                management::NodeRole::Indeterminate,
+            ),
+            (crate::NodeRole::Entry, management::NodeRole::Entry),
+            (crate::NodeRole::Relay, management::NodeRole::Relay),
+            (crate::NodeRole::Exit, management::NodeRole::Exit),
+        ];
+        for (domain, expected_proto) in cases {
+            let proto = management::NodeRole::from(domain);
+            assert_eq!(proto, expected_proto, "domain {domain} -> proto mismatch");
         }
     }
 }
