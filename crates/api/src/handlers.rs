@@ -115,9 +115,10 @@ pub async fn peers(State(state): State<ApiState>) -> Json<PeersResponse> {
             .map(|peer| PeerResponse {
                 name: peer.name,
                 addr: peer.addr,
-                role: match peer.capability {
-                    node_api::NodeCapability::Exit => "exit".to_string(),
-                    node_api::NodeCapability::Relay => "relay".to_string(),
+                role: if peer.capabilities.listening && peer.capabilities.connecting {
+                    "relay".to_string()
+                } else {
+                    "exit".to_string()
                 },
                 connected_at: peer.connected_at_secs,
                 bytes_transferred: peer.bytes_transferred,
