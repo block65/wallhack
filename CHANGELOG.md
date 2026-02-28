@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0] - 2026-02-28
+## [0.3.0](https://github.com/block65/wallhack/releases/tag/wallhack-cli-v0.3.0) - 2026-02-28
 
 ### Added
 

@@ -110,7 +110,7 @@ def version_gt(a: str, b: str) -> bool:
     return parse_version(a) > parse_version(b)
 
 
-def generate_changelog(version: str, commits: list[dict]) -> str:
+def generate_changelog(version: str, commits: list[dict], url: str = "") -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     sections: dict[str, list[str]] = {
         "Breaking Changes": [],
@@ -125,7 +125,8 @@ def generate_changelog(version: str, commits: list[dict]) -> str:
         elif c["type"] in ("fix", "perf"):
             sections["Fixed"].append(c["description"])
 
-    lines = [f"## [{version}] - {today}", ""]
+    header = f"## [{version}]({url}) - {today}" if url else f"## [{version}] - {today}"
+    lines = [header, ""]
     for heading, items in sections.items():
         if not items:
             continue
@@ -205,7 +206,17 @@ def cmd_analyze(args: argparse.Namespace) -> None:
 
     new_version = bump_version(current_version, bump)
     log(f"bump: {bump} ({current_version} -> {new_version})")
-    changelog = generate_changelog(new_version, commits)
+    if args.repo_url:
+        prev = args.latest_tag or ""
+        new_tag = f"{args.tag_prefix}{new_version}"
+        url = (
+            f"{args.repo_url}/compare/{prev}...{new_tag}"
+            if prev
+            else f"{args.repo_url}/releases/tag/{new_tag}"
+        )
+    else:
+        url = ""
+    changelog = generate_changelog(new_version, commits, url=url)
 
     result = {
         "action": "bump",
@@ -305,6 +316,7 @@ def main() -> None:
     p_analyze.add_argument("--version-file", required=True)
     p_analyze.add_argument("--package", required=True)
     p_analyze.add_argument("--latest-tag", default="")
+    p_analyze.add_argument("--repo-url", default="", help="GitHub repo URL for changelog links")
     p_analyze.add_argument("--output", default="/tmp/prepare-result.json",
                            help="Path to write the result JSON")
 

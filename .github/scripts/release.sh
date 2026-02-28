@@ -93,8 +93,14 @@ cmd_create_release() {
     echo "Release ${TAG}" > "$notes_file"
   fi
 
+  # Push the tag explicitly first — gh release create --draft does not create
+  # the git ref, so workflow_dispatch --ref "$TAG" would fail without this.
+  git config user.name "github-actions[bot]"
+  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  git tag "$TAG" "$HEAD_SHA"
+  git push origin "$TAG"
+
   gh release create "$TAG" \
-    --target "$HEAD_SHA" \
     --title "$TAG" \
     --notes-file "$notes_file" \
     --draft

@@ -51,12 +51,14 @@ jobs:
         if: steps.guard.outputs.skip == 'false'
         env:
           LATEST_TAG: ${{ steps.tag.outputs.latest }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           python3 "$SCRIPT" analyze \
             --tag-prefix "$TAG_PREFIX" \
             --version-file "$VERSION_FILE" \
             --package "$CARGO_PACKAGE" \
             --latest-tag "$LATEST_TAG" \
+            --repo-url "$REPO_URL" \
             < /tmp/commit_messages.txt
 
       - name: Emit outputs
@@ -88,4 +90,5 @@ jobs:
           NEW_VERSION: ${{ steps.prepare.outputs.new_version }}
           PACKAGE: ${{ steps.prepare.outputs.package }}
           TAG: ${{ steps.prepare.outputs.tag }}
+          LATEST_TAG: ${{ steps.tag.outputs.latest }}
         run: bash "$SHELL_SCRIPT" open-pr
