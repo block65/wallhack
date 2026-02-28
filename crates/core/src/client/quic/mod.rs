@@ -7,6 +7,7 @@ use wallhack_transport::Transport;
 use crate::{
     ClientConfig, NodeRole,
     client::tls_config,
+    psk::HandshakeExt,
     transport::{protocol, quic::QuicTransport},
 };
 use wallhack_wire::{
@@ -145,8 +146,7 @@ impl Client for QuicClient {
 
             if let Some(ref psk) = self.psk {
                 if let Some(binding) = crate::psk::channel_binding_quic(transport.connection()) {
-                    handshake.psk_proof =
-                        crate::psk::compute_proof(psk.as_bytes(), &binding, &handshake);
+                    handshake.psk_proof = handshake.compute_psk_proof(psk.as_bytes(), &binding);
                 } else {
                     tracing::warn!("PSK configured but channel binding extraction failed");
                 }

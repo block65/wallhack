@@ -26,6 +26,7 @@ use yamux::Mode;
 use crate::{
     NodeRole,
     control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
+    psk::HandshakeExt,
     transport::{
         protocol,
         websocket::{
@@ -255,8 +256,7 @@ impl Server for WebSocketServer {
             if let Some(ref psk) = self.psk
                 && let Some(ref binding) = channel_binding
             {
-                handshake.psk_proof =
-                    crate::psk::compute_proof(psk.as_bytes(), binding, &handshake);
+                handshake.psk_proof = handshake.compute_psk_proof(psk.as_bytes(), binding);
             }
             let msg = ControlMessage {
                 message: Some(control_message::Message::Handshake(handshake.clone())),
