@@ -217,12 +217,44 @@ message TunnelMessage {
   reserved "exit_node_hello", "ping", "pong";
 }
 
-// Sent by exit node immediately after connecting to identify itself.
-// Entry uses name for stable TUN naming (tun-<name>).
-message ExitNodeHello {
-  string name = 1;         // Stable identifier (user-provided or auto-generated)
-  string version = 2;       // Exit node version for compatibility checks
-  string auth_token = 3;    // PSK value for tunnel authentication (sent inside TLS)
+// Node capabilities advertised during the handshake.
+message Capabilities {
+  bool tun_capable = 1;  // Whether this node can create TUN interfaces
+  bool listening = 2;    // Can accept incoming connections
+  bool connecting = 3;   // Can initiate outgoing connections
+}
+
+// Handshake message exchanged bidirectionally after transport connects.
+// Both sides send concurrently; fields not yet acted on are empty (proto3 default).
+message Handshake {
+  Capabilities capabilities = 1;
+  string name = 2;            // Stable identifier (user-provided or auto-generated)
+  string version = 3;         // For compatibility checks
+  bytes psk_proof = 4;        // HMAC-SHA256 proof of PSK knowledge via TLS channel binding
+  repeated string routes = 5; // CIDR notation, directly reachable networks (Phase 13e)
+  optional RoleHint hint = 6; // Operator hint (Phase 13d)
+}
+
+// Node role in the tunnel topology.
+enum NodeRole {
+  ROLE_INDETERMINATE = 0;  // Not yet resolved (Phase 13b)
+  ROLE_ENTRY = 1;
+  ROLE_RELAY = 2;
+  ROLE_EXIT = 3;
+}
+
+// Hint level for role negotiation (Phase 13d — defined now, not acted on).
+enum HintLevel {
+  HINT_LEVEL_UNSPECIFIED = 0;
+  HINT_LEVEL_PREFER = 1;     // Soft — yield if topology makes another node better
+  HINT_LEVEL_EXCLUDE = 2;    // Medium — remove one role from consideration
+  HINT_LEVEL_FIXED = 3;      // Hard — this role and no other
+}
+
+// Operator hint combining a level and a target role (Phase 13d).
+message RoleHint {
+  HintLevel level = 1;
+  NodeRole target = 2;
 }
 
 // Ping request for latency measurement.
