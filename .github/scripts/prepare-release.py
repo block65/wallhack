@@ -81,11 +81,13 @@ def parse_commits(raw: str) -> list[dict]:
 
 
 def determine_bump(commits: list[dict]) -> str | None:
-    if any(c["breaking"] for c in commits):
+    # Commits scoped to "ci" are infrastructure-only and don't warrant a release.
+    releasable = [c for c in commits if c.get("scope") != "ci"]
+    if any(c["breaking"] for c in releasable):
         return "major"
-    if any(c["type"] == "feat" for c in commits):
+    if any(c["type"] == "feat" for c in releasable):
         return "minor"
-    if any(c["type"] in ("fix", "perf") for c in commits):
+    if any(c["type"] in ("fix", "perf") for c in releasable):
         return "patch"
     return None
 
