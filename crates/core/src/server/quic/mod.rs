@@ -228,13 +228,9 @@ impl Server for QuicServer {
                 latency_tx: Some(latency_tx),
                 control_response_tx: None, // server doesn't issue ControlRequests
             };
-            let exit = protocol::run_control_loop(
-                &mut control_stream,
-                &mut channels,
-                Some(&handler),
-                Duration::from_secs(30),
-            )
-            .await;
+            let exit = channels
+                .run(&mut control_stream, Some(&handler), Duration::from_secs(30))
+                .await;
             tracing::debug!("Control stream finished: {exit:?}");
         });
 
