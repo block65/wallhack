@@ -1,8 +1,11 @@
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 use wallhack_wire::{
     control::ControlMessage,
-    data::{EntryNodeInstruction, ExitNodeResponse},
+    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
 };
 
 use crate::NodeRole;
@@ -49,6 +52,8 @@ pub struct ConnectResult<T: wallhack_transport::Transport + ?Sized> {
     transport: std::sync::Arc<T>,
     /// Channel for injecting messages into the control stream.
     control_tx: mpsc::Sender<ControlMessage>,
+    /// Receiver for the server's `Handshake` (delivered via the control loop).
+    peer_handshake_rx: Option<oneshot::Receiver<Handshake>>,
 }
 
 impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
@@ -59,6 +64,7 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
         peer_addr: String,
         tasks: ConnectionTasks,
         control_tx: mpsc::Sender<ControlMessage>,
+        peer_handshake_rx: Option<oneshot::Receiver<Handshake>>,
     ) -> Self {
         Self {
             channels,
@@ -66,6 +72,7 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
             tasks,
             transport,
             control_tx,
+            peer_handshake_rx,
         }
     }
 
@@ -92,6 +99,13 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
     #[must_use]
     pub fn control_tx(&self) -> &mpsc::Sender<ControlMessage> {
         &self.control_tx
+    }
+
+    /// Takes the receiver for the server's `Handshake`.
+    ///
+    /// Returns `None` if already taken or not provided.
+    pub fn take_peer_handshake_rx(&mut self) -> Option<oneshot::Receiver<Handshake>> {
+        self.peer_handshake_rx.take()
     }
 }
 

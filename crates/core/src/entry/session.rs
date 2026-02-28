@@ -5,7 +5,7 @@ use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream, Transport, TransportError};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
-use crate::transport::bridge::{read_length_delimited, write_length_delimited};
+use crate::transport::protocol::{read_length_delimited, write_length_delimited};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -44,7 +44,7 @@ where
     // Without this, smoltcp has already SYN-ACKed the client but we don't know
     // if the real target is reachable. On failure, dropping `local` sends RST.
     let status: SessionStatus =
-        read_length_delimited(&mut remote, crate::transport::bridge::SESSION_INIT_MTU).await?;
+        read_length_delimited(&mut remote, crate::transport::protocol::SESSION_INIT_MTU).await?;
     if status.status() != ResponseStatus::Success {
         tracing::debug!(?target, status = ?status.status(), reason = %status.reason, "exit rejected connection");
         return Err(
@@ -74,7 +74,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::bridge::SESSION_INIT_MTU;
+    use crate::transport::protocol::SESSION_INIT_MTU;
 
     /// Verify that a success `SessionStatus` round-trips correctly.
     #[tokio::test]

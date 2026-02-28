@@ -5,9 +5,12 @@
 
 use std::{sync::atomic::Ordering, time::Instant};
 
-use wallhack_wire::control::{
-    ControlRequest, ControlResponse, ErrorResponse, NodeRole as ProtoNodeRole, PeerInfo,
-    PingResponse, RouteInfo, StatsResponse, control_request, control_response,
+use wallhack_wire::{
+    control::{
+        ControlRequest, ControlResponse, ErrorResponse, PeerInfo, PingResponse, RouteInfo,
+        StatsResponse, control_request, control_response,
+    },
+    data::NodeRole as ProtoNodeRole,
 };
 
 use crate::NodeRole;
@@ -257,11 +260,7 @@ impl crate::node_api::NodeApi for Handler {
             .map(|p| crate::node_api::PeerInfo {
                 name: p.name,
                 addr: p.addr,
-                capability: if p.has_relay_capability {
-                    crate::node_api::NodeCapability::Relay
-                } else {
-                    crate::node_api::NodeCapability::Exit
-                },
+                capabilities: p.capabilities,
                 status: crate::node_api::PeerStatus::Connected,
                 connected_at_secs: p.connected_at.elapsed().as_secs(),
                 bytes_transferred: p.bytes_transferred,
@@ -300,7 +299,7 @@ impl crate::node_api::NodeApi for Handler {
             role: self.config.node_role,
             connected: false,
             peer_addr: None,
-            has_relay_capability: false,
+            capabilities: wallhack_wire::data::Capabilities::default(),
             listen_addr: None,
             name: self.config.name.clone(),
             version: self.config.version.clone(),

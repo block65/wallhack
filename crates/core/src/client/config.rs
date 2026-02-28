@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use socket2::{Domain, Socket, Type};
+use zeroize::Zeroizing;
 
 use crate::server::config::DEFAULT_LISTEN_PORT;
 
@@ -39,11 +40,11 @@ pub struct ClientConfig {
     pub bind: SocketAddr,
 
     /// Name for this peer (exit nodes only).
-    /// If set, sent to entry node via `ExitNodeHello` message.
+    /// If set, sent to peer via `Handshake` message.
     pub name: Option<String>,
 
-    /// Pre-shared key for tunnel authentication.
-    pub psk: Option<String>,
+    /// Pre-shared key for tunnel authentication. Zeroized on drop.
+    pub psk: Option<Zeroizing<String>>,
 
     /// Expected server certificate fingerprint (TOFU).
     pub accept_fingerprint: Option<String>,

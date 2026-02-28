@@ -11,7 +11,7 @@ use smoltcp::wire::IpVersion;
 use wallhack_transport::{BiStream, Transport};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
-use crate::transport::bridge::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited};
+use crate::transport::protocol::{SESSION_INIT_MTU, read_length_delimited, write_length_delimited};
 
 /// Probe the exit node to check if a TCP target is reachable.
 ///
