@@ -10,9 +10,7 @@ Choosing the right transport depends on the network environment and operational 
 
 ## Choosing a Transport
 
-UDP is often blocked or rate-limited in corporate networks and cloud environments. In those cases, use **TCP (WebSockets)**, which appears as standard HTTPS traffic and can pass through most HTTP proxies.
-
-Use **WebSockets** on reliable, low-latency networks where UDP is available and throughput is the priority. It has a slightly lower RTT due to its well-optimized path through the OS network stack.
+Use **TCP (WebSockets)** when UDP is unavailable, or on reliable networks where raw latency is the priority. TCP has a slightly lower RTT due to its well-optimized path through the OS network stack. WebSocket traffic appears as standard HTTPS and can pass through most HTTP proxies.
 
 Use **UDP (QUIC)** when packet loss is above ~1%, or when network conditions are unpredictable. QUIC's per-stream loss recovery prevents a single dropped packet from stalling the entire tunnel, making it more resilient for multiple concurrent connections.
 

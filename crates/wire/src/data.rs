@@ -518,3 +518,17 @@ impl From<entry_node_instruction::Instruction> for tunnel_message::Message {
         tunnel_message::Message::EntryNodeInstruction(instruction.into())
     }
 }
+
+impl Handshake {
+    /// Serialize handshake fields into canonical bytes for HMAC input.
+    ///
+    /// Uses protobuf's deterministic encoding. The `psk_proof` field is zeroed
+    /// before encoding — it's the output of the proof, not an input.
+    #[must_use]
+    pub fn serialize_for_proof(&self) -> Vec<u8> {
+        use prost::Message;
+        let mut canonical = self.clone();
+        canonical.psk_proof = Vec::new();
+        canonical.encode_to_vec()
+    }
+}
