@@ -1,4 +1,4 @@
-//! Transport bridge module.
+//! Transport protocol module.
 //!
 //! Provides generic async functions for bridging transport streams with broadcast channels.
 //! This module extracts the common stream-handling logic from QUIC server/client implementations
@@ -11,7 +11,7 @@ use tokio::{
 };
 use wallhack_wire::{
     control::{ControlMessage, control_message},
-    data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse, TunnelMessage, tunnel_message},
+    data::{EntryNodeInstruction, ExitNodeResponse, Handshake, TunnelMessage, tunnel_message},
 };
 
 use crate::control::handler::Handler;
@@ -114,28 +114,41 @@ pub enum ControlLoopExit {
     StreamClosed,
 }
 
+/// Channels consumed by `run_control_loop`.
+pub struct ControlChannels {
+    /// Outgoing control messages injected by the caller.
+    pub outgoing_rx: mpsc::Receiver<ControlMessage>,
+    /// One-shot for the first `Handshake` received from the peer.
+    pub handshake_tx: Option<oneshot::Sender<Handshake>>,
+    /// Pong-derived latency measurements (milliseconds).
+    pub latency_tx: Option<mpsc::Sender<f64>>,
+    /// `ControlResponse` forwarding (client side, for correlating requests).
+    pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
+}
+
 /// Runs the persistent control bidi-stream loop.
 ///
 /// Multiplexes:
 /// - **Reading** `ControlMessage`s from the bidi stream and dispatching them.
-/// - **Writing** outgoing `ControlMessage`s injected via `outgoing_rx`.
+/// - **Writing** outgoing `ControlMessage`s injected via `channels.outgoing_rx`.
 /// - **Ping timer** that periodically writes `Ping` messages.
 ///
 /// The `handler` is `Some` on the server side (to process incoming
 /// `ControlRequest`s) and `None` on the client side.
+///
+/// When `channels.latency_tx` is provided, each received Pong is converted to a
+/// round-trip latency measurement (in milliseconds) and forwarded through
+/// the channel. Callers can use this to update the peer registry or
+/// respond to one-shot ping requests.
 #[allow(clippy::too_many_lines)] // refactor candidate
 pub async fn run_control_loop<S: BiStream>(
     stream: &mut S,
-    outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
+    channels: &mut ControlChannels,
     handler: Option<&Handler>,
-    hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
-    pong_tx: Option<&mpsc::Sender<wallhack_wire::data::Pong>>,
-    control_response_tx: Option<&mpsc::Sender<wallhack_wire::control::ControlResponse>>,
     ping_interval: std::time::Duration,
 ) -> ControlLoopExit {
     let mut read_buf = Vec::with_capacity(CONTROL_MTU);
     let mut write_buf = Vec::with_capacity(CONTROL_MTU);
-    let mut hello_tx = hello_tx;
     let mut ping_timer = tokio::time::interval(ping_interval);
     // Don't fire immediately — the first tick should be after the interval.
     ping_timer.reset();
@@ -155,13 +168,13 @@ pub async fn run_control_loop<S: BiStream>(
                 };
 
                 match msg.message {
-                    Some(control_message::Message::Hello(hello)) => {
+                    Some(control_message::Message::Handshake(hs)) => {
                         tracing::info!(
-                            "Control: received Hello name={} version={}",
-                            hello.name, hello.version,
+                            "Control: received Handshake name={} version={}",
+                            hs.name, hs.version,
                         );
-                        if let Some(tx) = hello_tx.take() {
-                            let _ = tx.send(hello);
+                        if let Some(tx) = channels.handshake_tx.take() {
+                            let _ = tx.send(hs);
                         }
                     }
                     Some(control_message::Message::Ping(ping_msg)) => {
@@ -177,9 +190,16 @@ pub async fn run_control_loop<S: BiStream>(
                         }
                     }
                     Some(control_message::Message::Pong(pong)) => {
-                        tracing::trace!("Control: received Pong");
-                        if let Some(tx) = pong_tx {
-                            let _ = tx.send(pong).await;
+                        #[allow(clippy::cast_possible_truncation)]
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        #[allow(clippy::cast_precision_loss)] // ms-resolution latency; f64 mantissa exceeds plausible RTT range
+                        let latency_ms = now_ms.saturating_sub(pong.timestamp_ms) as f64;
+                        tracing::trace!(latency_ms, "Control: received Pong");
+                        if let Some(ref tx) = channels.latency_tx {
+                            let _ = tx.send(latency_ms).await;
                         }
                     }
                     Some(control_message::Message::ControlRequest(req)) => {
@@ -197,7 +217,7 @@ pub async fn run_control_loop<S: BiStream>(
                     }
                     Some(control_message::Message::ControlResponse(resp)) => {
                         tracing::trace!("Control: received ControlResponse");
-                        if let Some(tx) = control_response_tx {
+                        if let Some(ref tx) = channels.control_response_tx {
                             let _ = tx.send(resp).await;
                         }
                     }
@@ -212,7 +232,7 @@ pub async fn run_control_loop<S: BiStream>(
             }
 
             // Write outgoing control messages injected by the caller
-            msg = outgoing_rx.recv() => {
+            msg = channels.outgoing_rx.recv() => {
                 let Some(msg) = msg else {
                     tracing::debug!("Control outgoing channel closed");
                     return ControlLoopExit::StreamClosed;
@@ -245,60 +265,42 @@ pub async fn run_control_loop<S: BiStream>(
 }
 
 /// Opens a bidi stream on the transport and runs the control loop (client side).
+///
+/// If `channels.handshake_tx` is provided, the first `Handshake` message
+/// received on the control stream is forwarded through it — this is how the
+/// client receives the server's handshake during the bidirectional exchange.
 pub async fn run_control_stream_initiator<T: Transport>(
     transport: &T,
-    outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
+    channels: &mut ControlChannels,
     handler: Option<&Handler>,
-    pong_tx: Option<&mpsc::Sender<wallhack_wire::data::Pong>>,
-    control_response_tx: Option<&mpsc::Sender<wallhack_wire::control::ControlResponse>>,
     ping_interval: std::time::Duration,
 ) -> Result<ControlLoopExit, TransportError> {
     let mut stream = transport.open_bi().await?;
-    Ok(run_control_loop(
-        &mut stream,
-        outgoing_rx,
-        handler,
-        None, // client doesn't expect Hello
-        pong_tx,
-        control_response_tx,
-        ping_interval,
-    )
-    .await)
+    Ok(run_control_loop(&mut stream, channels, handler, ping_interval).await)
 }
 
 /// Accepts the first bidi stream on the transport and runs the control loop (server side).
 ///
-/// The first `ControlMessage` on the accepted stream MUST be a `Hello`.
-/// The `hello_tx` oneshot is provided so the caller can receive the hello
-/// before deciding whether to spawn data tasks.
+/// The first `ControlMessage` on the accepted stream MUST be a `Handshake`.
+/// The `channels.handshake_tx` oneshot is provided so the caller can receive
+/// the handshake before deciding whether to spawn data tasks.
 pub async fn run_control_stream_acceptor<T: Transport>(
     transport: &T,
-    outgoing_rx: &mut mpsc::Receiver<ControlMessage>,
+    channels: &mut ControlChannels,
     handler: Option<&Handler>,
-    hello_tx: Option<oneshot::Sender<ExitNodeHello>>,
-    pong_tx: Option<&mpsc::Sender<wallhack_wire::data::Pong>>,
     ping_interval: std::time::Duration,
 ) -> Result<ControlLoopExit, TransportError> {
     let Some(mut stream) = transport.accept_bi().await? else {
         return Ok(ControlLoopExit::StreamClosed);
     };
-    Ok(run_control_loop(
-        &mut stream,
-        outgoing_rx,
-        handler,
-        hello_tx,
-        pong_tx,
-        None, // server doesn't issue ControlRequests
-        ping_interval,
-    )
-    .await)
+    Ok(run_control_loop(&mut stream, channels, handler, ping_interval).await)
 }
 
 /// Reads `TunnelMessage`s from a receive stream, dispatching only data
 /// messages (instructions and responses) to broadcast channels.
 ///
-/// Unlike `run_incoming_data`, this function does NOT handle Hello, Ping,
-/// or Pong — those are handled on the control stream.
+/// Unlike `run_incoming_data`, this function does NOT handle Handshake,
+/// Ping, or Pong — those are handled on the control stream.
 pub async fn run_data_in<S: tokio::io::AsyncRead + Unpin>(
     recv: &mut S,
     instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
@@ -418,7 +420,7 @@ mod tests {
         sync::mpsc as tokio_mpsc,
     };
 
-    /// A minimal mock transport for testing bridge functions.
+    /// A minimal mock transport for testing protocol functions.
     ///
     /// Uses `tokio::io::duplex` streams routed through mpsc channels to simulate
     /// a multiplexed transport. Each `open_uni()` on one side creates a duplex
@@ -598,5 +600,275 @@ mod tests {
         drop(responses_src_tx);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(1), outgoing).await;
         let _ = tokio::time::timeout(std::time::Duration::from_secs(1), incoming).await;
+    }
+
+    /// Helper: create a connected pair of `MockBiStream`s for control loop testing.
+    fn bidi_pair() -> (MockBiStream, MockBiStream) {
+        let (a, b) = tokio::io::duplex(64 * 1024);
+        (MockBiStream(a), MockBiStream(b))
+    }
+
+    /// Both sides send Handshake concurrently and each receives the other's.
+    #[tokio::test]
+    async fn test_handshake_exchange() {
+        use wallhack_wire::data::Handshake;
+
+        let (mut stream_a, mut stream_b) = bidi_pair();
+
+        // Side A: sends its handshake, receives B's.
+        let (a_hs_tx, a_hs_rx) = tokio::sync::oneshot::channel::<Handshake>();
+        let (a_ctrl_tx, a_ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+        let hs_a = Handshake {
+            name: "node-a".into(),
+            version: "1.0".into(),
+            ..Default::default()
+        };
+        a_ctrl_tx
+            .send(ControlMessage {
+                message: Some(control_message::Message::Handshake(hs_a)),
+            })
+            .await
+            .unwrap();
+
+        // Side B: sends its handshake, receives A's.
+        let (b_hs_tx, b_hs_rx) = tokio::sync::oneshot::channel::<Handshake>();
+        let (b_ctrl_tx, b_ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+        let hs_b = Handshake {
+            name: "node-b".into(),
+            version: "2.0".into(),
+            ..Default::default()
+        };
+        b_ctrl_tx
+            .send(ControlMessage {
+                message: Some(control_message::Message::Handshake(hs_b)),
+            })
+            .await
+            .unwrap();
+
+        let a_handle = tokio::spawn(async move {
+            let mut channels = ControlChannels {
+                outgoing_rx: a_ctrl_rx,
+                handshake_tx: Some(a_hs_tx),
+                latency_tx: None,
+                control_response_tx: None,
+            };
+            run_control_loop(
+                &mut stream_a,
+                &mut channels,
+                None,
+                std::time::Duration::from_mins(10),
+            )
+            .await
+        });
+
+        let b_handle = tokio::spawn(async move {
+            let mut channels = ControlChannels {
+                outgoing_rx: b_ctrl_rx,
+                handshake_tx: Some(b_hs_tx),
+                latency_tx: None,
+                control_response_tx: None,
+            };
+            run_control_loop(
+                &mut stream_b,
+                &mut channels,
+                None,
+                std::time::Duration::from_mins(10),
+            )
+            .await
+        });
+
+        // A should receive B's handshake and vice versa.
+        let received_by_a = tokio::time::timeout(std::time::Duration::from_secs(2), a_hs_rx)
+            .await
+            .expect("timed out")
+            .expect("oneshot closed");
+        assert_eq!(received_by_a.name, "node-b");
+        assert_eq!(received_by_a.version, "2.0");
+
+        let received_by_b = tokio::time::timeout(std::time::Duration::from_secs(2), b_hs_rx)
+            .await
+            .expect("timed out")
+            .expect("oneshot closed");
+        assert_eq!(received_by_b.name, "node-a");
+        assert_eq!(received_by_b.version, "1.0");
+
+        // Clean up
+        a_handle.abort();
+        b_handle.abort();
+    }
+
+    /// Control loop rejects a malformed handshake (non-Handshake first message
+    /// is ignored; `handshake_tx` is never fulfilled).
+    #[tokio::test]
+    async fn test_malformed_handshake() {
+        let (mut stream_a, mut stream_b) = bidi_pair();
+
+        // Send a Ping instead of a Handshake as the first message.
+        let bad_msg = ControlMessage {
+            message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
+                timestamp_ms: 0,
+            })),
+        };
+        let mut buf = Vec::new();
+        write_length_delimited_buf(&mut stream_a, &bad_msg, &mut buf)
+            .await
+            .unwrap();
+        drop(stream_a); // close the stream after sending
+
+        let (hs_tx, mut hs_rx) = tokio::sync::oneshot::channel::<Handshake>();
+        let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+
+        let mut channels = ControlChannels {
+            outgoing_rx: ctrl_rx,
+            handshake_tx: Some(hs_tx),
+            latency_tx: None,
+            control_response_tx: None,
+        };
+
+        let exit = run_control_loop(
+            &mut stream_b,
+            &mut channels,
+            None,
+            std::time::Duration::from_mins(10),
+        )
+        .await;
+
+        // Stream closed after the bad message.
+        assert!(matches!(exit, ControlLoopExit::StreamClosed));
+        // Handshake was never delivered.
+        assert!(hs_rx.try_recv().is_err());
+    }
+
+    /// Pong latency is computed and forwarded via `latency_tx`.
+    #[tokio::test]
+    async fn test_ping_latency() {
+        let (mut stream_a, mut stream_b) = bidi_pair();
+
+        let (latency_tx, mut latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
+        let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+
+        let mut channels = ControlChannels {
+            outgoing_rx: ctrl_rx,
+            handshake_tx: None,
+            latency_tx: Some(latency_tx),
+            control_response_tx: None,
+        };
+
+        // Spawn the control loop on side B (will read from stream_b).
+        let b_handle = tokio::spawn(async move {
+            run_control_loop(
+                &mut stream_b,
+                &mut channels,
+                None,
+                std::time::Duration::from_mins(10),
+            )
+            .await
+        });
+
+        // First, verify Ping auto-reply: send a Ping, read the Pong.
+        #[allow(clippy::cast_possible_truncation)]
+        let ping_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let outgoing_ping = ControlMessage {
+            message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
+                timestamp_ms: ping_ts,
+            })),
+        };
+        let mut buf = Vec::new();
+        write_length_delimited_buf(&mut stream_a, &outgoing_ping, &mut buf)
+            .await
+            .unwrap();
+
+        // The control loop auto-replies Pong. Read it from stream A.
+        let pong: ControlMessage = read_length_delimited(&mut stream_a, CONTROL_MTU)
+            .await
+            .unwrap();
+        match pong.message {
+            Some(control_message::Message::Pong(p)) => {
+                assert_eq!(p.timestamp_ms, ping_ts);
+            }
+            other => panic!("expected Pong, got: {other:?}"),
+        }
+
+        // Now send a Pong with a timestamp 100ms in the past to test latency
+        // computation. The control loop uses SystemTime, so we subtract from now.
+        #[allow(clippy::cast_possible_truncation)]
+        let past_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            - 100;
+
+        let incoming_pong = ControlMessage {
+            message: Some(control_message::Message::Pong(wallhack_wire::data::Pong {
+                timestamp_ms: past_ts,
+            })),
+        };
+        write_length_delimited_buf(&mut stream_a, &incoming_pong, &mut buf)
+            .await
+            .unwrap();
+
+        // The control loop should forward the latency via latency_tx.
+        let ms = tokio::time::timeout(std::time::Duration::from_secs(2), latency_rx.recv())
+            .await
+            .expect("timed out")
+            .expect("channel closed");
+        // Latency should be approximately 100ms (within ±50ms tolerance for CI).
+        assert!((50.0..=200.0).contains(&ms), "expected ~100ms, got {ms}ms");
+
+        drop(stream_a);
+        let _ = b_handle.await;
+    }
+
+    /// Periodic ping timer fires at the configured interval.
+    #[tokio::test(start_paused = true)]
+    async fn test_periodic_ping() {
+        let (mut stream_a, mut stream_b) = bidi_pair();
+
+        let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+        let mut channels = ControlChannels {
+            outgoing_rx: ctrl_rx,
+            handshake_tx: None,
+            latency_tx: None,
+            control_response_tx: None,
+        };
+
+        // Control loop with 1-second ping interval.
+        let b_handle = tokio::spawn(async move {
+            run_control_loop(
+                &mut stream_b,
+                &mut channels,
+                None,
+                std::time::Duration::from_secs(1),
+            )
+            .await
+        });
+
+        // Advance time past the first ping interval.
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        // Yield to let the timer fire.
+        tokio::task::yield_now().await;
+
+        // Read the Ping from stream A.
+        let msg: ControlMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            read_length_delimited(&mut stream_a, CONTROL_MTU),
+        )
+        .await
+        .expect("timed out")
+        .expect("read error");
+
+        match msg.message {
+            Some(control_message::Message::Ping(p)) => {
+                assert!(p.timestamp_ms > 0, "ping timestamp should be non-zero");
+            }
+            other => panic!("expected Ping, got: {other:?}"),
+        }
+
+        drop(stream_a);
+        let _ = b_handle.await;
     }
 }
