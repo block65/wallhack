@@ -9,6 +9,8 @@ use std::{
 use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use wallhack_wire::data::Capabilities;
+
 use crate::{NodeRole, node_api::NodeApiError};
 
 /// Events emitted when peers connect or disconnect.
@@ -36,8 +38,8 @@ pub struct PeerInfo {
     pub addr: String,
     /// What type of node this peer is.
     pub role: NodeRole,
-    /// Whether this peer has relay capability (connect + listen).
-    pub has_relay_capability: bool,
+    /// Advertised capabilities from the handshake.
+    pub capabilities: Capabilities,
     /// When the peer connected.
     pub connected_at: Instant,
     /// Total bytes transferred through this peer.
@@ -107,7 +109,7 @@ impl Registry {
             name: id.clone(),
             addr,
             role,
-            has_relay_capability: false,
+            capabilities: Capabilities::default(),
             connected_at: Instant::now(),
             bytes_transferred: 0,
             latency_ms: None,
@@ -130,12 +132,12 @@ impl Registry {
         }
     }
 
-    /// Update relay capability for a peer.
-    pub fn set_relay_capability(&self, id: &str, has_capability: bool) {
+    /// Update capability fields for a peer from a received `Handshake` message.
+    pub fn update_capabilities(&self, id: &str, capabilities: &Capabilities) {
         self.peers.rcu(|old| {
             let mut new = (**old).clone();
             if let Some(peer) = new.get_mut(id) {
-                peer.has_relay_capability = has_capability;
+                peer.capabilities = *capabilities;
             }
             new
         });

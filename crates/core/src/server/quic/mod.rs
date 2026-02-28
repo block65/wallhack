@@ -4,14 +4,14 @@ use quinn::{IdleTimeout, crypto::rustls::QuicServerConfig};
 use wallhack_transport::Transport;
 use wallhack_wire::{
     control::{ControlMessage, control_message},
-    data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
 };
 
 use crate::{
     NodeRole,
     control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
     server::tls::{ALPN_QUIC_HTTP, configure_crypto},
-    transport::{bridge, quic::QuicTransport},
+    transport::{protocol, quic::QuicTransport},
 };
 
 use super::{
@@ -45,7 +45,7 @@ pub struct QuicServer {
     endpoint: quinn::Endpoint,
     options: ServerOptions,
     fingerprint: String,
-    psk: Option<String>,
+    psk: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Server for QuicServer {
@@ -97,6 +97,7 @@ impl Server for QuicServer {
         })
     }
 
+    #[allow(clippy::too_many_lines)] // sequential accept pipeline; splitting would obscure the flow
     async fn accept(
         &mut self,
         _role: NodeRole,
@@ -125,40 +126,67 @@ impl Server for QuicServer {
             )));
         };
 
-        // Read the first message — must be a ControlMessage::Hello (with timeout).
-        let hello_result = tokio::time::timeout(
+        // Read the first message — must be a ControlMessage::Handshake (with timeout).
+        let handshake_result = tokio::time::timeout(
             Duration::from_secs(10),
-            bridge::read_length_delimited::<ControlMessage, _>(
+            protocol::read_length_delimited::<ControlMessage, _>(
                 &mut control_stream,
-                bridge::CONTROL_MTU,
+                protocol::CONTROL_MTU,
             ),
         )
         .await;
 
-        let exit_hello: Option<ExitNodeHello> = match hello_result {
+        let peer_handshake: Option<Handshake> = match handshake_result {
             Ok(Ok(msg)) => match msg.message {
-                Some(control_message::Message::Hello(hello)) => {
+                Some(control_message::Message::Handshake(handshake)) => {
                     tracing::info!(
-                        "Received Hello: name={}, version={}",
-                        hello.name,
-                        hello.version,
+                        "Received Handshake: name={}, version={}",
+                        handshake.name,
+                        handshake.version,
                     );
-                    Some(hello)
+                    Some(handshake)
                 }
                 other => {
-                    tracing::warn!("Expected Hello as first control message, got: {other:?}");
+                    tracing::warn!("Expected Handshake as first control message, got: {other:?}");
                     None
                 }
             },
             Ok(Err(e)) => {
-                tracing::warn!("Failed to read Hello from control stream: {e}");
+                tracing::warn!("Failed to read Handshake from control stream: {e}");
                 None
             }
             Err(_elapsed) => {
-                tracing::warn!("Timed out waiting for Hello on control stream");
+                tracing::warn!("Timed out waiting for Handshake on control stream");
                 None
             }
         };
+
+        // Extract channel binding for PSK proof (used for both sending and
+        // verifying). Must happen before we send our handshake.
+        let channel_binding = crate::psk::channel_binding_quic(transport.connection());
+
+        // Send our Handshake back to the client.
+        if let Some(ref local) = self.options.local_handshake {
+            let mut handshake = local.clone();
+            if let Some(ref psk) = self.psk
+                && let Some(ref binding) = channel_binding
+            {
+                handshake.psk_proof =
+                    crate::psk::compute_proof(psk.as_bytes(), binding, &handshake);
+            }
+            let msg = ControlMessage {
+                message: Some(control_message::Message::Handshake(handshake.clone())),
+            };
+            if let Err(e) = protocol::write_length_delimited(&mut control_stream, &msg).await {
+                tracing::warn!("Failed to send Handshake: {e}");
+            } else {
+                tracing::debug!(
+                    "Sent Handshake: name={}, version={}",
+                    handshake.name,
+                    handshake.version,
+                );
+            }
+        }
 
         // Get or create shared metrics
         let metrics = self
@@ -171,7 +199,7 @@ impl Server for QuicServer {
         let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
 
         // Create control channel for injecting outgoing control messages
-        let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
 
         // Spawn control stream task with handler
         let handler_config = self.options.handler_config.clone();
@@ -187,15 +215,22 @@ impl Server for QuicServer {
             .clone()
             .unwrap_or_else(RouteTable::shared);
 
+        // Create latency channel so pong-derived RTT measurements are available
+        // to the caller (e.g. for registry updates and one-shot ping responses).
+        let (latency_tx, latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
+
         tokio::spawn(async move {
             let handler = Handler::new(handler_config, metrics_ctrl, peers_ctrl, routes_ctrl);
-            let exit = bridge::run_control_loop(
+            let mut channels = protocol::ControlChannels {
+                outgoing_rx: control_rx,
+                handshake_tx: None, // Handshake already read above
+                latency_tx: Some(latency_tx),
+                control_response_tx: None, // server doesn't issue ControlRequests
+            };
+            let exit = protocol::run_control_loop(
                 &mut control_stream,
-                &mut control_rx,
+                &mut channels,
                 Some(&handler),
-                None, // Hello already read above
-                None, // pong handled inline
-                None, // server doesn't issue ControlRequests
                 Duration::from_secs(30),
             )
             .await;
@@ -203,13 +238,15 @@ impl Server for QuicServer {
         });
 
         // Data tasks are NOT spawned here — the caller does that after PSK validation.
-        Ok(Some(AcceptResult::with_exit_hello(
+        Ok(Some(AcceptResult::with_handshake(
             Arc::clone(&transport),
             (instructions, responses),
             remote_addr,
             metrics,
-            exit_hello,
+            peer_handshake,
             control_tx,
+            latency_rx,
+            channel_binding,
         )))
     }
 
@@ -228,7 +265,7 @@ impl Server for QuicServer {
     }
 
     fn psk(&self) -> Option<&str> {
-        self.psk.as_deref()
+        self.psk.as_ref().map(|s| s.as_str())
     }
 
     fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {

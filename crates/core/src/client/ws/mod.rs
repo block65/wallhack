@@ -19,7 +19,7 @@ use tokio_tungstenite::{
 };
 use wallhack_wire::{
     control::{ControlMessage, control_message},
-    data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
 };
 use yamux::Mode;
 
@@ -27,7 +27,7 @@ use crate::{
     NodeRole,
     client::config::ClientConfig,
     transport::{
-        Transport, bridge,
+        Transport, protocol,
         websocket::{WebSocketByteStream, WebSocketTransport, WebSocketTransportConfig},
     },
 };
@@ -293,13 +293,21 @@ impl WsClient {
         let peer_addr = tcp_stream.peer_addr().ok();
         let remote_addr_str = peer_addr.map_or_else(|| addr.to_string(), |a| a.to_string());
 
-        // Wrap in TLS if configured and perform WebSocket handshake
+        // Wrap in TLS if configured and perform WebSocket handshake.
+        // Extract TLS channel binding BEFORE the WebSocket upgrade consumes the
+        // TLS stream — after upgrade the rustls session is no longer accessible.
+        let mut channel_binding = None;
         let ws_stream: WebSocketStream<MaybeTlsStream> = if let Some(connector) =
             &self.tls_connector
         {
             let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
                 .map_err(|_| Error::InvalidDnsName(hostname.clone()))?;
             let tls_stream = connector.connect(server_name, tcp_stream).await?;
+
+            // Extract channel binding from the rustls ClientConnection.
+            let (_, client_conn) = tls_stream.get_ref();
+            channel_binding = crate::psk::channel_binding_rustls_client(client_conn);
+
             let (ws, _response) = client_async_with_config(
                 &url,
                 MaybeTlsStream::Tls(Box::new(tls_stream)),
@@ -334,30 +342,54 @@ impl WsClient {
         });
 
         // Create control channel
-        let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
 
-        // If exit node, send Hello via the control stream
-        if let Some(ref name) = self.config.base.name {
-            tracing::debug!("Queuing ExitNodeHello with name: {}", name);
-            let hello = ControlMessage {
-                message: Some(control_message::Message::Hello(ExitNodeHello {
-                    name: name.clone(),
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    auth_token: self.config.base.psk.clone().unwrap_or_default(),
-                })),
+        // Send Handshake via the control stream
+        {
+            let mut handshake = Handshake {
+                capabilities: Some(wallhack_wire::data::Capabilities {
+                    tun_capable: false,
+                    listening: false,
+                    connecting: true,
+                }),
+                name: self.config.base.name.clone().unwrap_or_default(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                psk_proof: Vec::new(),
+                routes: Vec::new(),
+                hint: None,
             };
-            let _ = control_tx.send(hello).await;
+
+            if let Some(ref psk) = self.config.base.psk {
+                if let Some(ref binding) = channel_binding {
+                    handshake.psk_proof =
+                        crate::psk::compute_proof(psk.as_bytes(), binding, &handshake);
+                } else {
+                    tracing::warn!("PSK configured but channel binding extraction failed");
+                }
+            }
+            tracing::debug!("Queuing Handshake with name: {}", handshake.name);
+            let msg = ControlMessage {
+                message: Some(control_message::Message::Handshake(handshake)),
+            };
+            let _ = control_tx.send(msg).await;
         }
+
+        // Create oneshot for receiving server's Handshake via the control loop.
+        let (handshake_tx, handshake_rx) = tokio::sync::oneshot::channel::<Handshake>();
 
         // Spawn control stream task
         let transport_ctrl = Arc::clone(&transport);
         let control_handle = tokio::spawn(async move {
-            match bridge::run_control_stream_initiator(
+            let mut channels = protocol::ControlChannels {
+                outgoing_rx: control_rx,
+                handshake_tx: Some(handshake_tx), // receive server's Handshake
+                latency_tx: None,
+                control_response_tx: None,
+            };
+            match protocol::run_control_stream_initiator(
                 &*transport_ctrl,
-                &mut control_rx,
-                None,
-                None,
-                None,
+                &mut channels,
+                None, // client doesn't handle ControlRequests
                 std::time::Duration::from_secs(30),
             )
             .await
@@ -379,7 +411,7 @@ impl WsClient {
             match transport_data.accept_uni().await {
                 Ok(Some(mut recv)) => {
                     if let Err(e) =
-                        bridge::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
+                        protocol::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
                     {
                         tracing::debug!("Data-in handler finished: {e}");
                     }
@@ -407,7 +439,7 @@ impl WsClient {
                     match transport_out.open_uni().await {
                         Ok(mut send) => {
                             if let Err(e) =
-                                bridge::run_send_instructions(&mut send, instructions_rx).await
+                                protocol::run_send_instructions(&mut send, instructions_rx).await
                             {
                                 tracing::debug!("Send-instructions handler finished: {e}");
                             }
@@ -425,7 +457,7 @@ impl WsClient {
                     match transport_out.open_uni().await {
                         Ok(mut send) => {
                             if let Err(e) =
-                                bridge::run_send_responses(&mut send, responses_rx).await
+                                protocol::run_send_responses(&mut send, responses_rx).await
                             {
                                 tracing::debug!("Send-responses handler finished: {e}");
                             }
@@ -448,6 +480,7 @@ impl WsClient {
             remote_addr_str,
             tasks,
             control_tx,
+            Some(handshake_rx),
         ))
     }
 }

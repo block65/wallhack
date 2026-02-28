@@ -7,11 +7,11 @@ use wallhack_transport::Transport;
 use crate::{
     ClientConfig, NodeRole,
     client::tls_config,
-    transport::{bridge, quic::QuicTransport},
+    transport::{protocol, quic::QuicTransport},
 };
 use wallhack_wire::{
     control::{ControlMessage, control_message},
-    data::{EntryNodeInstruction, ExitNodeHello, ExitNodeResponse},
+    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
 };
 
 use super::client::{Client, ConnectResult, ConnectionTasks};
@@ -60,7 +60,7 @@ pub struct QuicClient {
     hostname: String,
     endpoint: quinn::Endpoint,
     name: Option<String>,
-    psk: Option<String>,
+    psk: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Client for QuicClient {
@@ -126,32 +126,56 @@ impl Client for QuicClient {
         let transport = Arc::new(QuicTransport::new(conn));
 
         // Create control channel
-        let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
 
-        // If exit node, send Hello via the control stream
-        if let Some(ref name) = self.name {
-            tracing::debug!("Queuing ExitNodeHello with name: {}", name);
-            let hello = ControlMessage {
-                message: Some(control_message::Message::Hello(ExitNodeHello {
-                    name: name.clone(),
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    auth_token: self.psk.clone().unwrap_or_default(),
-                })),
+        // Send Handshake via the control stream
+        {
+            let mut handshake = Handshake {
+                capabilities: Some(wallhack_wire::data::Capabilities {
+                    tun_capable: false,
+                    listening: false,
+                    connecting: true,
+                }),
+                name: self.name.clone().unwrap_or_default(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                psk_proof: Vec::new(),
+                routes: Vec::new(),
+                hint: None,
             };
-            control_tx.send(hello).await.map_err(|_| {
-                std::io::Error::other("control channel closed before Hello could be sent")
+
+            if let Some(ref psk) = self.psk {
+                if let Some(binding) = crate::psk::channel_binding_quic(transport.connection()) {
+                    handshake.psk_proof =
+                        crate::psk::compute_proof(psk.as_bytes(), &binding, &handshake);
+                } else {
+                    tracing::warn!("PSK configured but channel binding extraction failed");
+                }
+            }
+            tracing::debug!("Queuing Handshake with name: {}", handshake.name);
+            let msg = ControlMessage {
+                message: Some(control_message::Message::Handshake(handshake)),
+            };
+            control_tx.send(msg).await.map_err(|_| {
+                std::io::Error::other("control channel closed before Handshake could be sent")
             })?;
         }
+
+        // Create oneshot for receiving server's Handshake via the control loop.
+        let (handshake_tx, handshake_rx) = tokio::sync::oneshot::channel::<Handshake>();
 
         // Spawn control stream task
         let transport_ctrl = Arc::clone(&transport);
         let control_handle = tokio::spawn(async move {
-            match bridge::run_control_stream_initiator(
+            let mut channels = protocol::ControlChannels {
+                outgoing_rx: control_rx,
+                handshake_tx: Some(handshake_tx), // receive server's Handshake
+                latency_tx: None,                 // pong handled inline
+                control_response_tx: None,        // no ControlResponse channel needed now
+            };
+            match protocol::run_control_stream_initiator(
                 &*transport_ctrl,
-                &mut control_rx,
+                &mut channels,
                 None, // client doesn't handle ControlRequests
-                None, // pong handled inline
-                None, // no ControlResponse channel needed now
                 std::time::Duration::from_secs(30),
             )
             .await
@@ -174,7 +198,7 @@ impl Client for QuicClient {
             match transport_data.accept_uni().await {
                 Ok(Some(mut recv)) => {
                     if let Err(e) =
-                        bridge::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
+                        protocol::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
                     {
                         tracing::debug!("Data-in handler finished: {e}");
                     }
@@ -197,7 +221,7 @@ impl Client for QuicClient {
                     match transport_out.open_uni().await {
                         Ok(mut send) => {
                             if let Err(e) =
-                                bridge::run_send_instructions(&mut send, instructions_rx).await
+                                protocol::run_send_instructions(&mut send, instructions_rx).await
                             {
                                 tracing::debug!("Send-instructions handler finished: {e}");
                             }
@@ -217,7 +241,7 @@ impl Client for QuicClient {
                     match transport_out.open_uni().await {
                         Ok(mut send) => {
                             if let Err(e) =
-                                bridge::run_send_responses(&mut send, responses_rx).await
+                                protocol::run_send_responses(&mut send, responses_rx).await
                             {
                                 tracing::debug!("Send-responses handler finished: {e}");
                             }
@@ -240,6 +264,7 @@ impl Client for QuicClient {
             remote_addr,
             tasks,
             control_tx,
+            Some(handshake_rx),
         ))
     }
 

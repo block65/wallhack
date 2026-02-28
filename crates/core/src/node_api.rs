@@ -6,25 +6,9 @@
 
 use std::net::SocketAddr;
 
+use wallhack_wire::data::Capabilities;
+
 use crate::{Cidr, NodeRole};
-
-/// Mode indicating whether a node has relay capability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeCapability {
-    /// Standard exit node (no listen capability).
-    Exit,
-    /// Exit node with relay capability (has both connect + listen).
-    Relay,
-}
-
-impl std::fmt::Display for NodeCapability {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeCapability::Exit => write!(f, "EXIT"),
-            NodeCapability::Relay => write!(f, "RELAY"),
-        }
-    }
-}
 
 /// Status of a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +35,8 @@ pub struct PeerInfo {
     pub name: String,
     /// Remote address of the peer.
     pub addr: String,
-    /// Whether this peer has relay capability.
-    pub capability: NodeCapability,
+    /// Advertised capabilities from the handshake.
+    pub capabilities: Capabilities,
     /// Connection status.
     pub status: PeerStatus,
     /// When the peer connected (seconds since epoch).
@@ -95,8 +79,8 @@ pub struct NodeStatus {
     pub connected: bool,
     /// Peer address (if connected).
     pub peer_addr: Option<String>,
-    /// Whether node has relay capability.
-    pub has_relay_capability: bool,
+    /// Advertised capabilities.
+    pub capabilities: Capabilities,
     /// Listen address (if listening).
     pub listen_addr: Option<SocketAddr>,
     /// Application name.

@@ -25,8 +25,8 @@ pub struct ServerConfig {
 
     pub tls: Option<TlsConfig>,
 
-    /// Pre-shared key for tunnel authentication.
-    pub psk: Option<String>,
+    /// Pre-shared key for tunnel authentication. Zeroized on drop.
+    pub psk: Option<zeroize::Zeroizing<String>>,
 
     /// Maximum number of concurrent peer connections.
     pub max_peers: Option<usize>,

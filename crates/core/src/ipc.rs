@@ -25,7 +25,7 @@ use wallhack_wire::management::{
 use crate::{
     control::peers::PeerEvent,
     node_api::{NodeApi, NodeApiError},
-    transport::bridge::{CONTROL_MTU, read_length_delimited, write_length_delimited},
+    transport::protocol::{CONTROL_MTU, read_length_delimited, write_length_delimited},
 };
 
 /// Default socket filename within the runtime directory.
@@ -239,11 +239,13 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 role: node_role_to_proto(s.role).into(),
                 connected: s.connected,
                 peer_addr: s.peer_addr.unwrap_or_default(),
-                capability: capability_to_proto(s.has_relay_capability).into(),
                 listen_addr: s.listen_addr.map_or_else(String::new, |a| a.to_string()),
                 version: s.version,
                 uptime_ms: s.uptime_ms,
                 package_name: s.name,
+                tun_capable: s.capabilities.tun_capable,
+                listening: s.capabilities.listening,
+                connecting: s.capabilities.connecting,
             })
         }
 
@@ -354,22 +356,18 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
 fn peer_event_to_proto(event: PeerEvent) -> DaemonNotification {
     let event = match event {
-        PeerEvent::Connected { name, addr, role } => {
-            daemon_notification::Event::PeerConnected(PeerConnected {
-                peer: Some(management::PeerInfo {
-                    name,
-                    addr,
-                    capability: match role {
-                        crate::NodeRole::Entry => management::NodeCapability::Unspecified,
-                        crate::NodeRole::Exit => management::NodeCapability::Exit,
-                        crate::NodeRole::Relay => management::NodeCapability::Relay,
-                    }
-                    .into(),
-                    status: management::PeerStatus::Connected.into(),
-                    ..Default::default()
-                }),
-            })
-        }
+        PeerEvent::Connected {
+            name,
+            addr,
+            role: _,
+        } => daemon_notification::Event::PeerConnected(PeerConnected {
+            peer: Some(management::PeerInfo {
+                name,
+                addr,
+                status: management::PeerStatus::Connected.into(),
+                ..Default::default()
+            }),
+        }),
         PeerEvent::Disconnected { name } => {
             daemon_notification::Event::PeerDisconnected(PeerDisconnected {
                 name,
@@ -422,23 +420,10 @@ fn node_role_to_proto(role: crate::NodeRole) -> management::NodeRole {
     }
 }
 
-fn capability_to_proto(has_relay: bool) -> management::NodeCapability {
-    if has_relay {
-        management::NodeCapability::Relay
-    } else {
-        management::NodeCapability::Exit
-    }
-}
-
 fn peer_to_proto(p: crate::node_api::PeerInfo) -> management::PeerInfo {
     management::PeerInfo {
         name: p.name,
         addr: p.addr,
-        capability: match p.capability {
-            crate::node_api::NodeCapability::Exit => management::NodeCapability::Exit,
-            crate::node_api::NodeCapability::Relay => management::NodeCapability::Relay,
-        }
-        .into(),
         status: match p.status {
             crate::node_api::PeerStatus::Connected => management::PeerStatus::Connected,
             crate::node_api::PeerStatus::Disconnected => management::PeerStatus::Disconnected,
@@ -447,6 +432,9 @@ fn peer_to_proto(p: crate::node_api::PeerInfo) -> management::PeerInfo {
         connected_at_secs: p.connected_at_secs,
         bytes_transferred: p.bytes_transferred,
         latency_ms: p.latency_ms.unwrap_or(0.0),
+        tun_capable: p.capabilities.tun_capable,
+        listening: p.capabilities.listening,
+        connecting: p.capabilities.connecting,
     }
 }
 

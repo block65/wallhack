@@ -80,6 +80,7 @@ bytes = "1.11.1"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 
 ring = { version = "0.17", default-features = false }
+zeroize = "1"
 
 [build-dependencies]
 test-log = { version = "0.2", features = ["trace"] }
