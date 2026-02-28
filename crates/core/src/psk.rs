@@ -46,31 +46,30 @@ pub fn channel_binding_rustls_server(
     Some(output)
 }
 
-/// Compute a PSK proof over a handshake and channel binding.
-///
-/// Returns the HMAC-SHA256 proof bytes. The caller sets this as
-/// `Handshake.psk_proof` before sending.
-#[must_use]
-pub fn compute_proof(
-    psk: &[u8],
-    channel_binding: &[u8; CHANNEL_BINDING_LEN],
-    handshake: &wallhack_wire::data::Handshake,
-) -> Vec<u8> {
-    let message = handshake.serialize_for_proof();
-    hmac::compute(psk, channel_binding, &message)
+/// Extension methods for [`wallhack_wire::data::Handshake`].
+pub trait HandshakeExt {
+    /// Compute a PSK proof over the handshake and channel binding.
+    fn compute_psk_proof(&self, psk: &[u8], channel_binding: &[u8; CHANNEL_BINDING_LEN])
+    -> Vec<u8>;
+
+    /// Verify a peer's PSK proof against the expected PSK and channel binding.
+    fn verify_psk_proof(&self, psk: &[u8], channel_binding: &[u8; CHANNEL_BINDING_LEN]) -> bool;
 }
 
-/// Verify a peer's PSK proof against the expected PSK and channel binding.
-///
-/// Returns `true` if the proof is valid.
-#[must_use]
-pub fn verify_proof(
-    psk: &[u8],
-    channel_binding: &[u8; CHANNEL_BINDING_LEN],
-    handshake: &wallhack_wire::data::Handshake,
-) -> bool {
-    let message = handshake.serialize_for_proof();
-    hmac::verify(psk, channel_binding, &message, &handshake.psk_proof)
+impl HandshakeExt for wallhack_wire::data::Handshake {
+    fn compute_psk_proof(
+        &self,
+        psk: &[u8],
+        channel_binding: &[u8; CHANNEL_BINDING_LEN],
+    ) -> Vec<u8> {
+        let message = self.serialize_for_proof();
+        hmac::compute(psk, channel_binding, &message)
+    }
+
+    fn verify_psk_proof(&self, psk: &[u8], channel_binding: &[u8; CHANNEL_BINDING_LEN]) -> bool {
+        let message = self.serialize_for_proof();
+        hmac::verify(psk, channel_binding, &message, &self.psk_proof)
+    }
 }
 
 #[cfg(test)]
@@ -99,8 +98,8 @@ mod tests {
         let binding: [u8; CHANNEL_BINDING_LEN] = *b"tls-channel-binding-material-32!";
         let mut handshake = test_handshake();
 
-        handshake.psk_proof = compute_proof(psk, &binding, &handshake);
-        assert!(verify_proof(psk, &binding, &handshake));
+        handshake.psk_proof = handshake.compute_psk_proof(psk, &binding);
+        assert!(handshake.verify_psk_proof(psk, &binding));
     }
 
     #[test]
@@ -108,8 +107,8 @@ mod tests {
         let binding: [u8; CHANNEL_BINDING_LEN] = *b"tls-channel-binding-material-32!";
         let mut handshake = test_handshake();
 
-        handshake.psk_proof = compute_proof(b"correct-psk", &binding, &handshake);
-        assert!(!verify_proof(b"wrong-psk", &binding, &handshake));
+        handshake.psk_proof = handshake.compute_psk_proof(b"correct-psk", &binding);
+        assert!(!handshake.verify_psk_proof(b"wrong-psk", &binding));
     }
 
     #[test]
@@ -118,8 +117,8 @@ mod tests {
         let binding_b: [u8; CHANNEL_BINDING_LEN] = *b"tls-channel-binding-material-0B!";
         let mut handshake = test_handshake();
 
-        handshake.psk_proof = compute_proof(b"psk", &binding_a, &handshake);
-        assert!(!verify_proof(b"psk", &binding_b, &handshake));
+        handshake.psk_proof = handshake.compute_psk_proof(b"psk", &binding_a);
+        assert!(!handshake.verify_psk_proof(b"psk", &binding_b));
     }
 
     #[test]
@@ -131,8 +130,8 @@ mod tests {
         let mut handshake2 = test_handshake();
         handshake2.name = "other-node".to_string();
 
-        let proof1 = compute_proof(psk, &binding, &handshake1);
-        let proof2 = compute_proof(psk, &binding, &handshake2);
+        let proof1 = handshake1.compute_psk_proof(psk, &binding);
+        let proof2 = handshake2.compute_psk_proof(psk, &binding);
         assert_ne!(proof1, proof2);
     }
 
