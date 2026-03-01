@@ -44,13 +44,13 @@
 
 ## Auto-role Negotiation
 
-- [ ] Add `ServerHello` protobuf message so the accepting node announces its
+- [x] Add `ServerHello` protobuf message so the accepting node announces its
       role to the connecting node immediately after the client Hello.
-- [ ] Implement auto-role detection: `wallhack --connect <host>` (no subcommand)
+- [x] Implement auto-role detection: `wallhack --connect <host>` (no subcommand)
       connects, receives the `ServerHello`, and adopts the complementary role
       automatically — entry if the server is exit/relay, exit if the server is
       entry. Peer name defaults to random (same as `exit` today).
-- [ ] Drop the subcommand requirement when `--connect` is the only flag.
+- [x] Drop the subcommand requirement when `--connect` is the only flag.
 
 ## REST API
 
@@ -157,6 +157,18 @@
       was extracted to `handle_exit_response()` but the main loop is still
       monolithic. Extract each remaining concern into a focused type or async fn
       with a clean input/output contract.
+- [ ] `run_auto_accept_session` decomposition — `crates/daemon/src/mode/auto.rs`
+      handles entry and exit negotiation outcomes in one 120-line function with
+      `#[allow(clippy::too_many_lines)]`. Extract the entry and exit arms into
+      dedicated `run_auto_accepted_entry` / `run_auto_accepted_exit` helpers
+      with clean signatures, mirroring how `entry.rs` and `exit.rs` structure
+      their per-connection handlers.
+- [ ] Unify auto-connector outgoing stream setup — `run_auto_connect_session`
+      manually spawns the send-instructions or send-responses task after
+      negotiation because the client connected with `NodeRole::Indeterminate`
+      (no outgoing task). Consider a first-class post-negotiation "promote role"
+      API on `ConnectResult` so auto mode does not need to reach into transport
+      internals directly.
 - [ ] Naming convention violations — `crates/core/src/node_api.rs` uses
       `upstream`/`downstream` in doc comments and method descriptions (the
       public control API trait). Should use `peer`/`relay` terminology per
