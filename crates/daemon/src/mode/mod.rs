@@ -1,8 +1,10 @@
 //! Node mode implementations.
 //!
-//! Each mode handles one operational role (entry, exit, relay). The unified
-//! [`run`] dispatcher routes to the appropriate mode based on the config.
+//! Each mode handles one operational role (entry, exit, relay, or auto).
+//! The unified [`run`] dispatcher routes to the appropriate mode based on the
+//! config.
 
+pub(crate) mod auto;
 pub(crate) mod entry;
 pub(crate) mod exit;
 pub(crate) mod relay;
@@ -44,5 +46,15 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
             exit::run(&config.global, cfg, resources.metrics, resources.peers).await
         }
         ModeConfig::Relay(cfg) => relay::run(&config.global, cfg, resources.metrics).await,
+        ModeConfig::Auto(cfg) => {
+            auto::run(
+                &config.global,
+                cfg,
+                resources.metrics,
+                resources.peers,
+                resources.routes,
+            )
+            .await
+        }
     }
 }
