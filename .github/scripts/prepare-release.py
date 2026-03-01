@@ -83,8 +83,8 @@ def parse_commits(raw: str) -> list[dict]:
 
 
 def determine_bump(commits: list[dict]) -> str | None:
-    # ci- and website-scoped commits don't warrant a CLI release.
-    releasable = [c for c in commits if c.get("scope") not in ("ci", "website")]
+    # ci-, release-, and website-scoped commits don't warrant a CLI release.
+    releasable = [c for c in commits if c.get("scope") not in ("ci", "release", "website")]
     if any(c["breaking"] for c in releasable):
         return "major"
     if any(c["type"] == "feat" for c in releasable):
@@ -159,7 +159,7 @@ def _bucket_commits(commits: list[dict], repo_url: str) -> tuple[dict[str, list[
         scope = c.get("scope", "")
         if c["breaking"]:
             sections["Breaking Changes"].append((scope, entry))
-        _infra_scope = scope in ("ci", "website")
+        _infra_scope = scope in ("ci", "release", "website")
         if ctype == "feat" and not _infra_scope:
             sections["Features"].append((scope, entry))
         elif ctype in ("fix", "perf") and not _infra_scope:

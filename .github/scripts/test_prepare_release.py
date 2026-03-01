@@ -134,9 +134,10 @@ def test_no_bump_on_chore_only():
 
 
 def test_no_bump_on_infra_scopes_only():
-    """ci- and website-scoped commits alone don't trigger a release."""
+    """ci-, release-, and website-scoped commits alone don't trigger a release."""
     commits = parse_commits(commits_json(
         "fix(ci): correct workflow syntax",
+        "fix(release): make open-pr idempotent",
         "feat(website): add dark mode",
     ))
     assert determine_bump(commits) is None
