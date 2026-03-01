@@ -87,10 +87,6 @@ cmd_create_release() {
     echo "Release ${TAG}" > "$notes_file"
   fi
 
-  if [ -n "${LATEST_TAG:-}" ] && [ -n "${REPO_URL:-}" ]; then
-    printf "\n\n**Full Changelog**: %s/compare/%s...%s\n" \
-      "$REPO_URL" "$LATEST_TAG" "$TAG" >> "$notes_file"
-  fi
 
   # Push the tag explicitly first — gh release create --draft does not create
   # the git ref, so workflow_dispatch --ref "$TAG" would fail without this.

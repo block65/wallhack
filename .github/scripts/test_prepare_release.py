@@ -222,7 +222,7 @@ def test_changelog_real_v030_release():
 
         * correct markdown link syntax in README ([d68b976]({REPO_URL}/commit/d68b976b5b80051340acf2a7ece6653736fe3fef))
 
-        _5 other changes — [view diff]({V030_COMPARE_URL})_
+        5 other changes — [view diff]({V030_COMPARE_URL})
     """)
 
 
@@ -277,7 +277,7 @@ def test_changelog_infra_scopes_not_in_sections():
     assert cl == textwrap.dedent(f"""\
         ## [0.3.0]({compare}) (2026-03-01)
 
-        _4 other changes — [view diff]({compare})_
+        4 other changes — [view diff]({compare})
     """)
 
 
@@ -287,7 +287,7 @@ def test_changelog_other_count_singular():
     assert cl == textwrap.dedent(f"""\
         ## [0.3.0]({compare}) (2026-03-01)
 
-        _1 other change — [view diff]({compare})_
+        1 other change — [view diff]({compare})
     """)
 
 
@@ -297,7 +297,7 @@ def test_changelog_other_count_plural():
     assert cl == textwrap.dedent(f"""\
         ## [0.3.0]({compare}) (2026-03-01)
 
-        _2 other changes — [view diff]({compare})_
+        2 other changes — [view diff]({compare})
     """)
 
 
@@ -337,7 +337,7 @@ def test_changelog_mixed_sections_and_other():
 
         * correct thing {sha_link(2)}
 
-        _1 other change — [view diff]({compare})_
+        1 other change — [view diff]({compare})
     """)
 
 
@@ -379,7 +379,7 @@ def test_pr_body_vs_changelog_other_section():
     compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
     cl = generate_changelog("0.3.0", commits, url=compare, repo_url=REPO_URL, date="2026-03-01")
     body = generate_pr_body("0.3.0", commits, url=compare, repo_url=REPO_URL, date="2026-03-01")
-    assert "_2 other changes" in cl
+    assert "2 other changes" in cl
     assert "### Other Changes" in body
     assert "**ci:** infra fix" in body
     assert "tidy up" in body

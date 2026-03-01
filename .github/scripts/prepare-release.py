@@ -196,9 +196,9 @@ def generate_changelog(version: str, commits: list[dict], url: str = "", repo_ur
     if other:
         noun = "change" if len(other) == 1 else "changes"
         if url:
-            lines.append(f"_{len(other)} other {noun} — [view diff]({url})_")
+            lines.append(f"{len(other)} other {noun} — [view diff]({url})")
         else:
-            lines.append(f"_{len(other)} other {noun}_")
+            lines.append(f"{len(other)} other {noun}")
         lines.append("")
     return "\n".join(lines)
 
