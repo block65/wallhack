@@ -347,12 +347,19 @@ impl WsClient {
 
         // Send Handshake via the control stream
         {
-            let mut handshake = Handshake {
-                capabilities: Some(wallhack_wire::data::Capabilities {
+            let capabilities = self
+                .config
+                .base
+                .local_handshake
+                .as_ref()
+                .and_then(|h| h.capabilities)
+                .unwrap_or(wallhack_wire::data::Capabilities {
                     tun_capable: false,
                     listening: false,
                     connecting: true,
-                }),
+                });
+            let mut handshake = Handshake {
+                capabilities: Some(capabilities),
                 name: self.config.base.name.clone().unwrap_or_default(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 psk_proof: Vec::new(),

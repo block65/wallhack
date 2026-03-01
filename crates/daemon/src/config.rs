@@ -69,6 +69,7 @@ pub(crate) fn build_quic_client_config(
     endpoint: SocketAddr,
     name: Option<String>,
     security: &SecurityParams,
+    local_handshake: Option<wallhack_wire::data::Handshake>,
 ) -> ClientConfig {
     use crate::net::SocketAddrExt;
 
@@ -80,6 +81,7 @@ pub(crate) fn build_quic_client_config(
         psk: security.psk.clone(),
         accept_fingerprint: security.accept_fingerprint.clone(),
         bind: endpoint.bind_addr(),
+        local_handshake,
     }
 }
 
@@ -90,6 +92,7 @@ pub(crate) fn build_ws_client_config(
     endpoint: SocketAddr,
     name: Option<String>,
     security: &SecurityParams,
+    local_handshake: Option<wallhack_wire::data::Handshake>,
 ) -> wallhack_core::client::ws::WsClientConfig {
     use crate::net::SocketAddrExt;
 
@@ -102,6 +105,7 @@ pub(crate) fn build_ws_client_config(
             psk: security.psk.clone(),
             accept_fingerprint: security.accept_fingerprint.clone(),
             bind: endpoint.bind_addr(),
+            local_handshake,
         },
         path: "/ws".to_string(),
         host_header: global.hostname.clone(),
