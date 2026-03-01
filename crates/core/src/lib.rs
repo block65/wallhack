@@ -15,6 +15,7 @@ pub mod entry;
 pub mod exit;
 pub mod hmac;
 pub mod ipc;
+pub mod negotiate;
 pub mod node_api;
 pub mod psk;
 pub mod server;
