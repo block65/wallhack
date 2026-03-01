@@ -1,10 +1,10 @@
 //! Auto-negotiation mode.
 //!
-//! Neither `--entry`, `--exit`, nor `--relay` is specified. The node detects
-//! its own capabilities, exchanges a `Handshake` with the peer, and
-//! independently derives the correct role via the pure `negotiate()` function.
+//! No explicit role is specified. The node detects its own capabilities,
+//! exchanges a `Handshake` with the peer, and independently derives the
+//! correct role via the pure `negotiate()` function.
 //!
-//! **If both `--connect` and `--listen` are provided**: the node is a relay.
+//! **If both connect and listen addresses are provided**: the node is a relay.
 //! No negotiation is needed — connectivity alone determines the role.
 //!
 //! **Single direction**: the node connects or listens, exchanges the
@@ -58,7 +58,7 @@ pub(crate) async fn run(
     match (&cfg.connect, &cfg.listen) {
         (Some(connect), Some(listen)) => {
             // Both connect and listen → relay role (no negotiation needed).
-            tracing::info!("Both --connect and --listen: running as relay");
+            tracing::info!("Both connect and listen addresses provided: running as relay");
             let relay_cfg = RelayConfig {
                 name: cfg.name.clone(),
                 connect: connect.clone(),
@@ -74,7 +74,7 @@ pub(crate) async fn run(
             run_auto_listener(global, cfg, listen, tun_capable, metrics, peers, routes).await
         }
         (None, None) => Err(NodeError::Config(
-            "auto mode requires --connect or --listen".into(),
+            "auto mode requires a connect or listen address".into(),
         )),
     }
 }
@@ -483,7 +483,7 @@ where
     );
     if server.psk().is_none() {
         tracing::warn!(
-            "No authentication configured. Use --psk <SECRET> to require authentication."
+            "No authentication configured. Set a pre-shared key (PSK) to require authentication."
         );
     }
 

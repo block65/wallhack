@@ -146,8 +146,8 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     let count = u32::try_from(self.recent_connections.len()).unwrap_or(u32::MAX);
                     let rate = f64::from(count) / RATE_WINDOW.as_secs_f64();
                     if rate > HIGH_RATE_THRESHOLD && !self.rate_warned.swap(true, Ordering::Relaxed) {
-                        tracing::warn!("⚠️  High connection rate detected ({rate:.0}/s)!");
-                        tracing::warn!("💡 Tip: For scanning (nmap, masscan), use --scan mode for better performance.");
+                        tracing::warn!("High connection rate detected ({rate:.0}/s)");
+                        tracing::warn!("Tip: for scanning (nmap, masscan), consider scan mode for better performance");
                     }
 
                     self.metrics.inc_active_connections();

@@ -122,7 +122,7 @@ pub async fn run(
 
     match &cfg.connectivity {
         ConnectivitySpec::Both { .. } => Err(NodeError::Config(
-            "entry nodes do not support both --connect and --listen simultaneously".into(),
+            "entry nodes do not support both connect and listen simultaneously".into(),
         )),
         ConnectivitySpec::Listen(spec) => run_entry_listen(global, cfg, spec, res).await,
         ConnectivitySpec::Connect(spec) => run_entry_connect(global, cfg, spec, res.metrics).await,
@@ -226,7 +226,7 @@ where
     tracing::info!("Certificate fingerprint: {}", server.fingerprint());
     if server.psk().is_none() {
         tracing::warn!(
-            "No authentication configured. Use --psk <SECRET> to require authentication."
+            "No authentication configured. Set a pre-shared key (PSK) to require authentication."
         );
     }
     run_entry_server(

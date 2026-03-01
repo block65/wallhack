@@ -128,8 +128,8 @@ pub async fn serve(
     // Warn if auth is not configured
     if !state.auth.is_configured() {
         tracing::warn!(
-            "REST API started WITHOUT authentication! \
-             Use --api-user and --api-pass to secure the API."
+            "REST API started without authentication. \
+             Configure API credentials to secure the API."
         );
     }
 
