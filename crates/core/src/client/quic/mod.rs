@@ -62,6 +62,7 @@ pub struct QuicClient {
     endpoint: quinn::Endpoint,
     name: Option<String>,
     psk: Option<zeroize::Zeroizing<String>>,
+    local_handshake: Option<Handshake>,
 }
 
 impl Client for QuicClient {
@@ -98,6 +99,7 @@ impl Client for QuicClient {
             endpoint,
             name: config.name,
             psk: config.psk,
+            local_handshake: config.local_handshake,
         })
     }
 
@@ -131,12 +133,17 @@ impl Client for QuicClient {
 
         // Send Handshake via the control stream
         {
-            let mut handshake = Handshake {
-                capabilities: Some(wallhack_wire::data::Capabilities {
+            let capabilities = self
+                .local_handshake
+                .as_ref()
+                .and_then(|h| h.capabilities)
+                .unwrap_or(wallhack_wire::data::Capabilities {
                     tun_capable: false,
                     listening: false,
                     connecting: true,
-                }),
+                });
+            let mut handshake = Handshake {
+                capabilities: Some(capabilities),
                 name: self.name.clone().unwrap_or_default(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 psk_proof: Vec::new(),

@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use socket2::{Domain, Socket, Type};
+use wallhack_wire::data::Handshake;
 use zeroize::Zeroizing;
 
 use crate::server::config::DEFAULT_LISTEN_PORT;
@@ -48,6 +49,10 @@ pub struct ClientConfig {
 
     /// Expected server certificate fingerprint (TOFU).
     pub accept_fingerprint: Option<String>,
+
+    /// Local handshake capabilities advertised to the peer.
+    /// If set, its `capabilities` field is used instead of the client defaults.
+    pub local_handshake: Option<Handshake>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +78,7 @@ impl Default for ClientConfig {
             name: None,
             psk: None,
             accept_fingerprint: None,
+            local_handshake: None,
         }
     }
 }
