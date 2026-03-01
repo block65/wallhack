@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 # Import module from sibling file
@@ -20,63 +23,102 @@ determine_bump = mod.determine_bump
 bump_version = mod.bump_version
 version_gt = mod.version_gt
 generate_changelog = mod.generate_changelog
+generate_pr_body = mod.generate_pr_body
 read_current_version = mod.read_current_version
 
 
-# Real commit messages from wallhack-cli-v0.2.9..HEAD
-POST_V029 = (
-    "feat(core): add Indeterminate as fourth NodeRole variant\x00"
-    "fix: correct markdown link syntax in README\x00"
-    "refactor(core): make ControlChannels and ConnectionParams idiomatic methods\x00"
-    "refactor(core): add SocketAddrExt, From impls, and AsyncProto traits\x00"
-    "feat(daemon): add relay reconnect on source peer disconnect\x00"
-    "refactor(psk): replace free functions with HandshakeExt trait\x00"
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+REPO_URL = "https://github.com/block65/wallhack"
+
+
+def commits_json(*messages: str) -> str:
+    """Build a JSON commits array with deterministic short SHAs for behavioral tests."""
+    return json.dumps([
+        {"sha": f"sha{i+1:04d}abc", "message": m}
+        for i, m in enumerate(messages)
+    ])
+
+
+def sha_link(n: int, repo_url: str = REPO_URL) -> str:
+    """Return a markdown commit link for the nth synthetic commit (1-based)."""
+    full = f"sha{n:04d}abc"
+    return f"([{full[:7]}]({repo_url}/commit/{full}))"
+
+
+def _cl(raw: str, version: str = "0.3.0", compare_url: str = "", date: str = "2026-03-01") -> str:
+    commits = parse_commits(raw)
+    url = compare_url or f"{REPO_URL}/compare/wallhack-cli-v{version}~1...wallhack-cli-v{version}"
+    return generate_changelog(version, commits, url=url, repo_url=REPO_URL, date=date)
+
+
+# ---------------------------------------------------------------------------
+# Real release fixtures — actual commits from the wallhack repo
+# ---------------------------------------------------------------------------
+
+# Commits between wallhack-cli-v0.2.9 and wallhack-cli-v0.3.0
+# (chore: release commit excluded — same as release.sh behaviour)
+V029_TO_V030_COMMITS = json.dumps([
+    {"sha": "1b7d18776287361bc518f9a64f3a1b0a256f8ff8", "message": "fix(ci): push git tag before draft release, add changelog comparison links"},
+    {"sha": "8cb108eff4ba306cf43a526aa633439b472be88d", "message": "ci: replace release-please with custom release pipeline"},
+    {"sha": "22bcc63757145f64ddd5735960b7b3292691accd", "message": "feat(core): add Indeterminate as fourth NodeRole variant"},
+    {"sha": "d68b976b5b80051340acf2a7ece6653736fe3fef", "message": "fix: correct markdown link syntax in README"},
+    {"sha": "9c32aadaababd6f5f36beb422f4de0f438e5c205", "message": "refactor(core): make ControlChannels and ConnectionParams idiomatic methods"},
+    {"sha": "a5be110e2f73d0d19d2ed9d2d3bf94956e69b522", "message": "refactor(core): add SocketAddrExt, From impls, and AsyncProto traits"},
+    {"sha": "fd9381a791df209fc5cf07f3f5fde9dcb0c6369c", "message": "feat(daemon): add relay reconnect on source peer disconnect"},
+    {"sha": "4635ca134b9a8450feb7d3e0c8c7113a385a2d77", "message": "refactor(psk): replace free functions with HandshakeExt trait"},
+])
+
+V030_COMPARE_URL = f"{REPO_URL}/compare/wallhack-cli-v0.2.9...wallhack-cli-v0.3.0"
+V030_RELEASE_DATE = "2026-02-28"
+
+# Commits between wallhack-cli-v0.2.8 and wallhack-cli-v0.2.9
+V028_TO_V029 = commits_json(
+    "feat(daemon): integrate handshake exchange and PSK validation",
+    "feat(core): wire handshake exchange into client/server transport",
+    "feat(core): add PSK proof, HMAC module, and rename bridge to protocol",
+    "feat(wire): replace ExitNodeHello with bidirectional Handshake proto",
+    "docs: add capability handshake and zero-config design specs",
+    "chore: update standards submodule",
+    "fix(website): update rollup and devalue to resolve vulnerabilities",
 )
 
-# Commits between v0.2.8 and v0.2.9 (fix + feat mix)
-V028_TO_V029 = (
-    "feat(daemon): integrate handshake exchange and PSK validation\x00"
-    "feat(core): wire handshake exchange into client/server transport\x00"
-    "feat(core): add PSK proof, HMAC module, and rename bridge to protocol\x00"
-    "feat(wire): replace ExitNodeHello with bidirectional Handshake proto\x00"
-    "docs: add capability handshake and zero-config design specs\x00"
-    "chore: update standards submodule\x00"
-    "fix(website): update rollup and devalue to resolve vulnerabilities\x00"
+CHORE_ONLY = commits_json(
+    "chore: update standards submodule",
+    "docs: tighten AI disclosure wording",
+    "refactor(psk): replace free functions with HandshakeExt trait",
 )
 
-# Only non-release commits
-CHORE_ONLY = (
-    "chore: update standards submodule\x00"
-    "docs: tighten AI disclosure wording\x00"
-    "refactor(psk): replace free functions with HandshakeExt trait\x00"
+BREAKING_BANG = commits_json("feat(wire)!: replace ExitNodeHello with Handshake proto")
+
+BREAKING_FOOTER = commits_json(
+    "feat(wire): replace ExitNodeHello with Handshake proto\n\nBREAKING CHANGE: ExitNodeHello is removed"
 )
 
-BREAKING_BANG = "feat(wire)!: replace ExitNodeHello with Handshake proto\x00"
+FIX_ONLY = commits_json("fix: correct markdown link syntax in README")
 
-BREAKING_FOOTER = (
-    "feat(wire): replace ExitNodeHello with Handshake proto\n\n"
-    "BREAKING CHANGE: ExitNodeHello is removed\x00"
+NONCONVENTIONAL_BREAKING = commits_json(
+    "some random commit subject\n\nBREAKING CHANGE: removed the old API"
 )
 
-FIX_ONLY = "fix: correct markdown link syntax in README\x00"
 
-NONCONVENTIONAL_BREAKING = (
-    "some random commit subject\n\n"
-    "BREAKING CHANGE: removed the old API\x00"
-)
-
+# ---------------------------------------------------------------------------
+# Bump logic
+# ---------------------------------------------------------------------------
 
 def test_parse_feat_and_fix():
-    commits = parse_commits(POST_V029)
+    commits = parse_commits(V029_TO_V030_COMMITS)
     types = [c["type"] for c in commits]
     assert "feat" in types
     assert "fix" in types
     assert "refactor" in types
-    assert len(commits) == 6
+    assert len(commits) == 8
 
 
 def test_bump_minor_on_feat():
-    commits = parse_commits(POST_V029)
+    commits = parse_commits(V029_TO_V030_COMMITS)
     assert determine_bump(commits) == "minor"
 
 
@@ -87,6 +129,15 @@ def test_bump_minor_on_feat_mix():
 
 def test_no_bump_on_chore_only():
     commits = parse_commits(CHORE_ONLY)
+    assert determine_bump(commits) is None
+
+
+def test_no_bump_on_infra_scopes_only():
+    """ci- and website-scoped commits alone don't trigger a release."""
+    commits = parse_commits(commits_json(
+        "fix(ci): correct workflow syntax",
+        "feat(website): add dark mode",
+    ))
     assert determine_bump(commits) is None
 
 
@@ -123,23 +174,6 @@ def test_bump_version_major_from_zero():
     assert bump_version("0.2.9", "major") == "1.0.0"
 
 
-def test_changelog_has_sections():
-    commits = parse_commits(POST_V029)
-    cl = generate_changelog("0.3.0", commits)
-    assert "## [0.3.0]" in cl
-    assert "### Added" in cl
-    assert "### Fixed" in cl
-    assert "add Indeterminate as fourth NodeRole variant" in cl
-    assert "correct markdown link syntax in README" in cl
-
-
-def test_changelog_breaking():
-    commits = parse_commits(BREAKING_BANG)
-    cl = generate_changelog("1.0.0", commits)
-    assert "### Breaking Changes" in cl
-    assert "### Added" in cl
-
-
 def test_nonconventional_breaking_footer():
     commits = parse_commits(NONCONVENTIONAL_BREAKING)
     assert len(commits) == 1
@@ -156,10 +190,288 @@ def test_version_gt():
 
 
 def test_empty_input():
-    commits = parse_commits("")
+    commits = parse_commits("[]")
     assert commits == []
     assert determine_bump(commits) is None
 
+
+# ---------------------------------------------------------------------------
+# Changelog — real release fixture
+# ---------------------------------------------------------------------------
+
+def test_changelog_real_v030_release():
+    """Full changelog output for the actual v0.3.0 release."""
+    commits = parse_commits(V029_TO_V030_COMMITS)
+    cl = generate_changelog(
+        "0.3.0", commits,
+        url=V030_COMPARE_URL,
+        repo_url=REPO_URL,
+        date=V030_RELEASE_DATE,
+    )
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({V030_COMPARE_URL}) ({V030_RELEASE_DATE})
+
+        ### Features
+
+        * **core:** add Indeterminate as fourth NodeRole variant ([22bcc63]({REPO_URL}/commit/22bcc63757145f64ddd5735960b7b3292691accd))
+        * **daemon:** add relay reconnect on source peer disconnect ([fd9381a]({REPO_URL}/commit/fd9381a791df209fc5cf07f3f5fde9dcb0c6369c))
+
+        ### Bug Fixes
+
+        * correct markdown link syntax in README ([d68b976]({REPO_URL}/commit/d68b976b5b80051340acf2a7ece6653736fe3fef))
+
+        _5 other changes — [view diff]({V030_COMPARE_URL})_
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Changelog — behavioral tests (synthetic commits)
+# ---------------------------------------------------------------------------
+
+def test_changelog_feat_and_fix():
+    cl = _cl(commits_json("feat: add turbo mode", "fix: correct null pointer"))
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0) (2026-03-01)
+
+        ### Features
+
+        * add turbo mode {sha_link(1)}
+
+        ### Bug Fixes
+
+        * correct null pointer {sha_link(2)}
+    """)
+
+
+def test_changelog_breaking():
+    cl = _cl(BREAKING_BANG, version="1.0.0")
+    assert cl == textwrap.dedent(f"""\
+        ## [1.0.0]({REPO_URL}/compare/wallhack-cli-v1.0.0~1...wallhack-cli-v1.0.0) (2026-03-01)
+
+        ### Breaking Changes
+
+        * **wire:** replace ExitNodeHello with Handshake proto {sha_link(1)}
+
+        ### Features
+
+        * **wire:** replace ExitNodeHello with Handshake proto {sha_link(1)}
+    """)
+
+
+def test_changelog_chore_silently_dropped():
+    cl = _cl(commits_json("chore: update standards submodule"))
+    assert cl == f"## [0.3.0]({REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0) (2026-03-01)\n"
+
+
+def test_changelog_infra_scopes_not_in_sections():
+    """ci- and website-scoped commits are counted as other, not shown in sections."""
+    compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
+    cl = _cl(commits_json(
+        "ci: add release workflow",
+        "fix(ci): correct matrix syntax",
+        "fix(website): update rollup",
+        "feat(website): add dark mode",
+    ))
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({compare}) (2026-03-01)
+
+        _4 other changes — [view diff]({compare})_
+    """)
+
+
+def test_changelog_other_count_singular():
+    compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
+    cl = _cl(commits_json("docs: update README"))
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({compare}) (2026-03-01)
+
+        _1 other change — [view diff]({compare})_
+    """)
+
+
+def test_changelog_other_count_plural():
+    compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
+    cl = _cl(commits_json("docs: update README", "refactor: simplify parser"))
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({compare}) (2026-03-01)
+
+        _2 other changes — [view diff]({compare})_
+    """)
+
+
+def test_changelog_section_order():
+    """Sections appear in order: Breaking Changes, Features, Bug Fixes."""
+    cl = _cl(commits_json("fix: correct thing", "feat: add thing", "feat!: redesign API"), version="1.0.0")
+    assert cl == textwrap.dedent(f"""\
+        ## [1.0.0]({REPO_URL}/compare/wallhack-cli-v1.0.0~1...wallhack-cli-v1.0.0) (2026-03-01)
+
+        ### Breaking Changes
+
+        * redesign API {sha_link(3)}
+
+        ### Features
+
+        * add thing {sha_link(2)}
+        * redesign API {sha_link(3)}
+
+        ### Bug Fixes
+
+        * correct thing {sha_link(1)}
+    """)
+
+
+def test_changelog_mixed_sections_and_other():
+    """feat + fix + docs + chore: docs counted as other, chore dropped."""
+    compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
+    cl = _cl(commits_json("feat: add thing", "fix: correct thing", "docs: update README", "chore: bump deps"))
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({compare}) (2026-03-01)
+
+        ### Features
+
+        * add thing {sha_link(1)}
+
+        ### Bug Fixes
+
+        * correct thing {sha_link(2)}
+
+        _1 other change — [view diff]({compare})_
+    """)
+
+
+def test_pr_body_real_v030_release():
+    """PR body for v0.3.0 lists other commits in full instead of a count."""
+    commits = parse_commits(V029_TO_V030_COMMITS)
+    body = generate_pr_body(
+        "0.3.0", commits,
+        url=V030_COMPARE_URL,
+        repo_url=REPO_URL,
+        date=V030_RELEASE_DATE,
+    )
+    assert body == textwrap.dedent(f"""\
+        ## [0.3.0]({V030_COMPARE_URL}) ({V030_RELEASE_DATE})
+
+        ### Features
+
+        * **core:** add Indeterminate as fourth NodeRole variant ([22bcc63]({REPO_URL}/commit/22bcc63757145f64ddd5735960b7b3292691accd))
+        * **daemon:** add relay reconnect on source peer disconnect ([fd9381a]({REPO_URL}/commit/fd9381a791df209fc5cf07f3f5fde9dcb0c6369c))
+
+        ### Bug Fixes
+
+        * correct markdown link syntax in README ([d68b976]({REPO_URL}/commit/d68b976b5b80051340acf2a7ece6653736fe3fef))
+
+        ### Other Changes
+
+        * **ci:** push git tag before draft release, add changelog comparison links ([1b7d187]({REPO_URL}/commit/1b7d18776287361bc518f9a64f3a1b0a256f8ff8))
+        * replace release-please with custom release pipeline ([8cb108e]({REPO_URL}/commit/8cb108eff4ba306cf43a526aa633439b472be88d))
+        * **core:** make ControlChannels and ConnectionParams idiomatic methods ([9c32aad]({REPO_URL}/commit/9c32aadaababd6f5f36beb422f4de0f438e5c205))
+        * **core:** add SocketAddrExt, From impls, and AsyncProto traits ([a5be110]({REPO_URL}/commit/a5be110e2f73d0d19d2ed9d2d3bf94956e69b522))
+        * **psk:** replace free functions with HandshakeExt trait ([4635ca1]({REPO_URL}/commit/4635ca134b9a8450feb7d3e0c8c7113a385a2d77))
+    """)
+
+
+def test_pr_body_vs_changelog_other_section():
+    """Changelog shows count; PR body shows full list."""
+    raw = commits_json("feat: add thing", "fix(ci): infra fix", "refactor: tidy up")
+    commits = parse_commits(raw)
+    compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
+    cl = generate_changelog("0.3.0", commits, url=compare, repo_url=REPO_URL, date="2026-03-01")
+    body = generate_pr_body("0.3.0", commits, url=compare, repo_url=REPO_URL, date="2026-03-01")
+    assert "_2 other changes" in cl
+    assert "### Other Changes" in body
+    assert "**ci:** infra fix" in body
+    assert "tidy up" in body
+    assert "### Other Changes" not in cl
+
+
+def test_changelog_entries_grouped_by_scope():
+    """Within each section, entries are sorted by scope (unscoped last)."""
+    cl = _cl(commits_json(
+        "fix: unscoped fix",
+        "fix(wire): wire fix",
+        "fix(core): core fix",
+        "feat(daemon): daemon feat",
+        "feat: unscoped feat",
+        "feat(core): core feat",
+    ))
+    compare = f"{REPO_URL}/compare/wallhack-cli-v0.3.0~1...wallhack-cli-v0.3.0"
+    assert cl == textwrap.dedent(f"""\
+        ## [0.3.0]({compare}) (2026-03-01)
+
+        ### Features
+
+        * unscoped feat {sha_link(5)}
+        * **core:** core feat {sha_link(6)}
+        * **daemon:** daemon feat {sha_link(4)}
+
+        ### Bug Fixes
+
+        * unscoped fix {sha_link(1)}
+        * **core:** core fix {sha_link(3)}
+        * **wire:** wire fix {sha_link(2)}
+    """)
+
+
+def test_markdown_sanitisation_in_description():
+    """Descriptions are sanitised to prevent markdown structure breakage.
+
+    - [text](url) anywhere → escaped (renders as literal text, not a link)
+    - # or ## at start → escaped (prevents heading breakout from bullet)
+    - - at start → escaped (prevents nested bullet double-indent)
+    - **bold**, _italic_, `code`, * mid-sentence → pass through unchanged
+    """
+    raw = commits_json(
+        "feat: sneaky [link](https://example.com) mid-sentence",
+        "feat: ## heading attempt",
+        "fix: - hyphen at start",
+        "fix(math): 1 * 3 = 99 this is now **correct**",
+    )
+    cl = _cl(raw)
+    # links escaped
+    assert r"\[link\](https://example.com)" in cl
+    # heading escaped
+    assert r"\## heading attempt" in cl
+    # leading hyphen escaped
+    assert r"\- hyphen at start" in cl
+    # intentional formatting preserved
+    assert "1 * 3 = 99 this is now **correct**" in cl
+
+
+def test_special_chars_in_description():
+    """Commit descriptions with shell metacharacters pass through unchanged."""
+    raw = commits_json(
+        "feat: add $(echo hello) and `whoami` support",
+        "fix: expand $USER profile",
+    )
+    commits = parse_commits(raw)
+    assert commits[0]["description"] == "add $(echo hello) and `whoami` support"
+    assert commits[1]["description"] == "expand $USER profile"
+    cl = _cl(raw)
+    assert "$(echo hello)" in cl
+    assert "`whoami`" in cl
+
+
+def test_emoji_in_description():
+    """Emoji in commit descriptions survive parsing and changelog generation."""
+    raw = commits_json(
+        "feat: 🚀 add turbo mode",
+        "fix: 🐛 squash the null pointer bug",
+        "feat!: 💥 redesign API",
+    )
+    commits = parse_commits(raw)
+    assert commits[0]["description"] == "🚀 add turbo mode"
+    assert commits[1]["description"] == "🐛 squash the null pointer bug"
+    assert commits[2]["description"] == "💥 redesign API"
+    assert commits[2]["breaking"] is True
+    cl = _cl(raw, version="1.0.0")
+    assert "🚀 add turbo mode" in cl
+    assert "🐛 squash the null pointer bug" in cl
+    assert "💥 redesign API" in cl
+
+
+# ---------------------------------------------------------------------------
+# Version file helpers
+# ---------------------------------------------------------------------------
 
 def test_read_current_version_package_section():
     """Only reads version from [package], not [dependencies]."""
@@ -194,8 +506,6 @@ def test_update_version():
         '[dependencies]\nfoo = { version = "1.0.0" }\n'
     )
     cargo.close()
-    # Simulate the subcommand
-    import argparse
     args = argparse.Namespace(version_file=cargo.name, version="0.3.0")
     mod.cmd_update_version(args)
     content = Path(cargo.name).read_text()
@@ -210,7 +520,6 @@ def test_update_changelog_new_file():
         section = Path(d) / "section.md"
         section.write_text("## [1.0.0] - 2026-01-01\n\n### Added\n\n- foo\n")
         cl = Path(d) / "CHANGELOG.md"
-        import argparse
         args = argparse.Namespace(section_file=str(section), changelog=str(cl))
         mod.cmd_update_changelog(args)
         content = cl.read_text()
@@ -225,44 +534,15 @@ def test_update_changelog_existing():
         section.write_text("## [2.0.0] - 2026-02-01\n\n### Added\n\n- bar\n")
         cl = Path(d) / "CHANGELOG.md"
         cl.write_text("# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- foo\n")
-        import argparse
         args = argparse.Namespace(section_file=str(section), changelog=str(cl))
         mod.cmd_update_changelog(args)
         content = cl.read_text()
-        # New section appears before old
         assert content.index("2.0.0") < content.index("1.0.0")
 
 
-def test_special_chars_in_description():
-    """Commit descriptions with shell metacharacters pass through unchanged."""
-    msg = "feat: add $(echo hello) and `whoami` support\x00fix: expand $USER profile\x00"
-    commits = parse_commits(msg)
-    assert len(commits) == 2
-    assert commits[0]["description"] == "add $(echo hello) and `whoami` support"
-    assert commits[1]["description"] == "expand $USER profile"
-    cl = generate_changelog("1.0.0", commits)
-    assert "$(echo hello)" in cl
-    assert "`whoami`" in cl
-
-
-def test_emoji_in_description():
-    """Emoji in commit descriptions survive parsing and changelog generation."""
-    msg = (
-        "feat: 🚀 add turbo mode\x00"
-        "fix: 🐛 squash the null pointer bug\x00"
-        "feat!: 💥 redesign API\x00"
-    )
-    commits = parse_commits(msg)
-    assert len(commits) == 3
-    assert commits[0]["description"] == "🚀 add turbo mode"
-    assert commits[1]["description"] == "🐛 squash the null pointer bug"
-    assert commits[2]["description"] == "💥 redesign API"
-    assert commits[2]["breaking"] is True
-    cl = generate_changelog("1.0.0", commits)
-    assert "🚀 add turbo mode" in cl
-    assert "🐛 squash the null pointer bug" in cl
-    assert "💥 redesign API" in cl
-
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     failures = 0

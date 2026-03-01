@@ -94,10 +94,10 @@ cmd_create_release() {
 
   # Push the tag explicitly first — gh release create --draft does not create
   # the git ref, so workflow_dispatch --ref "$TAG" would fail without this.
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git tag "$TAG" "$HEAD_SHA"
-  git push origin "$TAG"
+  git config user.name "$GIT_AUTHOR_NAME"
+  git config user.email "$GIT_AUTHOR_EMAIL"
+  git tag -f "$TAG" "$HEAD_SHA"
+  git push origin "$TAG" --force-with-lease
 
   gh release create "$TAG" \
     --title "$TAG" \
@@ -118,8 +118,8 @@ cmd_open_pr() {
   local branch="release/v${NEW_VERSION}"
   notice "preparing release PR for v${NEW_VERSION}"
 
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  git config user.name "$GIT_AUTHOR_NAME"
+  git config user.email "$GIT_AUTHOR_EMAIL"
   git checkout -B "$branch"
 
   python3 "$SCRIPT" update-version \
@@ -139,7 +139,7 @@ cmd_open_pr() {
     --jq 'if length > 0 then .[0].number | tostring else "" end')
 
   local pr_body
-  pr_body="$(cat /tmp/changelog_section.md)
+  pr_body="$(cat /tmp/pr_body_section.md)
 
 ---
 Merging this PR will create tag \`${TAG}\` and trigger the binary build pipeline."
@@ -151,10 +151,12 @@ Merging this PR will create tag \`${TAG}\` and trigger the binary build pipeline
       --body "$pr_body"
   else
     notice "creating release PR"
+    local base_branch
+    base_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     gh pr create \
       --title "chore: release v${NEW_VERSION}" \
       --body "$pr_body" \
-      --base main \
+      --base "$base_branch" \
       --head "$branch"
   fi
 }
