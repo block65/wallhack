@@ -15,7 +15,7 @@ use wallhack_core::{
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     server::server::Server,
     transport::{
-        BiStream, Transport,
+        BiStream, ErasedTransport, Transport,
         protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESSION_INIT_MTU},
     },
 };
@@ -342,8 +342,16 @@ where
     loop {
         match server.accept(NodeRole::Exit).await {
             Ok(Some(accept_result)) => {
-                tracing::info!("Peer connected: {}", accept_result.peer_addr());
-                crate::transport::bridge_channels(accept_result, source_instr, source_resp);
+                let peer_addr = accept_result.peer_addr().to_string();
+                tracing::info!("Peer connected: {peer_addr}");
+                let (channels, control_tx) = accept_result.channels();
+                crate::transport::bridge_channels(
+                    &peer_addr,
+                    channels,
+                    control_tx,
+                    source_instr,
+                    source_resp,
+                );
             }
             Ok(None) => {
                 tracing::info!("Server closed");
@@ -430,6 +438,9 @@ async fn run_accept_loop<S: Server>(mut server: S, ctx: &Arc<ExitContext>) -> Re
 where
     S::Error: std::error::Error + Send + Sync + 'static,
     S::Transport: Send + Sync + 'static,
+    <S::Transport as Transport>::SendStream: 'static,
+    <S::Transport as Transport>::RecvStream: 'static,
+    <S::Transport as Transport>::BiStream: 'static,
 {
     loop {
         match server.accept(NodeRole::Exit).await {
@@ -444,7 +455,7 @@ where
                 ctx.peers
                     .register(peer_name.clone(), peer_addr, NodeRole::Entry);
 
-                let transport = accept_result.transport();
+                let transport: Arc<dyn ErasedTransport> = accept_result.transport();
                 let adapter = SyscallExitAdapter::new();
                 let _reaper = adapter.start_reaper(
                     std::time::Duration::from_mins(1),
@@ -484,23 +495,50 @@ where
 
 /// Drive the exit node orchestrator with a connected peer.
 ///
-/// Returns when the connection drops (caller should reconnect).
-async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
+/// Thin generic wrapper: extracts transport and channels, delegates to
+/// the non-generic inner function.
+async fn run_exit_loop<T>(
     connect_result: ConnectResult<T>,
+    peer_addr: &str,
+    ctx: &ExitContext,
+) -> Result<(), NodeError>
+where
+    T: wallhack_core::transport::Transport + 'static,
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: 'static,
+{
+    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
+    let (channels, mut tasks, control_tx) = connect_result.into_parts();
+    let disconnect_fut = tasks.wait_for_disconnect();
+    run_exit_loop_inner(
+        transport,
+        channels,
+        control_tx,
+        disconnect_fut,
+        peer_addr,
+        ctx,
+    )
+    .await
+}
+
+/// Non-generic exit loop: monomorphized once regardless of transport type.
+async fn run_exit_loop_inner(
+    transport: Arc<dyn ErasedTransport>,
+    channels: wallhack_core::server::server::Channels,
+    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    disconnect_fut: impl std::future::Future<Output = ()>,
     peer_addr: &str,
     ctx: &ExitContext,
 ) -> Result<(), NodeError> {
     tracing::info!("Connected to {peer_addr}");
 
-    // Register the entry node as a peer. ConnectResult carries no peer
-    // identity (no hello exchange in this direction), so use addr as id.
     ctx.peers.register(
         peer_addr.to_string(),
         peer_addr.to_string(),
         NodeRole::Entry,
     );
 
-    // Create syscall adapter for local network access
     let adapter = SyscallExitAdapter::new();
     let _reaper = adapter.start_reaper(
         std::time::Duration::from_mins(1),
@@ -508,12 +546,8 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
     );
     let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
 
-    let transport = connect_result.transport();
-    let ((instr, resp), mut tasks, _control_tx) = connect_result.into_parts();
+    let (instr, resp) = channels;
     let stream_fut = run_stream_listener(transport);
-    let disconnect_fut = tasks.wait_for_disconnect();
-
-    // Pin the long-running futures so we can select over them
     tokio::pin!(stream_fut);
     tokio::pin!(disconnect_fut);
     let drive_fut = orchestrator.drive(resp, instr.subscribe());
@@ -534,22 +568,18 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
         }
     }
 
-    // Unregister the peer when connection drops.
     ctx.peers.unregister(peer_addr);
 
     Ok(())
 }
 
-pub(crate) async fn run_stream_listener<T: Transport>(
-    transport: std::sync::Arc<T>,
-) -> Result<(), NodeError>
-where
-    T::BiStream: 'static,
-{
+pub(crate) async fn run_stream_listener(
+    transport: std::sync::Arc<dyn ErasedTransport>,
+) -> Result<(), NodeError> {
     tracing::trace!("Stream listener started");
     loop {
         let Some(mut stream) = transport
-            .accept_bi()
+            .accept_bi_erased()
             .await
             .map_err(|e| NodeError::Stream(Box::new(e)))?
         else {
