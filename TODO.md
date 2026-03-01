@@ -157,12 +157,21 @@
       was extracted to `handle_exit_response()` but the main loop is still
       monolithic. Extract each remaining concern into a focused type or async fn
       with a clean input/output contract.
+- [ ] Transport monomorphization — `run_auto_accept_loop<S: Server>` instantiates twice
+      (QUIC + WS), 2 × 16KiB = 32KiB. `run_entry_server` has the same problem (2 × 10.8KiB).
+      The thin-trampoline + ErasedTransport wrapper approach was attempted and made things
+      **worse** (+98KB): a concrete wrapper struct in wallhackd still produces a third
+      instantiation of all downstream generics in wallhack_core (ConnectionManager<D,T>,
+      run_stream_listener<T>). The fix must be in wallhack_core: make ConnectionManager and
+      run_stream_listener accept `Arc<dyn ErasedTransport>` where ErasedTransport is an
+      object-safe wrapper trait (Transport has associated types so it isn't object-safe as-is).
+      Only then can a single dyn boundary in wallhackd eliminate all downstream duplication.
+      **Proof + full analysis:** `bench/results/bloat_20260301_analysis.txt`.
 - [ ] `run_auto_accept_session` decomposition — `crates/daemon/src/mode/auto.rs`
-      handles entry and exit negotiation outcomes in one 120-line function with
-      `#[allow(clippy::too_many_lines)]`. Extract the entry and exit arms into
-      dedicated `run_auto_accepted_entry` / `run_auto_accepted_exit` helpers
-      with clean signatures, mirroring how `entry.rs` and `exit.rs` structure
-      their per-connection handlers.
+      handles entry and exit negotiation outcomes in one function. Extract the
+      entry and exit arms into dedicated helpers with clean signatures, but only
+      after the transport-monomorphization fix lands (otherwise decomposition
+      without deduplication adds binary size).
 - [ ] Unify auto-connector outgoing stream setup — `run_auto_connect_session`
       manually spawns the send-instructions or send-responses task after
       negotiation because the client connected with `NodeRole::Indeterminate`
