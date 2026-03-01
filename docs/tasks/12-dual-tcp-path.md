@@ -122,3 +122,16 @@ externally.
 - TCP tunnelling still works end-to-end (integration test)
 - `just check` passes
 - The `exit-adapter` crate compiles with only UDP and ICMP session types
+
+## Implementation Tips
+
+- **Locating Path A**: The current Path A implementation is in `crates/daemon/src/mode/exit.rs` (look for the `handle_stream` function) and `crates/core/src/entry/session.rs`.
+- **Locating Path B**: Path B's logic is primarily in `crates/core/src/exit/orchestrator.rs` (dispatching logic) and `crates/core/src/exit/net/tcp.rs` (the `SyscallExitAdapter` implementation).
+- **Protobuf Strategy**: When removing fields from `data.proto`, do not renumber existing fields. Simply comment out or delete the TCP-related fields in `EntryNodeInstruction` and `ExitNodeResponse`.
+- **Mock/Null Adapters**: Remember to update `crates/exit-adapter/src/tests_helpers/mock_exit.rs`. It contains a `NullExitAdapter` that currently implements the dead TCP methods.
+- **Verification**: Run `cargo test --package wallhack-core` and `cargo test --package wallhack-daemon` after changes. The integration tests in `range/` are the ultimate source of truth for TCP forwarding correctness.
+- **Recommended Order**:
+    1.  Remove TCP dispatch arms from `orchestrator.rs`.
+    2.  Remove TCP methods from the `ExitAdapter` trait in `crates/exit-adapter/src/adapter.rs`.
+    3.  Delete `crates/core/src/exit/net/tcp.rs` and references in `crates/core/src/exit/net/mod.rs`.
+    4.  Update the Protobuf definitions and regenerate code.
