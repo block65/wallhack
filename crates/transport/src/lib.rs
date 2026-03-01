@@ -7,6 +7,7 @@
 
 #![feature(trait_alias)]
 
+pub mod erased;
 mod error;
 pub mod traits;
 
@@ -16,5 +17,6 @@ pub mod quic;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+pub use erased::{BoxBiStream, ErasedTransport};
 pub use error::TransportError;
 pub use traits::{BiStream, Transport};
