@@ -39,7 +39,7 @@ impl std::fmt::Display for NegotiationResult {
 ///
 /// # Rules
 ///
-/// Relay is unambiguous: any node started with both `--listen` and `--connect`
+/// Relay is unambiguous: any node with both listen and connect addresses
 /// is always a relay, regardless of TUN capability or what the peer advertises.
 ///
 /// When talking to a relay, the non-relay node resolves immediately from its
@@ -86,7 +86,7 @@ pub fn negotiate(local: &Handshake, peer: &Handshake) -> NegotiationResult {
         (true, false) => NegotiationResult::Resolved(NodeRole::Entry),
         (false, true) => NegotiationResult::Resolved(NodeRole::Exit),
         (true, true) => NegotiationResult::Indeterminate {
-            reason: "both peers are TUN-capable; use --prefer or --fixed-role to resolve",
+            reason: "both peers are TUN-capable; set a preferred or fixed role to resolve",
         },
         (false, false) => NegotiationResult::Indeterminate {
             reason: "neither peer is TUN-capable; no node can create a TUN interface",
