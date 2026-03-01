@@ -19,14 +19,15 @@ use argh::FromArgs;
 use wallhackd::{
     address_spec::{AddressSpec, ConnectivitySpec},
     daemon_config::{
-        ApiConfig, DaemonConfig, EntryConfig, ExitConfig, GlobalConfig, ModeConfig, RelayConfig,
-        TlsParams,
+        ApiConfig, AutoConfig, DaemonConfig, EntryConfig, ExitConfig, GlobalConfig, ModeConfig,
+        RelayConfig, TlsParams,
     },
 };
 
 /// Network pivoting and tunneling tool.
 ///
-/// Defaults to entry mode listening on the default port when invoked without a subcommand.
+/// Auto-negotiates role from `--connect` / `--listen` flags. Use a subcommand
+/// (`entry`, `exit`, `relay`) to override with an explicit role.
 #[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
 #[derive(FromArgs, Debug, Clone)]
 pub struct WallhackCli {
@@ -57,6 +58,22 @@ pub struct WallhackCli {
     /// pre-shared key for tunnel authentication (or set `WALLHACK_PSK` env var)
     #[argh(option)]
     pub psk: Option<String>,
+
+    /// connect to a peer for auto-negotiated mode (e.g. "host:6565")
+    #[argh(option, short = 'c')]
+    pub connect: Option<String>,
+
+    /// listen for connections for auto-negotiated mode (e.g. ":6565")
+    #[argh(option, short = 'l')]
+    pub listen: Option<String>,
+
+    /// node name for auto-negotiated mode (random if omitted)
+    #[argh(option, short = 'n')]
+    pub name: Option<String>,
+
+    /// accept server certificate by fingerprint for auto-negotiated mode
+    #[argh(option)]
+    pub accept_fingerprint: Option<String>,
 
     /// verbose output
     #[argh(switch, short = 'v')]
@@ -215,9 +232,6 @@ const GLOBAL_FLAGS: &[&str] = &[
     "--version",
 ];
 
-/// Flags that belong to a subcommand, used by `suggest_subcommand` for detection.
-const SUBCOMMAND_FLAGS: &[&str] = &["--listen", "-l", "--connect", "-c"];
-
 /// Reorder global flags that appear after the subcommand to before it.
 fn reorder_global_flags(args: Vec<String>) -> Vec<String> {
     // Find the subcommand position (skip argv[0])
@@ -245,43 +259,6 @@ fn reorder_global_flags(args: Vec<String>) -> Vec<String> {
     before.push(subcommand);
     before.extend(after);
     before
-}
-
-/// Suggest a subcommand when subcommand-level flags are used at the top level.
-fn suggest_subcommand(args: &[&str]) -> Option<String> {
-    use std::fmt::Write;
-
-    let has_subcommand = args.iter().any(|a| SUBCOMMANDS.contains(a));
-    if has_subcommand {
-        return None;
-    }
-
-    let has_sub_flag = args.iter().any(|a| SUBCOMMAND_FLAGS.contains(a));
-    if !has_sub_flag {
-        return None;
-    }
-
-    let has_listen = args.iter().any(|a| *a == "--listen" || *a == "-l");
-
-    let flag_str: String = args
-        .iter()
-        .map(|a| (*a).to_string())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let mut lines = String::new();
-    if has_listen {
-        let _ = writeln!(lines, "  wallhack entry {flag_str}");
-        let _ = writeln!(lines, "  wallhack exit {flag_str}");
-    } else {
-        let _ = writeln!(lines, "  wallhack exit {flag_str}");
-        let _ = writeln!(lines, "  wallhack entry {flag_str}");
-    }
-
-    let flag_name = if has_listen { "--listen" } else { "--connect" };
-    Some(format!(
-        "The {flag_name} flag requires a subcommand. Did you mean:\n\n{lines}"
-    ))
 }
 
 /// Extract the binary name from argv[0], like argh does internally.
@@ -317,14 +294,10 @@ pub fn parse_cli_from_args(args: Vec<String>) -> Result<WallhackCli, CliError> {
 
     WallhackCli::from_args(&[cmd], &strs[1..]).map_err(|early_exit| {
         if early_exit.status.is_err() {
-            let message = if let Some(hint) = suggest_subcommand(&strs[1..]) {
-                format!("{hint}\nRun {cmd} --help for more information.")
-            } else {
-                format!(
-                    "{}\nRun {cmd} --help for more information.",
-                    early_exit.output
-                )
-            };
+            let message = format!(
+                "{}\nRun {cmd} --help for more information.",
+                early_exit.output
+            );
             CliError {
                 message,
                 exit_code: 1,
@@ -370,7 +343,8 @@ fn resolve_api_config(cmd: &EntryCommand) -> Option<ApiConfig> {
 /// Build a [`DaemonConfig`] from parsed CLI arguments.
 ///
 /// Resolves PSK, generates names, parses transport directions, and maps
-/// API options.
+/// API options. When top-level `--connect` / `--listen` flags are used
+/// without a subcommand, auto-negotiation mode is selected.
 ///
 /// # Errors
 ///
@@ -388,35 +362,58 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
         psk: resolve_psk(cli.psk.as_ref()).map(zeroize::Zeroizing::new),
     };
 
-    let command = cli.command.clone().unwrap_or_default();
-    let mode = match command {
-        Command::Entry(cmd) => {
-            let connectivity = resolve_entry_transport(&cmd)?;
-            let api = resolve_api_config(&cmd);
-            ModeConfig::Entry(EntryConfig {
-                name: cmd.name.unwrap_or_else(generate_node_name),
-                connectivity,
-                api,
-                max_peers: cmd.max_peers,
-                fast: cmd.fast,
-            })
-        }
-        Command::Exit(cmd) => {
-            let connectivity = resolve_exit_transport(&cmd)?;
-            ModeConfig::Exit(ExitConfig {
-                name: cmd.name.unwrap_or_else(generate_node_name),
-                connectivity,
-                accept_fingerprint: cmd.accept_fingerprint,
-            })
-        }
-        Command::Relay(cmd) => {
-            let (connect, listen) = resolve_relay_transport(&cmd)?;
-            ModeConfig::Relay(RelayConfig {
-                name: cmd.name.unwrap_or_else(generate_node_name),
-                connect,
-                listen,
-                accept_fingerprint: cmd.accept_fingerprint,
-            })
+    // If top-level --connect / --listen are provided without an explicit
+    // subcommand, use auto-negotiation mode.
+    let has_auto_flags = cli.connect.is_some() || cli.listen.is_some();
+
+    let mode = if has_auto_flags && cli.command.is_none() {
+        let connect = cli
+            .connect
+            .as_ref()
+            .map(|s| s.parse::<AddressSpec>())
+            .transpose()?;
+        let listen = cli
+            .listen
+            .as_ref()
+            .map(|s| s.parse::<AddressSpec>())
+            .transpose()?;
+        ModeConfig::Auto(AutoConfig {
+            name: cli.name.clone().unwrap_or_else(generate_node_name),
+            connect,
+            listen,
+            accept_fingerprint: cli.accept_fingerprint.clone(),
+        })
+    } else {
+        let command = cli.command.clone().unwrap_or_default();
+        match command {
+            Command::Entry(cmd) => {
+                let connectivity = resolve_entry_transport(&cmd)?;
+                let api = resolve_api_config(&cmd);
+                ModeConfig::Entry(EntryConfig {
+                    name: cmd.name.unwrap_or_else(generate_node_name),
+                    connectivity,
+                    api,
+                    max_peers: cmd.max_peers,
+                    fast: cmd.fast,
+                })
+            }
+            Command::Exit(cmd) => {
+                let connectivity = resolve_exit_transport(&cmd)?;
+                ModeConfig::Exit(ExitConfig {
+                    name: cmd.name.unwrap_or_else(generate_node_name),
+                    connectivity,
+                    accept_fingerprint: cmd.accept_fingerprint,
+                })
+            }
+            Command::Relay(cmd) => {
+                let (connect, listen) = resolve_relay_transport(&cmd)?;
+                ModeConfig::Relay(RelayConfig {
+                    name: cmd.name.unwrap_or_else(generate_node_name),
+                    connect,
+                    listen,
+                    accept_fingerprint: cmd.accept_fingerprint,
+                })
+            }
         }
     };
 
