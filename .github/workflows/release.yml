@@ -77,6 +77,8 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           LATEST_TAG: ${{ steps.tag.outputs.latest }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
         run: bash "$SHELL_SCRIPT" create-release
 
       # --- Path B: releasable commits → open/update release PR ---
@@ -93,4 +95,6 @@ jobs:
           PACKAGE: ${{ steps.prepare.outputs.package }}
           TAG: ${{ steps.prepare.outputs.tag }}
           LATEST_TAG: ${{ steps.tag.outputs.latest }}
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
         run: bash "$SHELL_SCRIPT" open-pr

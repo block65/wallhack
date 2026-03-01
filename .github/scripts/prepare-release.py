@@ -18,6 +18,8 @@ import argparse
 import json
 import re
 import sys
+
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,8 +83,8 @@ def parse_commits(raw: str) -> list[dict]:
 
 
 def determine_bump(commits: list[dict]) -> str | None:
-    # Commits scoped to "ci" are infrastructure-only and don't warrant a release.
-    releasable = [c for c in commits if c.get("scope") != "ci"]
+    # ci- and website-scoped commits don't warrant a CLI release.
+    releasable = [c for c in commits if c.get("scope") not in ("ci", "website")]
     if any(c["breaking"] for c in releasable):
         return "major"
     if any(c["type"] == "feat" for c in releasable):
@@ -118,39 +120,99 @@ def version_gt(a: str, b: str) -> bool:
     return parse_version(a) > parse_version(b)
 
 
+def _sanitise_desc(desc: str) -> str:
+    # Escape markdown links anywhere in the description
+    desc = _MD_LINK.sub(lambda m: r"\[" + m.group(1) + r"\]" + m.group(0)[len(m.group(1))+2:], desc)
+    # Escape # and - only at the start (prevents heading breakout and nested bullets)
+    if desc.startswith("#"):
+        desc = r"\#" + desc[1:]
+    if desc.startswith("-"):
+        desc = r"\-" + desc[1:]
+    return desc
+
+
 def format_entry(c: dict, repo_url: str) -> str:
     scope = c.get("scope", "")
-    text = f"**{scope}:** {c['description']}" if scope else c["description"]
+    desc = _sanitise_desc(c["description"])
+    text = f"**{scope}:** {desc}" if scope else desc
     sha = c.get("sha", "")
     if sha and repo_url:
         text += f" ([{sha[:7]}]({repo_url}/commit/{sha}))"
     return text
 
 
-def generate_changelog(version: str, commits: list[dict], url: str = "", repo_url: str = "") -> str:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    sections: dict[str, list[str]] = {
+def _bucket_commits(commits: list[dict], repo_url: str) -> tuple[dict[str, list[str]], list[str]]:
+    """Split commits into named sections and an 'other' list.
+
+    Within each section, unscoped entries come first, then scoped entries
+    sorted alphabetically by scope.
+    """
+    sections: dict[str, list[tuple[str, str]]] = {
         "Breaking Changes": [],
         "Features": [],
         "Bug Fixes": [],
     }
+    other: list[str] = []
     for c in commits:
         entry = format_entry(c, repo_url)
+        ctype = c["type"]
+        scope = c.get("scope", "")
         if c["breaking"]:
-            sections["Breaking Changes"].append(entry)
-        if c["type"] == "feat":
-            sections["Features"].append(entry)
-        elif c["type"] in ("fix", "perf"):
-            sections["Bug Fixes"].append(entry)
+            sections["Breaking Changes"].append((scope, entry))
+        _infra_scope = scope in ("ci", "website")
+        if ctype == "feat" and not _infra_scope:
+            sections["Features"].append((scope, entry))
+        elif ctype in ("fix", "perf") and not _infra_scope:
+            sections["Bug Fixes"].append((scope, entry))
+        elif ctype != "chore":
+            other.append(entry)
+    # unscoped first, then scoped alphabetically
+    sorted_sections: dict[str, list[str]] = {}
+    for key, entries in sections.items():
+        entries.sort(key=lambda x: (x[0] != "", x[0]))
+        sorted_sections[key] = [e for _, e in entries]
+    return sorted_sections, other
 
-    header = f"## [{version}]({url}) ({today})" if url else f"## [{version}] ({today})"
-    lines = [header, ""]
+
+def _render_sections(sections: dict[str, list[str]]) -> list[str]:
+    lines: list[str] = []
     for heading, items in sections.items():
         if not items:
             continue
         lines.append(f"### {heading}")
         lines.append("")
         for item in items:
+            lines.append(f"* {item}")
+        lines.append("")
+    return lines
+
+
+def generate_changelog(version: str, commits: list[dict], url: str = "", repo_url: str = "", date: str = "") -> str:
+    """User-facing changelog: named sections + 'x other changes' count."""
+    today = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    sections, other = _bucket_commits(commits, repo_url)
+    header = f"## [{version}]({url}) ({today})" if url else f"## [{version}] ({today})"
+    lines = [header, ""] + _render_sections(sections)
+    if other:
+        noun = "change" if len(other) == 1 else "changes"
+        if url:
+            lines.append(f"_{len(other)} other {noun} — [view diff]({url})_")
+        else:
+            lines.append(f"_{len(other)} other {noun}_")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def generate_pr_body(version: str, commits: list[dict], url: str = "", repo_url: str = "", date: str = "") -> str:
+    """PR body: named sections + full 'Other Changes' list for reviewer context."""
+    today = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    sections, other = _bucket_commits(commits, repo_url)
+    header = f"## [{version}]({url}) ({today})" if url else f"## [{version}] ({today})"
+    lines = [header, ""] + _render_sections(sections)
+    if other:
+        lines.append("### Other Changes")
+        lines.append("")
+        for item in other:
             lines.append(f"* {item}")
         lines.append("")
     return "\n".join(lines)
@@ -235,6 +297,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     else:
         url = ""
     changelog = generate_changelog(new_version, commits, url=url, repo_url=args.repo_url)
+    pr_body = generate_pr_body(new_version, commits, url=url, repo_url=args.repo_url)
 
     result = {
         "action": "bump",
@@ -243,6 +306,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         "new_version": new_version,
         "tag": f"{args.tag_prefix}{new_version}",
         "changelog": changelog,
+        "pr_body": pr_body,
         "version_file": args.version_file,
         "package": args.package,
     }
@@ -263,6 +327,8 @@ def cmd_emit_outputs(args: argparse.Namespace) -> None:
             print(f"{key}={data[key]}")
         Path(args.changelog_file).write_text(data["changelog"])
         log(f"wrote changelog section to {args.changelog_file}")
+        Path(args.pr_body_file).write_text(data["pr_body"])
+        log(f"wrote PR body to {args.pr_body_file}")
 
     # Pretty-print the full result to stderr for debugging
     json.dump(data, sys.stderr, indent=2)
@@ -342,6 +408,7 @@ def main() -> None:
     p_emit = sub.add_parser("emit-outputs", help="Emit KEY=VALUE lines from result JSON")
     p_emit.add_argument("--result-file", default="/tmp/prepare-result.json")
     p_emit.add_argument("--changelog-file", default="/tmp/changelog_section.md")
+    p_emit.add_argument("--pr-body-file", default="/tmp/pr_body_section.md")
 
     # update-changelog
     p_cl = sub.add_parser("update-changelog", help="Insert section into CHANGELOG.md")
