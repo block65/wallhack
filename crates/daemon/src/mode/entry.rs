@@ -41,7 +41,7 @@ struct EntryResources {
 /// Keeps TUN adapters alive between reconnections so exit nodes can reconnect
 /// without losing their TUN interface.
 #[derive(Clone, Default)]
-struct SessionManager {
+pub(crate) struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, String>>>,
 }
 
@@ -67,7 +67,7 @@ impl SessionManager {
 
     /// Gets a TUN adapter with auto-generated name (for exit nodes without
     /// identity).
-    fn create_anonymous() -> String {
+    pub(crate) fn create_anonymous() -> String {
         TunActor::random_iface_name()
     }
 
@@ -79,7 +79,7 @@ impl SessionManager {
 
 /// Create a TUN device, retrying on EBUSY to handle the race where the
 /// previous connection's `TunActor` hasn't been fully dropped yet.
-async fn create_tun_with_retry(name: String) -> Result<TunActor, NodeError> {
+pub(crate) async fn create_tun_with_retry(name: String) -> Result<TunActor, NodeError> {
     let mut attempts = 0;
     loop {
         match TunActor::new(Some(name.clone())) {
@@ -148,7 +148,7 @@ async fn run_entry_listen(
         routes: Some(Arc::clone(&res.routes)),
         local_handshake: Some(wallhack_wire::data::Handshake {
             capabilities: Some(wallhack_wire::data::Capabilities {
-                tun_capable: true,
+                tun_capable: crate::tun_cap::detect_tun_capable(),
                 listening: true,
                 connecting: false,
             }),
@@ -239,7 +239,7 @@ where
 /// Run entry node in connect mode.
 ///
 /// DNS resolve once, then retry loop with exponential backoff.
-async fn run_entry_connect(
+pub(crate) async fn run_entry_connect(
     global: &GlobalConfig,
     cfg: &EntryConfig,
     spec: &AddressSpec,
@@ -273,12 +273,20 @@ async fn run_entry_connect(
     };
     let fast_mode = cfg.fast;
 
+    // Advertise the correct capabilities: entry connectors are TUN-capable.
+    let entry_handshake = entry_local_handshake(&cfg.name);
+
     match spec.protocol {
         Protocol::Udp => {
             #[cfg(feature = "quic")]
             {
-                let client_config =
-                    crate::config::build_quic_client_config(global, endpoint, None, &security);
+                let client_config = crate::config::build_quic_client_config(
+                    global,
+                    endpoint,
+                    None,
+                    &security,
+                    Some(entry_handshake),
+                );
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -303,8 +311,13 @@ async fn run_entry_connect(
         Protocol::Tcp => {
             #[cfg(feature = "websocket")]
             {
-                let client_config =
-                    crate::config::build_ws_client_config(global, endpoint, None, &security);
+                let client_config = crate::config::build_ws_client_config(
+                    global,
+                    endpoint,
+                    None,
+                    &security,
+                    Some(entry_handshake),
+                );
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -328,8 +341,24 @@ async fn run_entry_connect(
     }
 }
 
+/// Build the local handshake for an entry connector.
+fn entry_local_handshake(name: &str) -> wallhack_wire::data::Handshake {
+    wallhack_wire::data::Handshake {
+        capabilities: Some(wallhack_wire::data::Capabilities {
+            tun_capable: crate::tun_cap::detect_tun_capable(),
+            listening: false,
+            connecting: true,
+        }),
+        name: name.to_string(),
+        version: crate::built_info::PKG_VERSION.to_string(),
+        psk_proof: Vec::new(),
+        routes: Vec::new(),
+        hint: None,
+    }
+}
+
 /// Run the entry node session once connected.
-async fn run_entry_connected<T: wallhack_core::transport::Transport + 'static>(
+pub(crate) async fn run_entry_connected<T: wallhack_core::transport::Transport + 'static>(
     connect_result: wallhack_core::client::client::ConnectResult<T>,
     metrics: &Arc<Metrics>,
     fast_mode: bool,
@@ -552,7 +581,7 @@ fn validate_handshake<T: wallhack_core::transport::Transport + 'static>(
 }
 
 /// Spawn background tasks that bridge transport data streams.
-fn spawn_data_tasks<T: wallhack_core::transport::Transport + 'static>(
+pub(crate) fn spawn_data_tasks<T: wallhack_core::transport::Transport + 'static>(
     transport: &Arc<T>,
     instructions_tx: &tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
     responses_tx: &tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,

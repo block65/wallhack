@@ -59,6 +59,7 @@ fn build_server_options(cfg: &RelayConfig, metrics: Arc<Metrics>) -> ServerOptio
 /// # Errors
 ///
 /// Returns error if a non-retryable connection error occurs.
+#[allow(clippy::too_many_lines)] // symmetric quic/ws dispatch arms
 pub async fn run(
     global: &GlobalConfig,
     cfg: &RelayConfig,
@@ -76,12 +77,31 @@ pub async fn run(
         accept_fingerprint: cfg.accept_fingerprint.clone(),
     };
 
+    // Relay connector advertises both listening and connecting capabilities.
+    let relay_connector_hs = wallhack_wire::data::Handshake {
+        capabilities: Some(wallhack_wire::data::Capabilities {
+            tun_capable: false,
+            listening: true,
+            connecting: true,
+        }),
+        name: cfg.name.clone(),
+        version: crate::built_info::PKG_VERSION.to_string(),
+        psk_proof: Vec::new(),
+        routes: Vec::new(),
+        hint: None,
+    };
+
     match cfg.connect.protocol {
         Protocol::Udp => {
             #[cfg(feature = "quic")]
             {
-                let client_config =
-                    crate::config::build_quic_client_config(global, target_addr, None, &security);
+                let client_config = crate::config::build_quic_client_config(
+                    global,
+                    target_addr,
+                    None,
+                    &security,
+                    Some(relay_connector_hs.clone()),
+                );
                 let listen_spec = cfg.listen.clone();
                 let global = global.clone();
                 crate::transport::connect_loop(
@@ -120,8 +140,13 @@ pub async fn run(
         Protocol::Tcp => {
             #[cfg(feature = "websocket")]
             {
-                let client_config =
-                    crate::config::build_ws_client_config(global, target_addr, None, &security);
+                let client_config = crate::config::build_ws_client_config(
+                    global,
+                    target_addr,
+                    None,
+                    &security,
+                    Some(relay_connector_hs),
+                );
                 let listen_spec = cfg.listen.clone();
                 let global = global.clone();
                 crate::transport::connect_loop(
