@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use smoltcp::wire::IpVersion;
-use wallhack_transport::{BiStream, Transport};
+use wallhack_transport::{BiStream as _, ErasedTransport};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
 use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESSION_INIT_MTU};
@@ -17,10 +17,7 @@ use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESS
 ///
 /// Opens a bi-stream, sends `SessionInit`, reads `SessionStatus`, then closes.
 /// Returns `true` if the exit confirmed the connection (open port).
-pub async fn probe_tcp_target<T: Transport + 'static>(
-    transport: &Arc<T>,
-    target_addr: &str,
-) -> bool {
+pub async fn probe_tcp_target(transport: &Arc<dyn ErasedTransport>, target_addr: &str) -> bool {
     let result = probe_inner(transport, target_addr).await;
     match result {
         Ok(open) => open,
@@ -31,11 +28,11 @@ pub async fn probe_tcp_target<T: Transport + 'static>(
     }
 }
 
-async fn probe_inner<T: Transport + 'static>(
-    transport: &Arc<T>,
+async fn probe_inner(
+    transport: &Arc<dyn ErasedTransport>,
     target_addr: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let mut stream = transport.open_bi().await?;
+    let mut stream = transport.open_bi_erased().await?;
 
     let init = SessionInit {
         target_addr: target_addr.to_string(),

@@ -17,7 +17,7 @@ use tokio::{
 use wallhack_entry_stack::async_stack::{
     HeldSyn, Netstack, SynProxyState, udp_socket::UdpSocketAny,
 };
-use wallhack_transport::Transport;
+use wallhack_transport::ErasedTransport;
 use wallhack_wire::{
     data::{
         EntryNodeInstruction, ExitNodeResponse, UdpSendInstruction, entry_node_instruction,
@@ -56,9 +56,9 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-pub struct ConnectionManager<D: Device + Send + 'static, T: Transport + 'static> {
+pub struct ConnectionManager<D: Device + Send + 'static> {
     stack: Netstack<D>,
-    transport: Arc<T>,
+    transport: Arc<dyn ErasedTransport>,
     metrics: SharedMetrics,
     tun_writer: Arc<AsyncFd<tun::Device>>,
     udp_sessions: HashMap<(smoltcp::wire::IpEndpoint, u16), UdpSession>,
@@ -80,10 +80,10 @@ pub struct ConnectionManager<D: Device + Send + 'static, T: Transport + 'static>
     responses_rx: broadcast::Receiver<ExitNodeResponse>,
 }
 
-impl<T: Transport + 'static> ConnectionManager<super::actor::SmoltcpTunDevice, T> {
+impl ConnectionManager<super::actor::SmoltcpTunDevice> {
     pub fn new(
         actor: TunActor,
-        transport: Arc<T>,
+        transport: Arc<dyn ErasedTransport>,
         metrics: SharedMetrics,
         fast_mode: bool,
         instructions_tx: broadcast::Sender<EntryNodeInstruction>,
@@ -117,7 +117,7 @@ struct UdpSession {
     last_seen: Instant,
 }
 
-impl<D: Device + Send + 'static, T: Transport + 'static> ConnectionManager<D, T> {
+impl<D: Device + Send + 'static> ConnectionManager<D> {
     #[allow(clippy::too_many_lines)] // refactor candidate
     pub async fn run(mut self) -> Result<(), Error>
     where

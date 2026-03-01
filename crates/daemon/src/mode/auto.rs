@@ -21,7 +21,7 @@ use wallhack_core::{
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     negotiate::{NegotiationResult, negotiate},
     server::server::{Server, ServerOptions},
-    transport::protocol,
+    transport::{ErasedTransport, Transport, protocol},
 };
 use wallhack_wire::data::{Capabilities, Handshake};
 
@@ -204,15 +204,56 @@ async fn run_auto_connector(
 }
 
 /// Drive one auto-connector session: await peer handshake, negotiate, dispatch.
-async fn run_auto_connect_session<T: wallhack_core::transport::Transport + 'static>(
+///
+/// Thin generic wrapper: extracts all non-generic parts from `ConnectResult<T>`
+/// and delegates to `run_auto_connect_session_inner`.
+async fn run_auto_connect_session<T>(
     mut connect_result: ConnectResult<T>,
     local_hs: &Handshake,
     peer_addr: &str,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
+) -> Result<(), NodeError>
+where
+    T: wallhack_core::transport::Transport + 'static,
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: 'static,
+{
+    let peer_handshake_rx = connect_result.take_peer_handshake_rx();
+    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
+    let (channels, tasks, control_tx) = connect_result.into_parts();
+    run_auto_connect_session_dispatch(
+        peer_handshake_rx,
+        transport,
+        channels,
+        tasks,
+        control_tx,
+        local_hs,
+        peer_addr,
+        metrics,
+        peers,
+    )
+    .await
+}
+
+/// Non-generic auto-connector dispatch: negotiates role and runs the session.
+#[allow(clippy::too_many_arguments)]
+async fn run_auto_connect_session_dispatch(
+    peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<Handshake>>,
+    transport: Arc<dyn ErasedTransport>,
+    channels: wallhack_core::server::server::Channels,
+    tasks: wallhack_core::client::client::ConnectionTasks,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    local_hs: &Handshake,
+    peer_addr: &str,
+    metrics: Arc<Metrics>,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
+    let (instructions_tx, responses_tx) = channels;
+
     // Wait for the peer's Handshake (delivered via the control loop oneshot).
-    let Some(rx) = connect_result.take_peer_handshake_rx() else {
+    let Some(rx) = peer_handshake_rx else {
         tracing::warn!("No peer handshake receiver in ConnectResult");
         return Ok(());
     };
@@ -235,12 +276,10 @@ async fn run_auto_connect_session<T: wallhack_core::transport::Transport + 'stat
         NegotiationResult::Resolved(NodeRole::Entry) => {
             tracing::info!("Negotiated role: entry");
             // Spawn the outgoing data task (send instructions to exit peer).
-            // The client connected with Indeterminate so no outgoing task was
-            // spawned; we create it here before calling run_entry_connected.
-            let instructions_rx = connect_result.channels().0.subscribe();
-            let transport_out = connect_result.transport();
+            let instructions_rx = instructions_tx.subscribe();
+            let transport_out = Arc::clone(&transport);
             tokio::spawn(async move {
-                match transport_out.open_uni().await {
+                match transport_out.open_uni_erased().await {
                     Ok(mut send) => {
                         if let Err(e) =
                             protocol::run_send_instructions(&mut send, instructions_rx).await
@@ -251,15 +290,25 @@ async fn run_auto_connect_session<T: wallhack_core::transport::Transport + 'stat
                     Err(e) => tracing::debug!("Auto entry failed to open send stream: {e}"),
                 }
             });
-            super::entry::run_entry_connected(connect_result, &metrics, false, peer_addr).await
+            drop(tasks);
+            drop(control_tx);
+            super::entry::run_entry_connected_inner(
+                transport,
+                instructions_tx,
+                responses_tx,
+                &metrics,
+                false,
+                peer_addr,
+            )
+            .await
         }
         NegotiationResult::Resolved(NodeRole::Exit) => {
             tracing::info!("Negotiated role: exit");
             // Spawn the outgoing data task (send responses to entry peer).
-            let responses_rx = connect_result.channels().1.subscribe();
-            let transport_out = connect_result.transport();
+            let responses_rx = responses_tx.subscribe();
+            let transport_out = Arc::clone(&transport);
             tokio::spawn(async move {
-                match transport_out.open_uni().await {
+                match transport_out.open_uni_erased().await {
                     Ok(mut send) => {
                         if let Err(e) = protocol::run_send_responses(&mut send, responses_rx).await
                         {
@@ -269,29 +318,37 @@ async fn run_auto_connect_session<T: wallhack_core::transport::Transport + 'stat
                     Err(e) => tracing::debug!("Auto exit failed to open send stream: {e}"),
                 }
             });
-            run_auto_exit_session(connect_result, peer_addr, &metrics, &peers).await
+            drop(tasks);
+            run_auto_exit_session_inner(
+                transport,
+                instructions_tx,
+                responses_tx,
+                control_tx,
+                peer_addr,
+                &metrics,
+                &peers,
+            )
+            .await
         }
         NegotiationResult::Resolved(NodeRole::Relay) => {
-            // Non-Both connector resolving to relay is unexpected but valid
-            // (e.g. both sides advertise relay). Log and hold.
             tracing::warn!("Unexpected relay negotiation for connector-only mode; holding");
-            hold_until_disconnect(connect_result).await;
+            hold_until_disconnect(tasks, control_tx).await;
             Ok(())
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
         | NegotiationResult::Indeterminate { .. } => {
             tracing::info!("Role is indeterminate: {result}; holding connection");
-            hold_until_disconnect(connect_result).await;
+            hold_until_disconnect(tasks, control_tx).await;
             Ok(())
         }
     }
 }
 
-/// Hold a `ConnectResult` open until the peer disconnects (or control dies).
-async fn hold_until_disconnect<T: wallhack_core::transport::Transport + 'static>(
-    connect_result: ConnectResult<T>,
+/// Hold connection tasks open until the peer disconnects (or control dies).
+async fn hold_until_disconnect(
+    mut tasks: wallhack_core::client::client::ConnectionTasks,
+    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
 ) {
-    let (_, mut tasks, _control_tx) = connect_result.into_parts();
     // Only watch incoming and control — the outgoing task is a no-op for
     // Indeterminate connections and completes immediately.
     tokio::select! {
@@ -300,9 +357,13 @@ async fn hold_until_disconnect<T: wallhack_core::transport::Transport + 'static>
     }
 }
 
-/// Run the exit role on an already-connected transport (no `tasks.wait_for_disconnect`).
-async fn run_auto_exit_session<T: wallhack_core::transport::Transport + 'static>(
-    connect_result: ConnectResult<T>,
+/// Non-generic exit session handler for the auto-connector path.
+#[allow(clippy::too_many_arguments)]
+async fn run_auto_exit_session_inner(
+    transport: Arc<dyn ErasedTransport>,
+    instructions_tx: tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    responses_tx: tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
+    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     peer_addr: &str,
     metrics: &Arc<Metrics>,
     peers: &Arc<Registry>,
@@ -320,10 +381,8 @@ async fn run_auto_exit_session<T: wallhack_core::transport::Transport + 'static>
     );
     let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
 
-    let transport = connect_result.transport();
-    let ((instr, resp), _tasks, _control_tx) = connect_result.into_parts();
     let stream_fut = super::exit::run_stream_listener(transport);
-    let drive_fut = orchestrator.drive(resp, instr.subscribe());
+    let drive_fut = orchestrator.drive(responses_tx, instructions_tx.subscribe());
 
     tokio::pin!(stream_fut);
     tokio::pin!(drive_fut);
@@ -413,6 +472,9 @@ async fn run_auto_accept_loop<S: Server>(
 where
     S::Error: std::error::Error + Send + Sync + 'static,
     S::Transport: Send + Sync + 'static,
+    <S::Transport as Transport>::SendStream: 'static,
+    <S::Transport as Transport>::RecvStream: 'static,
+    <S::Transport as Transport>::BiStream: 'static,
 {
     let local_addr = server.local_addr()?;
     tracing::info!(
@@ -427,18 +489,42 @@ where
 
     loop {
         match server.accept(NodeRole::Indeterminate).await {
-            Ok(Some(accept_result)) => {
+            Ok(Some(mut accept_result)) => {
                 let peer_addr = accept_result.peer_addr().to_string();
+
+                // PSK validation — must happen before spawning.
+                if let Some(ref psk) = server_psk
+                    && let Some(hs) = accept_result.peer_handshake()
+                {
+                    use wallhack_core::psk::HandshakeExt as _;
+                    let channel_binding = accept_result.channel_binding().copied();
+                    let valid = channel_binding
+                        .as_ref()
+                        .is_some_and(|b| hs.verify_psk_proof(psk.as_bytes(), b));
+                    if !valid {
+                        tracing::warn!("Peer {peer_addr} failed PSK authentication, dropping");
+                        continue;
+                    }
+                }
+
+                // Extract everything from the generic AcceptResult before spawning
+                // so the spawned future is non-generic.
+                let peer_hs = accept_result.take_peer_handshake();
+                let transport: Arc<dyn ErasedTransport> = accept_result.transport();
+                let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
+
                 let local_hs = local_hs.clone();
-                let server_psk = server_psk.clone();
                 let metrics = Arc::clone(&metrics);
                 let peers = Arc::clone(&peers);
                 let routes = Arc::clone(&routes);
                 tokio::spawn(async move {
-                    if let Err(e) = run_auto_accept_session(
-                        accept_result,
+                    if let Err(e) = run_auto_accept_session_inner(
+                        transport,
+                        instructions_tx,
+                        responses_tx,
+                        control_tx,
+                        peer_hs,
                         local_hs,
-                        server_psk,
                         metrics,
                         peers,
                         routes,
@@ -463,37 +549,24 @@ where
     Ok(())
 }
 
-/// Drive one accepted auto-listener session.
-#[allow(clippy::too_many_lines)] // negotiation dispatch with symmetric entry/exit arms
-async fn run_auto_accept_session<T: wallhack_core::transport::Transport + 'static>(
-    mut accept_result: wallhack_core::server::server::AcceptResult<T>,
+/// Non-generic inner implementation for accepted auto-listener sessions.
+///
+/// All generic extraction (transport, channels, handshake) happens in the
+/// caller before spawning, so this function is monomorphized only once.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn run_auto_accept_session_inner(
+    transport: Arc<dyn ErasedTransport>,
+    instructions_tx: tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    responses_tx: tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    peer_hs: Option<Handshake>,
     local_hs: Handshake,
-    server_psk: Option<zeroize::Zeroizing<String>>,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     _routes: SharedRouteTable,
     peer_addr: String,
 ) -> Result<(), NodeError> {
-    // PSK validation: verify the peer's proof matches the server PSK.
-    if let Some(ref psk) = server_psk {
-        let channel_binding = accept_result.channel_binding().copied();
-        if let Some(hs) = accept_result.peer_handshake() {
-            use wallhack_core::psk::HandshakeExt as _;
-            let valid = channel_binding
-                .as_ref()
-                .is_some_and(|b| hs.verify_psk_proof(psk.as_bytes(), b));
-            if !valid {
-                tracing::warn!("Peer {peer_addr} failed PSK authentication, dropping");
-                return Err(NodeError::PskAuth(
-                    accept_result
-                        .peer_handshake()
-                        .map_or_else(|| peer_addr.clone(), |h| h.name.clone()),
-                ));
-            }
-        }
-    }
-
-    let Some(peer_hs) = accept_result.take_peer_handshake() else {
+    let Some(peer_hs) = peer_hs else {
         tracing::warn!("No peer handshake from {peer_addr}; cannot negotiate");
         return Ok(());
     };
@@ -504,8 +577,6 @@ async fn run_auto_accept_session<T: wallhack_core::transport::Transport + 'stati
     match result {
         NegotiationResult::Resolved(NodeRole::Entry) => {
             tracing::info!("Negotiated role: entry (listener side)");
-            let transport = accept_result.transport();
-            let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
 
             // Spawn data tasks: incoming (peer→broadcasts) + outgoing (instructions→peer).
             super::entry::spawn_data_tasks(&transport, &instructions_tx, &responses_tx);
@@ -538,15 +609,13 @@ async fn run_auto_accept_session<T: wallhack_core::transport::Transport + 'stati
         }
         NegotiationResult::Resolved(NodeRole::Exit) => {
             tracing::info!("Negotiated role: exit (listener side)");
-            let transport = accept_result.transport();
-            let ((instructions_tx, responses_tx), control_tx) = accept_result.channels();
 
             // Spawn data tasks for exit: incoming (peer→broadcasts) + outgoing (responses→peer).
             let transport_in = Arc::clone(&transport);
             let instructions_in = instructions_tx.clone();
             let responses_in = responses_tx.clone();
             tokio::spawn(async move {
-                match transport_in.accept_uni().await {
+                match transport_in.accept_uni_erased().await {
                     Ok(Some(mut recv)) => {
                         if let Err(e) =
                             protocol::run_data_in(&mut recv, &instructions_in, &responses_in).await
@@ -561,7 +630,7 @@ async fn run_auto_accept_session<T: wallhack_core::transport::Transport + 'stati
             let transport_out = Arc::clone(&transport);
             let responses_rx = responses_tx.subscribe();
             tokio::spawn(async move {
-                match transport_out.open_uni().await {
+                match transport_out.open_uni_erased().await {
                     Ok(mut send) => {
                         if let Err(e) = protocol::run_send_responses(&mut send, responses_rx).await
                         {
@@ -601,16 +670,12 @@ async fn run_auto_accept_session<T: wallhack_core::transport::Transport + 'stati
         }
         NegotiationResult::Resolved(NodeRole::Relay) => {
             tracing::warn!("Unexpected relay negotiation for listener-only mode; holding");
-            let (_, control_tx) = accept_result.channels();
             let _keep_alive = control_tx;
-            // Hold until transport closes (control_tx keeps the control stream alive).
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
         | NegotiationResult::Indeterminate { .. } => {
             tracing::info!("Auto listener {peer_addr}: role is indeterminate: {result}");
-            let (_, control_tx) = accept_result.channels();
             let _keep_alive = control_tx;
-            // Hold until transport closes.
         }
     }
 

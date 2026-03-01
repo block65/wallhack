@@ -279,7 +279,15 @@ async fn run_quic_listener(
     loop {
         match server.accept(NodeRole::Relay).await {
             Ok(Some(accept_result)) => {
-                crate::transport::bridge_channels(accept_result, source_instr, source_resp);
+                let peer_addr = accept_result.peer_addr().to_string();
+                let (channels, control_tx) = accept_result.channels();
+                crate::transport::bridge_channels(
+                    &peer_addr,
+                    channels,
+                    control_tx,
+                    source_instr,
+                    source_resp,
+                );
             }
             Ok(None) => {
                 tracing::info!("Server closed");
@@ -313,7 +321,15 @@ async fn run_ws_listener(
     loop {
         match server.accept(NodeRole::Relay).await {
             Ok(Some(accept_result)) => {
-                crate::transport::bridge_channels(accept_result, source_instr, source_resp);
+                let peer_addr = accept_result.peer_addr().to_string();
+                let (channels, control_tx) = accept_result.channels();
+                crate::transport::bridge_channels(
+                    &peer_addr,
+                    channels,
+                    control_tx,
+                    source_instr,
+                    source_resp,
+                );
             }
             Ok(None) => {
                 tracing::info!("Server closed");

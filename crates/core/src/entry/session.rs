@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::io::copy_bidirectional;
 use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
-use wallhack_transport::{BiStream, Transport, TransportError};
+use wallhack_transport::{BiStream as _, ErasedTransport, TransportError};
 use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
 
 use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _};
@@ -16,10 +16,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-pub async fn run_tcp_session<D, T>(mut local: TcpStream<D>, transport: Arc<T>) -> Result<(), Error>
+pub async fn run_tcp_session<D>(
+    mut local: TcpStream<D>,
+    transport: Arc<dyn ErasedTransport>,
+) -> Result<(), Error>
 where
     D: smoltcp::phy::Device + Send + 'static,
-    T: Transport + 'static,
 {
     // In AnyIP mode, smoltcp accepts connections destined for any IP.
     // local_endpoint = the destination the client wanted (e.g., 10.200.2.10:9999)
@@ -31,7 +33,7 @@ where
         .remote_endpoint()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "missing remote"))?;
     tracing::debug!(?target, ?source, "TCP session starting, opening bi-stream");
-    let mut remote = transport.open_bi().await?;
+    let mut remote = transport.open_bi_erased().await?;
     tracing::debug!(?target, ?source, "bi-stream opened, sending init");
     let init = SessionInit {
         target_addr: target.to_string(),

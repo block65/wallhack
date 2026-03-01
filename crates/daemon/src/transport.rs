@@ -119,14 +119,16 @@ where
 ///
 /// This replaces the identical `bridge_downstream` (relay) and `bridge_peer`
 /// (exit relay capability) functions.
-pub(crate) fn bridge_channels<T: wallhack_core::transport::Transport>(
-    accept_result: wallhack_core::server::server::AcceptResult<T>,
+pub(crate) fn bridge_channels(
+    peer_addr: &str,
+    channels: wallhack_core::server::server::Channels,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     source_instr: &broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
     source_resp: &broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
 ) {
-    tracing::debug!("Bridging peer connection: {}", accept_result.peer_addr());
+    tracing::debug!("Bridging peer connection: {peer_addr}");
 
-    let ((peer_instr, peer_resp), control_tx) = accept_result.channels();
+    let (peer_instr, peer_resp) = channels;
 
     // Forward peer instructions to source (also holds control_tx to keep control stream alive)
     let source_instr_clone = source_instr.clone();
