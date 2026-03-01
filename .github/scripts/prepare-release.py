@@ -360,6 +360,21 @@ def cmd_update_changelog(args: argparse.Namespace) -> None:
     log(f"updated {cl}")
 
 
+def cmd_has_releasable(args: argparse.Namespace) -> None:
+    """Read commit subjects (one per line) from stdin.
+
+    Exit 0 if any are releasable (would trigger a version bump).
+    Exit 1 if none are (chore/docs/refactor/ci/website only).
+    """
+    lines = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+    log(f"has-releasable: checking {len(lines)} commit(s)")
+    fake_json = json.dumps([{"sha": "", "message": line} for line in lines])
+    commits = parse_commits(fake_json)
+    bump = determine_bump(commits)
+    log(f"has-releasable: bump={bump!r}")
+    sys.exit(0 if bump is not None else 1)
+
+
 def cmd_update_version(args: argparse.Namespace) -> None:
     """Rewrite the version in the [package] section of a Cargo.toml."""
     p = Path(args.version_file)
@@ -420,12 +435,17 @@ def main() -> None:
     p_ver.add_argument("--version-file", required=True)
     p_ver.add_argument("--version", required=True)
 
+    # has-releasable
+    sub.add_parser("has-releasable",
+                   help="Read commit subjects from stdin (one per line); exit 0 if any are releasable")
+
     args = parser.parse_args()
     {
         "analyze": cmd_analyze,
         "emit-outputs": cmd_emit_outputs,
         "update-changelog": cmd_update_changelog,
         "update-version": cmd_update_version,
+        "has-releasable": cmd_has_releasable,
     }[args.command](args)
 
 

@@ -25,6 +25,7 @@ version_gt = mod.version_gt
 generate_changelog = mod.generate_changelog
 generate_pr_body = mod.generate_pr_body
 read_current_version = mod.read_current_version
+cmd_has_releasable = mod.cmd_has_releasable
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +513,42 @@ def test_update_version():
     assert 'version = "0.3.0"' in content
     assert 'version = "1.0.0"' in content  # dependency unchanged
     Path(cargo.name).unlink()
+
+
+def test_has_releasable_with_feat():
+    import io
+    try:
+        sys.stdin = io.StringIO("feat: add turbo mode\nchore: bump deps\n")
+        cmd_has_releasable(argparse.Namespace())
+        assert False, "expected SystemExit(0)"
+    except SystemExit as e:
+        assert e.code == 0
+    finally:
+        sys.stdin = sys.__stdin__
+
+
+def test_has_releasable_chore_only():
+    import io
+    try:
+        sys.stdin = io.StringIO("chore: update standards submodule\ndocs: tighten wording\n")
+        cmd_has_releasable(argparse.Namespace())
+        assert False, "expected SystemExit(1)"
+    except SystemExit as e:
+        assert e.code == 1
+    finally:
+        sys.stdin = sys.__stdin__
+
+
+def test_has_releasable_infra_scopes_only():
+    import io
+    try:
+        sys.stdin = io.StringIO("fix(ci): correct workflow\nfeat(website): dark mode\n")
+        cmd_has_releasable(argparse.Namespace())
+        assert False, "expected SystemExit(1)"
+    except SystemExit as e:
+        assert e.code == 1
+    finally:
+        sys.stdin = sys.__stdin__
 
 
 def test_update_changelog_new_file():

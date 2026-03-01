@@ -120,19 +120,52 @@ cmd_open_pr() {
 
   git config user.name "$GIT_AUTHOR_NAME"
   git config user.email "$GIT_AUTHOR_EMAIL"
-  git checkout -B "$branch"
 
-  python3 "$SCRIPT" update-version \
-    --version-file "$VERSION_FILE" \
-    --version "$NEW_VERSION"
+  # Fetch the remote branch. Without this, a fresh CI checkout has no local
+  # tracking ref and any push to an existing remote branch would be rejected.
+  git fetch origin "$branch" 2>/dev/null || true
 
-  cargo update -p "$PACKAGE"
+  local needs_rebuild=true
+  if git show-ref --quiet "refs/remotes/origin/${branch}"; then
+    local tip_msg
+    tip_msg=$(git log -1 --format="%s" "refs/remotes/origin/${branch}")
+    notice "existing branch tip: ${tip_msg}"
+    if [ "$tip_msg" = "chore: release v${NEW_VERSION}" ]; then
+      # The branch is already prepared for this version. Only rebuild if
+      # new releasable commits have landed on main since the branch was cut.
+      local branch_base new_subjects
+      branch_base=$(git log -1 --format="%P" "refs/remotes/origin/${branch}")
+      new_subjects=$(git log --format="%s" "${branch_base}..HEAD")
+      notice "branch base: ${branch_base}"
+      notice "commits since branch base:$(echo "$new_subjects" | sed 's/^/\n  /')"
+      if ! echo "$new_subjects" | python3 "$SCRIPT" has-releasable; then
+        notice "no new releasable commits since release branch was created — skipping rebuild"
+        needs_rebuild=false
+      else
+        notice "new releasable commits found — rebuilding release branch"
+      fi
+    else
+      notice "branch tip does not match expected release commit — rebuilding"
+    fi
+  else
+    notice "no existing remote branch — creating fresh"
+  fi
 
-  python3 "$SCRIPT" update-changelog
+  if [ "$needs_rebuild" = true ]; then
+    git checkout -B "$branch"
 
-  git add "$VERSION_FILE" Cargo.lock CHANGELOG.md
-  git commit -m "chore: release v${NEW_VERSION}"
-  git push --force-with-lease origin "$branch"
+    python3 "$SCRIPT" update-version \
+      --version-file "$VERSION_FILE" \
+      --version "$NEW_VERSION"
+
+    cargo update -p "$PACKAGE"
+
+    python3 "$SCRIPT" update-changelog
+
+    git add "$VERSION_FILE" Cargo.lock CHANGELOG.md
+    git commit -m "chore: release v${NEW_VERSION}"
+    git push --force origin "$branch"
+  fi
 
   local existing_pr
   existing_pr=$(gh pr list --head "$branch" --json number \
