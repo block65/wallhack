@@ -38,6 +38,8 @@ pub enum ModeConfig {
     Entry(EntryConfig),
     Exit(ExitConfig),
     Relay(RelayConfig),
+    /// Role is determined automatically via handshake negotiation.
+    Auto(AutoConfig),
 }
 
 impl ModeConfig {
@@ -47,6 +49,7 @@ impl ModeConfig {
             Self::Entry(c) => &c.name,
             Self::Exit(c) => &c.name,
             Self::Relay(c) => &c.name,
+            Self::Auto(c) => &c.name,
         }
     }
 }
@@ -75,6 +78,18 @@ pub struct RelayConfig {
     pub name: String,
     pub connect: AddressSpec,
     pub listen: AddressSpec,
+    pub accept_fingerprint: Option<String>,
+}
+
+/// Auto-negotiation mode configuration.
+///
+/// Role is derived from the handshake exchange. With both `connect` and
+/// `listen` set, the node runs as a relay immediately (no negotiation needed).
+#[derive(Debug, Clone)]
+pub struct AutoConfig {
+    pub name: String,
+    pub listen: Option<AddressSpec>,
+    pub connect: Option<AddressSpec>,
     pub accept_fingerprint: Option<String>,
 }
 

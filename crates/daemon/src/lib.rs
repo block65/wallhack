@@ -15,6 +15,7 @@ mod mode;
 mod net;
 mod sys;
 mod transport;
+mod tun_cap;
 
 pub use error::NodeError;
 
@@ -95,6 +96,7 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
         ModeConfig::Entry(_) => NodeRole::Entry,
         ModeConfig::Exit(_) => NodeRole::Exit,
         ModeConfig::Relay(_) => NodeRole::Relay,
+        ModeConfig::Auto(_) => NodeRole::Indeterminate,
     };
 
     let metrics = Arc::new(Metrics::default());
