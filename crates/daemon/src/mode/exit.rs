@@ -92,6 +92,7 @@ async fn run_exit_connector(
                     endpoint,
                     Some(name.to_string()),
                     security,
+                    None,
                 );
                 let ctx = Arc::clone(ctx);
                 let pa = peer_addr.clone();
@@ -126,6 +127,7 @@ async fn run_exit_connector(
                     endpoint,
                     Some(name.to_string()),
                     security,
+                    None,
                 );
                 let ctx = Arc::clone(ctx);
                 let pa = peer_addr.clone();
@@ -213,6 +215,7 @@ async fn run_quic_exit_both(
         peer_addr,
         Some(name.to_string()),
         security,
+        None,
     );
     let connect_result = crate::transport::connect_with_retry(|| {
         let cfg = client_config.clone();
@@ -273,8 +276,13 @@ async fn run_ws_exit_both(
 ) -> Result<(), NodeError> {
     use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
 
-    let client_config =
-        crate::config::build_ws_client_config(global, peer_addr, Some(name.to_string()), security);
+    let client_config = crate::config::build_ws_client_config(
+        global,
+        peer_addr,
+        Some(name.to_string()),
+        security,
+        None,
+    );
     let connect_result = crate::transport::connect_with_retry(|| {
         let cfg = client_config.clone();
         async move {
@@ -532,7 +540,9 @@ async fn run_exit_loop<T: wallhack_core::transport::Transport + 'static>(
     Ok(())
 }
 
-async fn run_stream_listener<T: Transport>(transport: std::sync::Arc<T>) -> Result<(), NodeError>
+pub(crate) async fn run_stream_listener<T: Transport>(
+    transport: std::sync::Arc<T>,
+) -> Result<(), NodeError>
 where
     T::BiStream: 'static,
 {
