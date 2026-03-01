@@ -42,16 +42,6 @@
 - [ ] Relay direction — how does a relay decide which direction to forward?
       Needs investigation.
 
-## Auto-role Negotiation
-
-- [x] Add `ServerHello` protobuf message so the accepting node announces its
-      role to the connecting node immediately after the client Hello.
-- [x] Implement auto-role detection: `wallhack --connect <host>` (no subcommand)
-      connects, receives the `ServerHello`, and adopts the complementary role
-      automatically — entry if the server is exit/relay, exit if the server is
-      entry. Peer name defaults to random (same as `exit` today).
-- [x] Drop the subcommand requirement when `--connect` is the only flag.
-
 ## REST API
 
 - [ ] `connect` and `listen` endpoints — expose `NodeApi::connect` and
@@ -88,12 +78,6 @@
       — logfmt at most (e.g. `tracing-logfmt`) for `wallhackd`
       background/systemd (non-slim only), consistent prefixed format for
       foreground/REPL (slim always uses this). Watch bloat.
-- [x] No connected message on exit node when a peer connects — entry logs
-      `"Connected to {peer_addr}"` but exit connect-only mode does not.
-- [x] REPL `connect` command doesn't resolve hostnames — passes raw address
-      string to daemon without DNS resolution. `resolve_endpoint()` exists in
-      daemon transport but REPL bypasses it. Results in `"invalid address:
-      attacker"` when using hostnames.
 - [ ] Relay mode: `control_tx` dropped immediately — `relay.rs` and `exit.rs`
       relay-capability paths call `.channels().clone()` then drop the
       `ConnectResult`, killing the upstream control stream. Need to retain
@@ -102,9 +86,6 @@
       exit relay-capability mode passes peers to `ServerOptions` but
       `run_accept_bridge_loop` / `bridge_channels` never calls `register()` /
       `unregister()`. REPL `peers` always empty in relay mode.
-- [ ] Relay mode: no reconnect loop — if the upstream connection drops, relay
-      just exits. Exit connector mode has `connect_loop` for this; relay has
-      nothing.
 - [ ] Noisy reconnect messages on exit node after entry exits — multiple
       overlapping messages ("Connection tasks died", "Transport disconnected",
       "Connection dropped") fire at non-verbose log levels. Consolidate into a
@@ -157,16 +138,6 @@
       was extracted to `handle_exit_response()` but the main loop is still
       monolithic. Extract each remaining concern into a focused type or async fn
       with a clean input/output contract.
-- [ ] Transport monomorphization — `run_auto_accept_loop<S: Server>` instantiates twice
-      (QUIC + WS), 2 × 16KiB = 32KiB. `run_entry_server` has the same problem (2 × 10.8KiB).
-      The thin-trampoline + ErasedTransport wrapper approach was attempted and made things
-      **worse** (+98KB): a concrete wrapper struct in wallhackd still produces a third
-      instantiation of all downstream generics in wallhack_core (ConnectionManager<D,T>,
-      run_stream_listener<T>). The fix must be in wallhack_core: make ConnectionManager and
-      run_stream_listener accept `Arc<dyn ErasedTransport>` where ErasedTransport is an
-      object-safe wrapper trait (Transport has associated types so it isn't object-safe as-is).
-      Only then can a single dyn boundary in wallhackd eliminate all downstream duplication.
-      **Proof + full analysis:** `bench/results/bloat_20260301_analysis.txt`.
 - [ ] `run_auto_accept_session` decomposition — `crates/daemon/src/mode/auto.rs`
       handles entry and exit negotiation outcomes in one function. Extract the
       entry and exit arms into dedicated helpers with clean signatures, but only
