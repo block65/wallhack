@@ -91,6 +91,7 @@ pub struct AutoConfig {
     pub listen: Option<AddressSpec>,
     pub connect: Option<AddressSpec>,
     pub accept_fingerprint: Option<String>,
+    pub hint: Option<wallhack_wire::data::RoleHint>,
 }
 
 /// REST API configuration for entry nodes.

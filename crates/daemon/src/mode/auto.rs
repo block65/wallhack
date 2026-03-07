@@ -81,7 +81,7 @@ pub(crate) async fn run(
 
 /// Build a local `Handshake` for capability advertisement.
 fn build_local_handshake(
-    name: &str,
+    cfg: &AutoConfig,
     tun_capable: bool,
     listening: bool,
     connecting: bool,
@@ -92,11 +92,11 @@ fn build_local_handshake(
             listening,
             connecting,
         }),
-        name: name.to_string(),
+        name: cfg.name.clone(),
         version: crate::built_info::PKG_VERSION.to_string(),
         psk_proof: Vec::new(),
         routes: Vec::new(),
-        hint: None,
+        hint: cfg.hint,
     }
 }
 
@@ -114,7 +114,7 @@ async fn run_auto_connector(
     peers: Arc<Registry>,
     _routes: SharedRouteTable,
 ) -> Result<(), NodeError> {
-    let local_hs = build_local_handshake(&cfg.name, tun_capable, false, true);
+    let local_hs = build_local_handshake(cfg, tun_capable, false, true);
 
     tracing::info!("Auto connector: connecting to {}...", spec.addr);
     let endpoint =
@@ -414,7 +414,7 @@ async fn run_auto_listener(
     peers: Arc<Registry>,
     routes: SharedRouteTable,
 ) -> Result<(), NodeError> {
-    let local_hs = build_local_handshake(&cfg.name, tun_capable, true, false);
+    let local_hs = build_local_handshake(cfg, tun_capable, true, false);
 
     let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
     let server_options = ServerOptions {
