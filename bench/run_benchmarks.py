@@ -122,6 +122,7 @@ def _wallhack_version():
 ap = argparse.ArgumentParser(description="wallhack benchmark runner")
 ap.add_argument("--transport", choices=["quic", "websocket", "both"], default="both")
 ap.add_argument("--runs", type=int, default=3)
+ap.add_argument("--metric", type=str, default=None, help="Filter by metric name (e.g. parallel10, tcp_downstream)")
 ap.add_argument("--debug", action="store_true")
 ap.add_argument("--verbose", action="store_true")
 args = ap.parse_args()
@@ -139,6 +140,8 @@ results = {
 
 for transport in transports:
     for _, metric_name, unit, netem in SCENARIOS:
+        if args.metric and metric_name != args.metric:
+            continue
         label = f"{transport}/{metric_name}"
         if netem:
             label += " (" + " ".join(f"{k}={v}" for k, v in netem.items()) + ")"
