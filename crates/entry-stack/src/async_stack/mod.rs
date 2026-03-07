@@ -443,8 +443,11 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
             // smoltcp emits at most one TCP segment per socket per poll().
             // After the normal poll (ingress + one egress), drain additional
             // egress segments to emit a burst without re-doing ingress.
+            // Scale rounds inversely with socket count to keep lock duration
+            // predictable: ~128 rounds for 1 socket, ~4 for 32+ sockets.
             inner.poll(now);
-            inner.drain_egress(now, 64);
+            let drain_rounds = (128 / inner.socket_count().max(1)).max(4);
+            inner.drain_egress(now, drain_rounds);
 
             prune_and_notify(&mut inner, &notify, &mut prune_counter);
             inner.poll_at(now).map(|poll_at| {
