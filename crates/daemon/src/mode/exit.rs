@@ -16,7 +16,7 @@ use wallhack_core::{
     server::server::Server,
     transport::{
         BiStream, ErasedTransport, Transport,
-        protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESSION_INIT_MTU},
+        protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, TCP_STREAM_HEADER_MTU},
     },
 };
 
@@ -459,22 +459,22 @@ pub(crate) async fn run_stream_listener(
 }
 
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
-    let init: wallhack_wire::data::SessionInit = stream
-        .read_proto(SESSION_INIT_MTU)
+    let header: wallhack_wire::data::TcpStreamHeader = stream
+        .read_proto(TCP_STREAM_HEADER_MTU)
         .await
         .map_err(|e| NodeError::Stream(Box::new(e)))?;
-    tracing::trace!(target = %init.target_addr, source = %init.source_addr, protocol = init.protocol, "SessionInit received");
-    let target: std::net::SocketAddr = init.target_addr.parse()?;
-    let source: Option<std::net::SocketAddr> = if init.source_addr.is_empty() {
+    tracing::trace!(target = %header.target_addr, source = %header.source_addr, protocol = header.protocol, "TcpStreamHeader received");
+    let target: std::net::SocketAddr = header.target_addr.parse()?;
+    let source: Option<std::net::SocketAddr> = if header.source_addr.is_empty() {
         None
     } else {
-        Some(init.source_addr.parse()?)
+        Some(header.source_addr.parse()?)
     };
-    match init.protocol {
+    match header.protocol {
         val if val == wallhack_wire::data::SessionProtocol::Tcp as i32 => {
             match tokio::net::TcpStream::connect(target).await {
                 Ok(mut socket) => {
-                    let status = wallhack_wire::data::SessionStatus {
+                    let status = wallhack_wire::data::TcpStreamStatus {
                         status: wallhack_wire::data::ResponseStatus::Success.into(),
                         reason: String::new(),
                     };
@@ -491,7 +491,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
                         }
                         _ => wallhack_wire::data::ResponseStatus::HostUnreachable,
                     };
-                    let status = wallhack_wire::data::SessionStatus {
+                    let status = wallhack_wire::data::TcpStreamStatus {
                         status: status_code.into(),
                         reason: e.to_string(),
                     };
@@ -553,7 +553,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
             }
         }
         _ => {
-            tracing::warn!("unsupported session protocol {}", init.protocol);
+            tracing::warn!("unsupported session protocol {}", header.protocol);
         }
     }
     Ok(())

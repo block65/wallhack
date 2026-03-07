@@ -16,7 +16,7 @@
 #   transport=quic|websocket
 #   loss=N%    (resilience: netem loss,  e.g. "2%")
 #   delay=Nms  (resilience: netem delay, e.g. "25ms")
-#   metric=tcp_fwd|tcp_rev|udp|latency|parallel2|parallel4  (benchmark only)
+#   metric=tcp_upstream|tcp_downstream|udp|latency|parallel10|parallel40  (benchmark only)
 #   debug=1    (pass --debug to wallhack, keep running after test)
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin
@@ -90,7 +90,7 @@ DEBUG=$(_param debug)
 : "${ROLE:=entry}"
 : "${SCENARIO:=smoke}"
 : "${TRANSPORT:=quic}"
-: "${METRIC:=tcp_fwd}"
+: "${METRIC:=tcp_upstream}"
 
 # Expose _ROLE to the exit trap
 _ROLE="${ROLE}"
@@ -308,14 +308,14 @@ _run_benchmark() {
 	fi
 
 	# All throughput scenarios use --json for sub-Mbps precision.
-	# sum_sent = client-side sender stats (tcp_fwd, udp, parallel)
-	# sum_received = client-side receiver stats (tcp_rev with -R)
+	# sum_sent = client-side sender stats (tcp_upstream, udp, parallel)
+	# sum_received = client-side receiver stats (tcp_downstream with -R)
 	case "${METRIC}" in
-		tcp_fwd)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json    | _iperf3_bps_mbps "sum_sent") ;;
-		tcp_rev)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -R | _iperf3_bps_mbps "sum_received") ;;
+		tcp_upstream)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json    | _iperf3_bps_mbps "sum_sent") ;;
+		tcp_downstream) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -R | _iperf3_bps_mbps "sum_received") ;;
 		udp)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -u -b 0 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel2) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 2 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel4) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 4 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel10) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 10 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel40) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 40 | _iperf3_bps_mbps "sum_sent") ;;
 		*)         _fail "unknown benchmark metric: ${METRIC}"; return ;;
 	esac
 

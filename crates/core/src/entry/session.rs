@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::io::copy_bidirectional;
 use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream as _, ErasedTransport, TransportError};
-use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
+use wallhack_wire::data::{ResponseStatus, SessionProtocol, TcpStreamHeader, TcpStreamStatus};
 
 use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _};
 
@@ -35,18 +35,18 @@ where
     tracing::debug!(?target, ?source, "TCP session starting, opening bi-stream");
     let mut remote = transport.open_bi_erased().await?;
     tracing::debug!(?target, ?source, "bi-stream opened, sending init");
-    let init = SessionInit {
+    let header = TcpStreamHeader {
         target_addr: target.to_string(),
         source_addr: source.to_string(),
         protocol: SessionProtocol::Tcp as i32,
     };
-    remote.write_proto(&init).await?;
+    remote.write_proto(&header).await?;
 
     // Wait for exit node to confirm the connection succeeded before copying data.
     // Without this, smoltcp has already SYN-ACKed the client but we don't know
     // if the real target is reachable. On failure, dropping `local` sends RST.
-    let status: SessionStatus = remote
-        .read_proto(crate::transport::protocol::SESSION_INIT_MTU)
+    let status: TcpStreamStatus = remote
+        .read_proto(crate::transport::protocol::TCP_STREAM_HEADER_MTU)
         .await?;
     if status.status() != ResponseStatus::Success {
         tracing::debug!(?target, status = ?status.status(), reason = %status.reason, "exit rejected connection");
@@ -77,37 +77,37 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::protocol::SESSION_INIT_MTU;
+    use crate::transport::protocol::TCP_STREAM_HEADER_MTU;
 
-    /// Verify that a success `SessionStatus` round-trips correctly.
+    /// Verify that a success `TcpStreamStatus` round-trips correctly.
     #[tokio::test]
     async fn session_status_success_round_trip() {
         let (mut writer, mut reader) = tokio::io::duplex(1024);
 
-        let status = SessionStatus {
+        let status = TcpStreamStatus {
             status: ResponseStatus::Success.into(),
             reason: String::new(),
         };
         writer.write_proto(&status).await.unwrap();
         drop(writer);
 
-        let read_status: SessionStatus = reader.read_proto(SESSION_INIT_MTU).await.unwrap();
+        let read_status: TcpStreamStatus = reader.read_proto(TCP_STREAM_HEADER_MTU).await.unwrap();
         assert_eq!(read_status.status(), ResponseStatus::Success);
     }
 
-    /// Verify that a refused `SessionStatus` round-trips with the reason intact.
+    /// Verify that a refused `TcpStreamStatus` round-trips with the reason intact.
     #[tokio::test]
     async fn session_status_refused_round_trip() {
         let (mut writer, mut reader) = tokio::io::duplex(1024);
 
-        let status = SessionStatus {
+        let status = TcpStreamStatus {
             status: ResponseStatus::ConnectionRefused.into(),
             reason: "Connection refused".to_string(),
         };
         writer.write_proto(&status).await.unwrap();
         drop(writer);
 
-        let read_status: SessionStatus = reader.read_proto(SESSION_INIT_MTU).await.unwrap();
+        let read_status: TcpStreamStatus = reader.read_proto(TCP_STREAM_HEADER_MTU).await.unwrap();
         assert_eq!(read_status.status(), ResponseStatus::ConnectionRefused);
         assert_eq!(read_status.reason, "Connection refused");
     }

@@ -73,13 +73,13 @@ enum SessionProtocol {
   SESSION_PROTOCOL_UDP = 2;
 }
 
-message SessionInit {
+message TcpStreamHeader {
   string target_addr = 1;
   string source_addr = 2;
   SessionProtocol protocol = 3;
 }
 
-message SessionStatus {
+message TcpStreamStatus {
   ResponseStatus status = 1;
   string reason = 2;
 }
