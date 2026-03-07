@@ -18,6 +18,7 @@ mod transport;
 mod tun_cap;
 
 pub use error::NodeError;
+pub use tun_cap::detect_tun_capable;
 
 use std::sync::Arc;
 

@@ -4,7 +4,7 @@
 //! handshake capabilities using deterministic, pure rules. No side-effects,
 //! no I/O.
 
-use wallhack_wire::data::Handshake;
+use wallhack_wire::data::{Handshake, HintLevel, NodeRole as ProtoNodeRole, RoleHint};
 
 use crate::NodeRole;
 
@@ -28,6 +28,31 @@ impl std::fmt::Display for NegotiationResult {
     }
 }
 
+/// Convert a proto `NodeRole` to a core `NodeRole`.
+fn proto_to_core_role(proto: ProtoNodeRole) -> NodeRole {
+    match proto {
+        ProtoNodeRole::RoleEntry => NodeRole::Entry,
+        ProtoNodeRole::RoleExit => NodeRole::Exit,
+        ProtoNodeRole::RoleRelay => NodeRole::Relay,
+        ProtoNodeRole::RoleIndeterminate => NodeRole::Indeterminate,
+    }
+}
+
+/// Extract hint level and target from a `RoleHint`, returning `None` for
+/// unspecified or invalid values.
+fn parse_hint(hint: Option<&RoleHint>) -> Option<(HintLevel, NodeRole)> {
+    let h = hint?;
+    let level = HintLevel::try_from(h.level).ok()?;
+    if level == HintLevel::Unspecified {
+        return None;
+    }
+    let target = ProtoNodeRole::try_from(h.target).ok()?;
+    if target == ProtoNodeRole::RoleIndeterminate {
+        return None;
+    }
+    Some((level, proto_to_core_role(target)))
+}
+
 /// Derive the local node's role from the exchange of two `Handshake` messages.
 ///
 /// **This function is pure**: same inputs → same output, always. No I/O, no
@@ -37,21 +62,70 @@ impl std::fmt::Display for NegotiationResult {
 /// pair (with roles swapped on each side), both sides derive complementary
 /// results — entry on one side implies exit on the other.
 ///
-/// # Rules
+/// # Rules (in priority order)
 ///
-/// Relay is unambiguous: any node with both listen and connect addresses
-/// is always a relay, regardless of TUN capability or what the peer advertises.
+/// 1. **FIXED hint** — checked first. If local has a FIXED hint, return
+///    the target role immediately. If both sides are FIXED to the same role,
+///    return Indeterminate (conflict detected at runtime, not startup).
 ///
-/// When talking to a relay, the non-relay node resolves immediately from its
-/// own TUN capability alone (entry if TUN-capable, exit otherwise). The relay
-/// signals that the chain continues, so there is no need to wait.
+/// 2. **Capability-based rules** — relay, TUN asymmetry. If these produce an
+///    unambiguous result, hints don't override it.
 ///
-/// For two non-relay nodes, role is determined purely by TUN capability:
-/// - TUN-capable ↔ non-TUN → local = entry
-/// - non-TUN ↔ TUN-capable → local = exit
-/// - both TUN-capable or both non-TUN → Indeterminate
+/// 3. **EXCLUDE hint** — removes a role from the local candidate set, then
+///    re-evaluates.
+///
+/// 4. **PREFER hint** — breaks ambiguity when capability rules alone
+///    produce Indeterminate.
 #[must_use]
 pub fn negotiate(local: &Handshake, peer: &Handshake) -> NegotiationResult {
+    let local_hint = parse_hint(local.hint.as_ref());
+    let peer_hint = parse_hint(peer.hint.as_ref());
+
+    // 1. FIXED — override everything.
+    if let Some((HintLevel::Fixed, target)) = local_hint {
+        // If the peer is also FIXED to the same role, that's a conflict.
+        if let Some((HintLevel::Fixed, peer_target)) = peer_hint
+            && target == peer_target
+        {
+            return NegotiationResult::Indeterminate {
+                reason: "both peers have fixed hints for the same role",
+            };
+        }
+        return NegotiationResult::Resolved(target);
+    }
+
+    // 2. Capability-based rules.
+    let cap_result = negotiate_from_capabilities(local, peer);
+
+    // If capabilities gave a clear answer, return it.
+    if let NegotiationResult::Resolved(_) = &cap_result {
+        return cap_result;
+    }
+
+    // 3. EXCLUDE — remove a role from consideration.
+    if let Some((HintLevel::Exclude, excluded)) = local_hint {
+        return negotiate_with_exclude(local, peer, excluded);
+    }
+
+    // 4. PREFER — break ambiguity.
+    let local_prefer = match local_hint {
+        Some((HintLevel::Prefer, target)) => Some(target),
+        _ => None,
+    };
+    let peer_prefer = match peer_hint {
+        Some((HintLevel::Prefer, target)) => Some(target),
+        _ => None,
+    };
+
+    if local_prefer.is_some() || peer_prefer.is_some() {
+        return negotiate_with_prefer(local, peer, local_prefer, peer_prefer);
+    }
+
+    cap_result
+}
+
+/// Pure capability-based negotiation (no hints).
+fn negotiate_from_capabilities(local: &Handshake, peer: &Handshake) -> NegotiationResult {
     let local_caps = local.capabilities.as_ref();
     let peer_caps = peer.capabilities.as_ref();
 
@@ -94,14 +168,109 @@ pub fn negotiate(local: &Handshake, peer: &Handshake) -> NegotiationResult {
     }
 }
 
+/// Complement of a role in entry/exit pair.
+fn complement(role: NodeRole) -> Option<NodeRole> {
+    match role {
+        NodeRole::Entry => Some(NodeRole::Exit),
+        NodeRole::Exit => Some(NodeRole::Entry),
+        _ => None,
+    }
+}
+
+/// Negotiate with a local EXCLUDE hint.
+///
+/// Only the local node's EXCLUDE is applied here. The peer's EXCLUDE (if any)
+/// is applied independently when the peer calls `negotiate()` with swapped
+/// arguments. This means a local EXCLUDE can resolve this side while the peer
+/// may still be Indeterminate — that's by design: each side acts on its own
+/// hint, and convergence happens when both sides have enough information.
+fn negotiate_with_exclude(
+    local: &Handshake,
+    peer: &Handshake,
+    excluded: NodeRole,
+) -> NegotiationResult {
+    let local_tun = local.capabilities.as_ref().is_some_and(|c| c.tun_capable);
+
+    // If the excluded role has a complement and the node could plausibly
+    // fill it, resolve to the complement.
+    if let Some(remaining) = complement(excluded) {
+        // Sanity: for entry we need TUN capability.
+        if remaining == NodeRole::Entry && !local_tun {
+            return NegotiationResult::Indeterminate {
+                reason: "excluded role leaves entry, but node lacks TUN capability",
+            };
+        }
+        // Check the peer can plausibly take the excluded role. For "exclude
+        // exit" the peer needs to be able to be exit (non-relay peer is fine).
+        let peer_tun = peer.capabilities.as_ref().is_some_and(|c| c.tun_capable);
+        if excluded == NodeRole::Entry && !peer_tun {
+            return NegotiationResult::Indeterminate {
+                reason: "excluded entry for local, but peer also lacks TUN capability",
+            };
+        }
+        return NegotiationResult::Resolved(remaining);
+    }
+
+    // Excluding relay when local isn't a relay is a no-op for two-node
+    // entry/exit negotiation — fall through to capability-based.
+    negotiate_from_capabilities(local, peer)
+}
+
+/// Negotiate with PREFER hints.
+fn negotiate_with_prefer(
+    local: &Handshake,
+    peer: &Handshake,
+    local_prefer: Option<NodeRole>,
+    peer_prefer: Option<NodeRole>,
+) -> NegotiationResult {
+    let local_tun = local.capabilities.as_ref().is_some_and(|c| c.tun_capable);
+
+    // Peer prefers relay → signals the chain continues through them, so a
+    // TUN-capable local resolves to entry.
+    if peer_prefer == Some(NodeRole::Relay) && local_tun {
+        return NegotiationResult::Resolved(NodeRole::Entry);
+    }
+
+    match (local_prefer, peer_prefer) {
+        // Both prefer the same contested role → still ambiguous.
+        (Some(l), Some(p)) if l == p => NegotiationResult::Indeterminate {
+            reason: "both peers prefer the same role",
+        },
+        // They prefer different roles → each gets what they want.
+        (Some(l), Some(_)) => NegotiationResult::Resolved(l),
+        // Only local prefers → local gets it.
+        (Some(target), None) => NegotiationResult::Resolved(target),
+        // Only peer prefers → local gets the complement.
+        (None, Some(peer_target)) => {
+            if let Some(c) = complement(peer_target) {
+                NegotiationResult::Resolved(c)
+            } else {
+                negotiate_from_capabilities(local, peer)
+            }
+        }
+        (None, None) => negotiate_from_capabilities(local, peer),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use wallhack_wire::data::{Capabilities, Handshake};
+    use wallhack_wire::data::{
+        Capabilities, Handshake, HintLevel, NodeRole as ProtoNodeRole, RoleHint,
+    };
 
     use super::*;
     use crate::NodeRole;
 
     fn hs(tun_capable: bool, listening: bool, connecting: bool) -> Handshake {
+        hs_hint(tun_capable, listening, connecting, None)
+    }
+
+    fn hs_hint(
+        tun_capable: bool,
+        listening: bool,
+        connecting: bool,
+        hint: Option<RoleHint>,
+    ) -> Handshake {
         Handshake {
             capabilities: Some(Capabilities {
                 tun_capable,
@@ -112,7 +281,14 @@ mod tests {
             version: String::new(),
             psk_proof: vec![],
             routes: vec![],
-            hint: None,
+            hint,
+        }
+    }
+
+    fn role_hint(level: HintLevel, target: ProtoNodeRole) -> RoleHint {
+        RoleHint {
+            level: level.into(),
+            target: target.into(),
         }
     }
 
@@ -300,5 +476,184 @@ mod tests {
         let peer = hs(true, true, false);
         // local has no capabilities → non-TUN, not relay
         assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 13d: Hint tests
+    // -------------------------------------------------------------------------
+
+    /// PREFER breaks ambiguity: one side prefers entry → resolved.
+    #[test]
+    fn prefer_breaks_ambiguity() {
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
+        );
+        let peer = hs(true, false, true);
+        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        // Symmetry: peer sees exit.
+        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Exit));
+    }
+
+    /// PREFER ignored when topology is unambiguous.
+    #[test]
+    fn prefer_ignored_when_unambiguous() {
+        // local is TUN, peer is not → local is entry regardless of prefer exit hint.
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleExit)),
+        );
+        let peer = hs(false, false, true);
+        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+    }
+
+    /// Conflicting PREFER: both prefer entry → Indeterminate.
+    #[test]
+    fn conflicting_prefer_indeterminate() {
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
+        );
+        let peer = hs_hint(
+            true,
+            false,
+            true,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
+        );
+        assert!(is_indeterminate(&negotiate(&local, &peer)));
+        assert!(is_indeterminate(&negotiate(&peer, &local)));
+    }
+
+    /// Different PREFER: one prefers entry, other prefers exit → both resolve.
+    #[test]
+    fn different_prefer_both_resolve() {
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
+        );
+        let peer = hs_hint(
+            true,
+            false,
+            true,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleExit)),
+        );
+        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Exit));
+    }
+
+    /// EXCLUDE removes a role from consideration.
+    #[test]
+    fn exclude_removes_role() {
+        // Both TUN-capable → normally indeterminate. Local excludes entry → local = exit.
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Exclude, ProtoNodeRole::RoleEntry)),
+        );
+        let peer = hs(true, false, true);
+        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+    }
+
+    /// EXCLUDE leaves no valid role → Indeterminate.
+    #[test]
+    fn exclude_no_valid_role_indeterminate() {
+        // Local is not TUN-capable and excludes exit → can't be entry (no TUN), can't be exit (excluded).
+        let local = hs_hint(
+            false,
+            true,
+            false,
+            Some(role_hint(HintLevel::Exclude, ProtoNodeRole::RoleExit)),
+        );
+        let peer = hs(false, false, true);
+        assert!(is_indeterminate(&negotiate(&local, &peer)));
+    }
+
+    /// FIXED overrides capability-based result.
+    #[test]
+    fn fixed_overrides_capabilities() {
+        // TUN-capable would normally be entry, but FIXED exit overrides.
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleExit)),
+        );
+        let peer = hs(false, false, true);
+        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+    }
+
+    /// FIXED + both fixed to same role → Indeterminate.
+    #[test]
+    fn fixed_same_role_indeterminate() {
+        let local = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        let peer = hs_hint(
+            true,
+            false,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        assert!(is_indeterminate(&negotiate(&local, &peer)));
+        assert!(is_indeterminate(&negotiate(&peer, &local)));
+    }
+
+    /// PREFER relay early signal: peer prefers relay → local resolves to entry.
+    #[test]
+    fn prefer_relay_early_signal() {
+        let local = hs(true, true, false);
+        let peer = hs_hint(
+            true,
+            false,
+            true,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleRelay)),
+        );
+        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        // Symmetry: peer prefers relay, so peer resolves to relay.
+        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Relay));
+    }
+
+    /// Symmetry verified for all hint scenarios.
+    #[test]
+    fn hint_symmetry_prefer() {
+        let a = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
+        );
+        let b = hs(true, false, true);
+        assert_eq!(negotiate(&a, &b), resolved(NodeRole::Entry));
+        assert_eq!(negotiate(&b, &a), resolved(NodeRole::Exit));
+    }
+
+    #[test]
+    fn hint_symmetry_fixed() {
+        let a = hs_hint(
+            true,
+            true,
+            false,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        let b = hs_hint(
+            false,
+            false,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleExit)),
+        );
+        assert_eq!(negotiate(&a, &b), resolved(NodeRole::Entry));
+        assert_eq!(negotiate(&b, &a), resolved(NodeRole::Exit));
     }
 }

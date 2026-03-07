@@ -16,6 +16,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use argh::FromArgs;
+use wallhack_wire::data::{HintLevel, NodeRole as ProtoNodeRole, RoleHint};
 use wallhackd::{
     address_spec::{AddressSpec, ConnectivitySpec},
     daemon_config::{
@@ -74,6 +75,18 @@ pub struct WallhackCli {
     /// accept server certificate by fingerprint for auto-negotiated mode
     #[argh(option)]
     pub accept_fingerprint: Option<String>,
+
+    /// prefer a role during auto-negotiation (entry, exit, relay)
+    #[argh(option)]
+    pub prefer: Option<String>,
+
+    /// exclude a role during auto-negotiation (entry, exit, relay)
+    #[argh(option)]
+    pub exclude_role: Option<String>,
+
+    /// fix the role during auto-negotiation (entry, exit, relay)
+    #[argh(option)]
+    pub fixed_role: Option<String>,
 
     /// verbose output
     #[argh(switch, short = 'v')]
@@ -311,6 +324,43 @@ pub fn parse_cli_from_args(args: Vec<String>) -> Result<WallhackCli, CliError> {
     })
 }
 
+/// Parse a role string (case-insensitive) into a proto `NodeRole`.
+fn parse_role(s: &str) -> Result<ProtoNodeRole, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "entry" => Ok(ProtoNodeRole::RoleEntry),
+        "exit" => Ok(ProtoNodeRole::RoleExit),
+        "relay" => Ok(ProtoNodeRole::RoleRelay),
+        _ => Err(format!(
+            "invalid role '{s}': expected 'entry', 'exit', or 'relay'"
+        )),
+    }
+}
+
+/// Build a `RoleHint` from the mutually-exclusive hint CLI flags.
+fn resolve_hint(cli: &WallhackCli) -> Result<Option<RoleHint>, String> {
+    let hints: Vec<_> = [
+        cli.prefer.as_deref().map(|s| (HintLevel::Prefer, s)),
+        cli.exclude_role.as_deref().map(|s| (HintLevel::Exclude, s)),
+        cli.fixed_role.as_deref().map(|s| (HintLevel::Fixed, s)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    match hints.len() {
+        0 => Ok(None),
+        1 => {
+            let (level, role_str) = hints[0];
+            let target = parse_role(role_str)?;
+            Ok(Some(RoleHint {
+                level: level.into(),
+                target: target.into(),
+            }))
+        }
+        _ => Err("--prefer, --exclude-role, and --fixed-role are mutually exclusive".into()),
+    }
+}
+
 /// Resolve PSK from flag or `WALLHACK_PSK` environment variable.
 fn resolve_psk(psk: Option<&String>) -> Option<String> {
     psk.cloned().or_else(|| std::env::var("WALLHACK_PSK").ok())
@@ -340,6 +390,26 @@ fn resolve_api_config(cmd: &EntryCommand) -> Option<ApiConfig> {
     Some(ApiConfig { addr, user, secret })
 }
 
+/// Validate startup constraints for `--fixed-role` hints.
+fn validate_fixed_hint(
+    hint: Option<&RoleHint>,
+    connect: Option<&AddressSpec>,
+    listen: Option<&AddressSpec>,
+) -> Result<(), String> {
+    if let Some(h) = hint
+        && h.level == i32::from(HintLevel::Fixed)
+    {
+        let target = ProtoNodeRole::try_from(h.target).unwrap_or(ProtoNodeRole::RoleIndeterminate);
+        if target == ProtoNodeRole::RoleEntry && !wallhackd::detect_tun_capable() {
+            return Err("--fixed-role entry requires TUN capability (CAP_NET_ADMIN)".into());
+        }
+        if target == ProtoNodeRole::RoleRelay && (connect.is_none() || listen.is_none()) {
+            return Err("--fixed-role relay requires both --connect and --listen".into());
+        }
+    }
+    Ok(())
+}
+
 /// Build a [`DaemonConfig`] from parsed CLI arguments.
 ///
 /// Resolves PSK, generates names, parses transport directions, and maps
@@ -362,6 +432,8 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
         psk: resolve_psk(cli.psk.as_ref()).map(zeroize::Zeroizing::new),
     };
 
+    let hint = resolve_hint(cli)?;
+
     // If top-level --connect / --listen are provided without an explicit
     // subcommand, use auto-negotiation mode.
     let has_auto_flags = cli.connect.is_some() || cli.listen.is_some();
@@ -377,16 +449,34 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
             .as_ref()
             .map(|s| s.parse::<AddressSpec>())
             .transpose()?;
+
+        validate_fixed_hint(hint.as_ref(), connect.as_ref(), listen.as_ref())?;
+
         ModeConfig::Auto(AutoConfig {
             name: cli.name.clone().unwrap_or_else(generate_node_name),
             connect,
             listen,
             accept_fingerprint: cli.accept_fingerprint.clone(),
+            hint,
         })
     } else {
+        if hint.is_some() {
+            return Err(
+                "--prefer, --exclude-role, and --fixed-role are only valid in auto-negotiation mode (without a subcommand)".into(),
+            );
+        }
+
+        let explicit_subcommand = cli.command.is_some();
         let command = cli.command.clone().unwrap_or_default();
         match command {
             Command::Entry(cmd) => {
+                if explicit_subcommand {
+                    eprintln!(
+                        "warning: 'entry' subcommand pins the role (equivalent to --fixed-role entry).\n\
+                         \x20        To auto-negotiate, use 'wallhack --listen :6565' instead."
+                    );
+                }
+
                 let connectivity = resolve_entry_transport(&cmd)?;
                 let api = resolve_api_config(&cmd);
                 ModeConfig::Entry(EntryConfig {
@@ -398,6 +488,12 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
                 })
             }
             Command::Exit(cmd) => {
+                if explicit_subcommand {
+                    eprintln!(
+                        "warning: 'exit' subcommand pins the role (equivalent to --fixed-role exit).\n\
+                         \x20        To auto-negotiate, use 'wallhack --connect host:6565' instead."
+                    );
+                }
                 let connectivity = resolve_exit_transport(&cmd)?;
                 ModeConfig::Exit(ExitConfig {
                     name: cmd.name.unwrap_or_else(generate_node_name),
@@ -406,6 +502,12 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, String> {
                 })
             }
             Command::Relay(cmd) => {
+                if explicit_subcommand {
+                    eprintln!(
+                        "warning: 'relay' subcommand pins the role (equivalent to --fixed-role relay).\n\
+                         \x20        To auto-negotiate, use 'wallhack --connect up:443 --listen :6565' instead."
+                    );
+                }
                 let (connect, listen) = resolve_relay_transport(&cmd)?;
                 ModeConfig::Relay(RelayConfig {
                     name: cmd.name.unwrap_or_else(generate_node_name),
@@ -460,5 +562,85 @@ fn resolve_relay_transport(cmd: &RelayCommand) -> Result<(AddressSpec, AddressSp
         )),
         (None, _) => Err("relay requires --connect".into()),
         (_, None) => Err("relay requires --listen".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: parse CLI from a list of argument strings.
+    fn cli(args: &[&str]) -> Result<WallhackCli, CliError> {
+        let mut v = vec!["wallhackd".to_string()];
+        v.extend(args.iter().map(|s| (*s).to_string()));
+        parse_cli_from_args(v)
+    }
+
+    #[test]
+    fn mutually_exclusive_hint_flags() {
+        let c = cli(&[
+            "--prefer",
+            "entry",
+            "--fixed-role",
+            "exit",
+            "--listen",
+            ":6565",
+        ])
+        .unwrap();
+        let result = build_daemon_config(&c);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("mutually exclusive"),);
+    }
+
+    #[test]
+    fn fixed_role_entry_requires_tun() {
+        // This test validates the error path. On CI/dev machines without
+        // CAP_NET_ADMIN, --fixed-role entry should fail. On machines with
+        // TUN capability it succeeds, so we only assert the error case.
+        if !wallhackd::detect_tun_capable() {
+            let c = cli(&["--fixed-role", "entry", "--listen", ":6565"]).unwrap();
+            let result = build_daemon_config(&c);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("TUN capability"));
+        }
+    }
+
+    #[test]
+    fn fixed_role_relay_requires_connect_and_listen() {
+        // Only --listen, missing --connect.
+        let c = cli(&["--fixed-role", "relay", "--listen", ":6565"]).unwrap();
+        let result = build_daemon_config(&c);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--connect and --listen"));
+    }
+
+    #[test]
+    fn hint_flags_rejected_with_subcommand() {
+        let c = cli(&["--prefer", "entry", "entry", "--listen", ":6565"]).unwrap();
+        let result = build_daemon_config(&c);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("auto-negotiation mode"));
+    }
+
+    #[test]
+    fn valid_prefer_hint_produces_auto_config() {
+        let c = cli(&["--prefer", "entry", "--listen", ":6565"]).unwrap();
+        let config = build_daemon_config(&c).unwrap();
+        match &config.mode {
+            ModeConfig::Auto(auto) => {
+                let hint = auto.hint.as_ref().expect("hint should be set");
+                assert_eq!(hint.level, i32::from(HintLevel::Prefer));
+                assert_eq!(hint.target, i32::from(ProtoNodeRole::RoleEntry));
+            }
+            other => panic!("expected Auto, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_role_string_rejected() {
+        let c = cli(&["--prefer", "bogus", "--listen", ":6565"]).unwrap();
+        let result = build_daemon_config(&c);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid role"));
     }
 }
