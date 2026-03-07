@@ -2,20 +2,22 @@
 //!
 //! When a SYN arrives for an unknown port, the poll loop holds it and sends
 //! it here for probing. We open a bi-stream to the exit node, send a
-//! `SessionInit(TCP)`, and read the `SessionStatus`. If success → mark Open;
+//! `TcpStreamHeader`, and read the `TcpStreamStatus`. If success → mark Open;
 //! if refused → mark Closed.
 
 use std::sync::Arc;
 
 use smoltcp::wire::IpVersion;
 use wallhack_transport::{BiStream as _, ErasedTransport};
-use wallhack_wire::data::{ResponseStatus, SessionInit, SessionProtocol, SessionStatus};
+use wallhack_wire::data::{ResponseStatus, SessionProtocol, TcpStreamHeader, TcpStreamStatus};
 
-use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _, SESSION_INIT_MTU};
+use crate::transport::protocol::{
+    AsyncProtoRead as _, AsyncProtoWrite as _, TCP_STREAM_HEADER_MTU,
+};
 
 /// Probe the exit node to check if a TCP target is reachable.
 ///
-/// Opens a bi-stream, sends `SessionInit`, reads `SessionStatus`, then closes.
+/// Opens a bi-stream, sends `TcpStreamHeader`, reads `TcpStreamStatus`, then closes.
 /// Returns `true` if the exit confirmed the connection (open port).
 pub async fn probe_tcp_target(transport: &Arc<dyn ErasedTransport>, target_addr: &str) -> bool {
     let result = probe_inner(transport, target_addr).await;
@@ -34,24 +36,24 @@ async fn probe_inner(
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut stream = transport.open_bi_erased().await?;
 
-    let init = SessionInit {
+    let header = TcpStreamHeader {
         target_addr: target_addr.to_string(),
         source_addr: String::new(), // Not needed for probe
         protocol: SessionProtocol::Tcp as i32,
     };
-    stream.write_proto(&init).await?;
+    stream.write_proto(&header).await?;
 
     // Signal we're done writing so the exit doesn't wait for more data.
     stream.finish().await?;
 
-    let status: SessionStatus = stream.read_proto(SESSION_INIT_MTU).await?;
+    let status: TcpStreamStatus = stream.read_proto(TCP_STREAM_HEADER_MTU).await?;
 
     Ok(status.status() == ResponseStatus::Success)
 }
 
 /// Extract destination IP and port from a raw IP packet containing a TCP SYN.
 ///
-/// Returns `"ip:port"` formatted string suitable for `SessionInit.target_addr`.
+/// Returns `"ip:port"` formatted string suitable for `TcpStreamHeader.target_addr`.
 #[must_use]
 pub fn parse_syn_target(packet: &[u8]) -> Option<String> {
     let version = IpVersion::of_packet(packet).ok()?;

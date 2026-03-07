@@ -23,16 +23,16 @@ from vm_common import (
 )
 
 SCENARIOS = [
-    ("benchmark", "tcp_fwd", "throughput_mbps", None),
-    ("benchmark", "tcp_rev", "throughput_mbps", None),
+    ("benchmark", "tcp_upstream", "throughput_mbps", None),
+    ("benchmark", "tcp_downstream", "throughput_mbps", None),
     ("benchmark", "udp", "throughput_mbps", None),
     ("benchmark", "latency", "latency_ms", None),
-    ("benchmark", "parallel2", "throughput_mbps", None),
-    ("benchmark", "parallel4", "throughput_mbps", None),
-    # Packet-loss throughput (4 parallel streams under netem).
+    ("benchmark", "parallel10", "throughput_mbps", None),
+    ("benchmark", "parallel40", "throughput_mbps", None),
+    # Packet-loss throughput (40 parallel streams under netem).
     # delay is one-way, so 5ms delay ≈ 10ms RTT, 25ms ≈ 50ms RTT.
-    ("benchmark", "parallel4", "throughput_mbps", {"loss": "0.5%", "delay": "5ms"}),
-    ("benchmark", "parallel4", "throughput_mbps", {"loss": "2%", "delay": "25ms"}),
+    ("benchmark", "parallel40", "throughput_mbps", {"loss": "0.5%", "delay": "5ms"}),
+    ("benchmark", "parallel40", "throughput_mbps", {"loss": "2%", "delay": "25ms"}),
 ]
 
 

@@ -15,6 +15,9 @@ busybox_bin := tools_dir / "busybox"
 iperf3_bin := tools_dir / "iperf3"
 socat_bin := tools_dir / "socat"
 
+# Default: run benchmarks
+default: benchmark
+
 # Build minimal kernel with TUN + virtio-net built-in (cached after first build).
 build-kernel:
     #!/usr/bin/env bash

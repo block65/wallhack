@@ -17,8 +17,8 @@ use wallhack_wire::{
 use crate::control::handler::Handler;
 use wallhack_transport::{BiStream, Transport, TransportError};
 
-/// Maximum size for session init messages (1KB).
-pub const SESSION_INIT_MTU: usize = 1024;
+/// Maximum size for `TcpStreamHeader` and `TcpStreamStatus` messages (1KB).
+pub const TCP_STREAM_HEADER_MTU: usize = 1024;
 
 /// Maximum size for tunnel messages (2KB).
 const TUNNEL_MTU: usize = 2000;

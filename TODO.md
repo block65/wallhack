@@ -57,12 +57,10 @@
 - [ ] Integration test for full pivot chain
 - [ ] Fuzzing for protocol parsers
 - [ ] Chaos testing (network partitions, latency)
-- [ ] Benchmark scenario naming — `tcp_fwd`/`tcp_rev` uses directional
-      terminology that is confusing. Rename to role-based names that
-      describe where iperf3 server and client run:
-      `tcp_fwd` → `tcp_entry_client` (iperf3 client on entry, server on exit),
-      `tcp_rev` → `tcp_exit_client` (iperf3 client on exit, server on entry).
-      Update `run_benchmarks.py`, `init.sh`, and any results parsing.
+- [x] ~~Benchmark scenario naming~~ — renamed `tcp_fwd` → `tcp_upstream`,
+      `tcp_rev` → `tcp_downstream`. Both are measured from the entry node's
+      POV (iperf3 client always on entry, server always on exit at `ECHO_PRIV`).
+      Upstream = entry sends; downstream = entry receives (server sends via `-R`).
 
 ## Bugs
 
