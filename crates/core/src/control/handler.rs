@@ -3,7 +3,7 @@
 //! Handles incoming [`ControlRequest`] messages and produces
 //! [`ControlResponse`] messages.
 
-use std::{sync::atomic::Ordering, time::Instant};
+use std::time::Instant;
 
 use wallhack_wire::{
     control::{
@@ -102,15 +102,16 @@ impl Handler {
     }
 
     fn handle_stats(&self) -> ControlResponse {
+        let m = self.metrics.snapshot();
         ControlResponse {
             response: Some(control_response::Response::Stats(StatsResponse {
-                bytes_in: self.metrics.bytes_in.load(Ordering::Relaxed),
-                bytes_out: self.metrics.bytes_out.load(Ordering::Relaxed),
-                packets_in: self.metrics.packets_in.load(Ordering::Relaxed),
-                packets_out: self.metrics.packets_out.load(Ordering::Relaxed),
-                active_connections: self.metrics.active_connections.load(Ordering::Relaxed),
-                active_flows: self.metrics.active_flows.load(Ordering::Relaxed),
-                packets_dropped: self.metrics.packets_dropped.load(Ordering::Relaxed),
+                bytes_in: m.bytes_in,
+                bytes_out: m.bytes_out,
+                packets_in: m.packets_in,
+                packets_out: m.packets_out,
+                active_connections: m.active_connections,
+                active_flows: m.active_flows,
+                packets_dropped: m.packets_dropped,
             })),
         }
     }
@@ -283,15 +284,7 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn metrics(&self) -> crate::node_api::Metrics {
-        crate::node_api::Metrics {
-            bytes_in: self.metrics.bytes_in.load(Ordering::Relaxed),
-            bytes_out: self.metrics.bytes_out.load(Ordering::Relaxed),
-            packets_in: self.metrics.packets_in.load(Ordering::Relaxed),
-            packets_out: self.metrics.packets_out.load(Ordering::Relaxed),
-            active_connections: self.metrics.active_connections.load(Ordering::Relaxed),
-            active_flows: self.metrics.active_flows.load(Ordering::Relaxed),
-            packets_dropped: self.metrics.packets_dropped.load(Ordering::Relaxed),
-        }
+        self.metrics.snapshot()
     }
 
     fn status(&self) -> crate::node_api::NodeStatus {

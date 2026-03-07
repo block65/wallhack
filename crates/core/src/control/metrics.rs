@@ -3,21 +3,35 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use crate::node_api;
+
 #[derive(Debug, Default)]
 pub struct Metrics {
-    pub bytes_in: AtomicU64,
-    pub bytes_out: AtomicU64,
-    pub packets_in: AtomicU64,
-    pub packets_out: AtomicU64,
-    pub active_connections: AtomicU64,
-    pub active_flows: AtomicU64,
-    pub packets_dropped: AtomicU64,
+    bytes_in: AtomicU64,
+    bytes_out: AtomicU64,
+    packets_in: AtomicU64,
+    packets_out: AtomicU64,
+    active_connections: AtomicU64,
+    active_flows: AtomicU64,
+    packets_dropped: AtomicU64,
 }
 
 impl Metrics {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn snapshot(&self) -> node_api::Metrics {
+        node_api::Metrics {
+            bytes_in: self.bytes_in.load(Ordering::Relaxed),
+            bytes_out: self.bytes_out.load(Ordering::Relaxed),
+            packets_in: self.packets_in.load(Ordering::Relaxed),
+            packets_out: self.packets_out.load(Ordering::Relaxed),
+            active_connections: self.active_connections.load(Ordering::Relaxed),
+            active_flows: self.active_flows.load(Ordering::Relaxed),
+            packets_dropped: self.packets_dropped.load(Ordering::Relaxed),
+        }
     }
 
     pub fn inc_bytes_in(&self, count: u64) {
