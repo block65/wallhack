@@ -28,17 +28,6 @@ impl std::fmt::Display for NegotiationResult {
     }
 }
 
-impl From<ProtoNodeRole> for NodeRole {
-    fn from(proto: ProtoNodeRole) -> Self {
-        match proto {
-            ProtoNodeRole::RoleEntry => NodeRole::Entry,
-            ProtoNodeRole::RoleExit => NodeRole::Exit,
-            ProtoNodeRole::RoleRelay => NodeRole::Relay,
-            ProtoNodeRole::RoleIndeterminate => NodeRole::Indeterminate,
-        }
-    }
-}
-
 /// Extract hint level and target from a `RoleHint`, returning `None` for
 /// unspecified or invalid values.
 fn parse_hint(hint: Option<&RoleHint>) -> Option<(HintLevel, NodeRole)> {
