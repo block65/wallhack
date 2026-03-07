@@ -194,7 +194,7 @@
 - [ ] Anti-sandbox checks
 - [ ] Hard mode cyber range (dropper deployment demo)
 
+## Security Advisories
 
-
-- security -> AWS-LC has Timing Side-Channel in AES-CCM Tag Verification High severity aws-lc-fips-sys, aws-lc-sys
-- security -> AWS-LC has PKCS7_verify Certificate Chain Validation Bypass High severity aws-lc-sys GHSA-vw5v-4f2q-w9xf
+- [ ] AWS-LC: Timing side-channel in AES-CCM tag verification (high) — `aws-lc-fips-sys`, `aws-lc-sys`
+- [ ] AWS-LC: `PKCS7_verify` certificate chain validation bypass (high) — `aws-lc-sys` GHSA-vw5v-4f2q-w9xf
