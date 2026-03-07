@@ -143,12 +143,29 @@
       entry and exit arms into dedicated helpers with clean signatures, but only
       after the transport-monomorphization fix lands (otherwise decomposition
       without deduplication adds binary size).
+- [ ] Auto-mode session parameter object — `run_auto_connect_session_dispatch()`
+      and `run_auto_accept_session_inner()` in `crates/daemon/src/mode/auto.rs`
+      thread large groups of values peeled out of `ConnectResult` /
+      `AcceptResult`. Introduce a small erased session context struct instead of
+      re-passing transport, channels, control, metrics, peers, and peer address
+      as separate arguments.
 - [ ] Unify auto-connector outgoing stream setup — `run_auto_connect_session`
       manually spawns the send-instructions or send-responses task after
       negotiation because the client connected with `NodeRole::Indeterminate`
       (no outgoing task). Consider a first-class post-negotiation "promote role"
       API on `ConnectResult` so auto mode does not need to reach into transport
       internals directly.
+- [ ] `AcceptResult` / `ConnectResult` construction cleanup —
+      `crates/core/src/server/server.rs` and `crates/core/src/client/client.rs`
+      still use wide constructors (`AcceptResult::with_handshake`,
+      `ConnectResult::new`). Replace them with a builder or narrower staged
+      constructors so connection assembly is less argument-heavy and more
+      idiomatic.
+- [ ] `start_api()` config bundling — `crates/daemon/src/mode/entry.rs`
+      passes `metrics`, `peers`, `routes`, TLS config, username, and secret as
+      separate arguments even though `EntryResources` already groups part of the
+      state. Take a dedicated API config/resources object instead of threading
+      sibling fields individually.
 - [ ] Naming convention violations — `crates/core/src/node_api.rs` uses
       `upstream`/`downstream` in doc comments and method descriptions (the
       public control API trait). Should use `peer`/`relay` terminology per
@@ -176,3 +193,8 @@
 - [ ] Polymorphic stub generation
 - [ ] Anti-sandbox checks
 - [ ] Hard mode cyber range (dropper deployment demo)
+
+
+
+- security -> AWS-LC has Timing Side-Channel in AES-CCM Tag Verification High severity aws-lc-fips-sys, aws-lc-sys
+- security -> AWS-LC has PKCS7_verify Certificate Chain Validation Bypass High severity aws-lc-sys GHSA-vw5v-4f2q-w9xf
