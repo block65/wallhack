@@ -23,12 +23,14 @@ websocket = ["wallhackd/websocket"]
 http-api = ["wallhackd/http-api"]
 
 # Interactive REPL
-repl = ["dep:reedline"]
+repl = ["dep:reedline", "dep:nu-ansi-term"]
 
 [dependencies]
 argh = "0.1"
 prost = "0.13"
 rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
+# Already a transitive dep via reedline — no additional binary cost.
+nu-ansi-term = { version = "0.50", optional = true }
 reedline = { version = "0.38", optional = true, features = ["external_printer"] }
 tabwriter = "1"
 thiserror.workspace = true

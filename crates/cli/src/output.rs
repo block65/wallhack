@@ -3,9 +3,12 @@
 use std::io::Write;
 
 use tabwriter::TabWriter;
-use tokio::sync::broadcast;
-use wallhack_wire::management::{
-    DaemonNotification, ManagementResponse, daemon_notification, management_response,
+use wallhack_wire::management::{ManagementResponse, management_response};
+
+#[cfg(feature = "repl")]
+use {
+    tokio::sync::broadcast,
+    wallhack_wire::management::{DaemonNotification, daemon_notification},
 };
 
 use crate::ipc::IpcError;
@@ -148,10 +151,13 @@ pub enum CtlError {
 /// Runs until the broadcast channel closes. Designed to be spawned as a task.
 /// The callback receives formatted notification strings (e.g. for
 /// `ExternalPrinter::sender().send()`).
+#[cfg(feature = "repl")]
 pub async fn forward_notifications(
     rx: &mut broadcast::Receiver<DaemonNotification>,
     mut emit: impl FnMut(String),
 ) {
+    use nu_ansi_term::Color;
+
     loop {
         match rx.recv().await {
             Ok(notif) => {
@@ -160,28 +166,46 @@ pub async fn forward_notifications(
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                emit(format!("[!] missed {n} notification(s)"));
+                emit(format!(
+                    "{} missed {n} notification(s)",
+                    Color::Yellow.paint("[!]")
+                ));
             }
             Err(broadcast::error::RecvError::Closed) => break,
         }
     }
 }
 
+#[cfg(feature = "repl")]
 fn format_notification(notif: &DaemonNotification) -> Option<String> {
+    use nu_ansi_term::Color;
+
     match &notif.event {
         Some(daemon_notification::Event::PeerConnected(pc)) => {
             let peer = pc.peer.as_ref()?;
             Some(format!(
-                "[+] peer \"{}\" connected ({})",
-                peer.name, peer.addr
+                "{} peer \"{}\" connected ({})",
+                Color::Green.paint("[+]"),
+                peer.name,
+                peer.addr
             ))
         }
         Some(daemon_notification::Event::PeerDisconnected(pd)) => {
-            Some(format!("[-] peer \"{}\" disconnected", pd.name))
+            Some(format!(
+                "{} peer \"{}\" disconnected",
+                Color::Red.paint("[-]"),
+                pd.name
+            ))
         }
-        Some(daemon_notification::Event::TunnelError(te)) => Some(format!("[!] {}", te.message)),
+        Some(daemon_notification::Event::TunnelError(te)) => {
+            Some(format!("{} {}", Color::Yellow.paint("[!]"), te.message))
+        }
         Some(daemon_notification::Event::ShuttingDown(sd)) => {
-            Some(format!("[*] daemon shutting down: {}", sd.reason))
+            Some(format!(
+                "{} daemon shutting down: {}",
+                Color::Cyan.paint("[*]"),
+                sd.reason
+            ))
         }
         _ => None,
     }

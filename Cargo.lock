@@ -3391,6 +3391,7 @@ version = "0.5.0"
 dependencies = [
  "argh",
  "built",
+ "nu-ansi-term",
  "prost",
  "rand 0.9.2",
  "reedline",
