@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.1...wallhack-cli-v0.6.2) (2026-03-07)
+
+### Bug Fixes
+
+* **entry-stack:** flush smoltcp immediately in poll_write to reduce tcp_downstream latency ([1634163](https://github.com/block65/wallhack/commit/1634163dd2efeaafbbd14421a6b08668851046d1))
+* **entry-stack:** drain smoltcp egress in burst to double tcp_downstream throughput ([b0892db](https://github.com/block65/wallhack/commit/b0892dbaff84089da7eedd9a0a0d42ed23667af5))
+* **entry-stack:** scale drain_egress rounds with socket count to fix parallel regression ([f6bd02e](https://github.com/block65/wallhack/commit/f6bd02e1dde90edc5a26fc60f198a8a0d886a469))
+
+
 ## [0.6.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.0...wallhack-cli-v0.6.1) (2026-03-07)
 
 ### Bug Fixes
