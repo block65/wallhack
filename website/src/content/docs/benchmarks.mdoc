@@ -1,61 +1,104 @@
 ---
 title: Benchmarks
-description: Throughput and latency benchmarks for QUIC and WebSocket transports, including performance under packet loss.
+description: Throughput and latency benchmarks for QUIC and WebSocket transports, including degraded network performance with packet loss and latency.
 order: 5
 ---
 
 # Benchmarks
 
-These benchmarks measure the throughput and latency cost of the tunnel itself (encryption, framing, and multiplexing) and how each transport holds up under packet loss. The goal is to provide enough data to choose the right transport for the environment.
+These benchmarks measure the cost of the tunnel itself and how each transport holds up when the network gets rough. The goal is to give you enough data to pick the right transport for the job.
 
-All results use `iperf3` pushing traffic through a full end-to-end tunnel with both nodes running and encryption active. Entry and exit run as QEMU microVMs on the same host (2 vCPUs each, KVM) on Linux x86_64. To reproduce: `just bench benchmark` from the repo root.
+All results use `iperf3` pushing traffic through a full end-to-end tunnel with encryption active. Entry and exit run as QEMU microVMs on the same host (2 vCPUs each, KVM, Linux x86_64). Degraded scenarios use `tc netem` on the entry VM's ethernet interface to simulate real-world loss and latency. Each run is 5 seconds. To reproduce: `just bench benchmark` from the repo root.
 
-## Loopback
+## Clean Network
 
-No real network between the VMs. This isolates the cost of the tunnel itself (encryption, framing, and multiplexing) from network conditions.
+No packet loss or added latency. This isolates the cost of encryption, framing, and multiplexing.
 
-### TCP Throughput
+### Single Stream
 
-An `iperf3` client on the entry VM sends TCP traffic to an `iperf3` server bound to the exit VM's loopback address (`10.100.0.1`). Traffic flows through the entry TUN interface, the tunnel transport, and the exit adapter, which opens a separate TCP connection to the server. Each run is 10 seconds.
+| Metric | QUIC | WebSocket |
+|--------|------|-----------|
+| TCP upstream (to exit) | 830 Mbps | 900 Mbps |
+| TCP downstream (to entry) | 300 Mbps | 330 Mbps |
+| UDP | 5.3 Gbps | 4.5 Gbps |
+| Latency (RTT) | 0.7 ms | 1.1 ms |
 
-**Upstream (to exit)** — the entry-side `iperf3` client is the sender. **Downstream (to entry)** — the exit-side `iperf3` server is the sender (`-R`). Parallel opens N independent TCP streams in the upstream direction.
+Downstream is lower than upstream because the entry-side userspace TCP stack must generate TCP segments from tunnel data. UDP throughput is high because there is no congestion window or retransmission overhead on the inner flow. QUIC has 35% lower latency.
 
-| Transport | Upstream (1 stream) | Downstream (1 stream) | 10 streams | 40 streams |
-|-----------|--------------------|-----------------------|------------|------------|
-| QUIC | 1.0 Gbps | 330 Mbps | 950 Mbps | 880 Mbps |
-| WebSocket | 1.3 Gbps | 300 Mbps | 1.1 Gbps | 1.0 Gbps |
+### Parallel Streams
 
-Downstream throughput is lower than upstream because the entry-side userspace TCP/IP stack (smoltcp) must generate TCP segments from data received over the tunnel transport. Upstream throughput is higher because the entry stack only needs to process incoming ACKs. WebSocket scales better with parallel streams.
+| Streams | QUIC | WebSocket |
+|---------|------|-----------|
+| 4 | - | - |
+| 8 | - | - |
+| 32 | 794 Mbps | 932 Mbps |
+| 64 | 744 Mbps | 896 Mbps |
+| 128 | 578 Mbps | 815 Mbps |
 
-### UDP Throughput
+On a clean network, WebSocket is faster. It benefits from the OS kernel's highly optimised TCP stack. No surprises here. But clean networks are not where tunnels get tested.
 
-Same path as TCP, but `iperf3 -u -b 0` sends UDP datagrams with no bandwidth cap. The exit adapter forwards each datagram without flow control or congestion windowing on the inner connection.
+## Degraded Network
 
-| Transport | Throughput |
-|-----------|------------|
-| QUIC | 5.5 Gbps |
-| WebSocket | 4.8 Gbps |
+This is where transport choice actually matters. Pen test tunnels run over hotel wifi, mobile tethering, intercontinental VPNs, and congested corporate networks. These links have packet loss and latency. The question is: which transport survives?
 
-UDP throughput is significantly higher than TCP because there is no congestion window or retransmission overhead on the inner flow.
+### Loss + Latency (80 ms RTT)
 
-### Latency
+40 ms one-way delay (80 ms round-trip, typical cross-country link). Loss applied on the entry VM's egress. Throughput in Mbps.
 
-`mean_rtt` from the entry VM kernel's `TCP_INFO` socket option (`tcpi_rtt`), reported by `iperf3 --json` over a 5-second run. This is the full round-trip as seen by the entry kernel's TCP stack: entry TUN, wallhack entry, tunnel transport, wallhack exit, exit adapter TCP connection to the `iperf3` server, and back.
+| Loss | p32 QUIC | p32 WS | p64 QUIC | p64 WS | p128 QUIC | p128 WS |
+|------|----------|--------|----------|--------|-----------|---------|
+| 0.1% | 110 | 66 | 103 | 71 | 150 | 112 |
+| 0.5% | 54 | 48 | 68 | 66 | 92 | 0 |
+| 1% | 49 | 45 | 69 | 68 | 95 | 0 |
+| 2% | 52 | 46 | 67 | 62 | 91 | 0 |
+| 3% | 51 | 43 | 66 | 66 | 93 | 0 |
+| 5% | 49 | 46 | 63 | 0 | 90 | 0 |
 
-| Transport | RTT |
-|-----------|-----|
-| QUIC | 0.27 ms |
-| WebSocket | 0.37 ms |
+**WebSocket collapses as stream count increases.** At 128 parallel connections, WebSocket produces zero throughput at just 0.5% loss. QUIC maintains 90+ Mbps even at 5% loss. At 64 streams, WebSocket dies at 5% loss. At 32 streams, WebSocket survives but is consistently slower.
 
-End-to-end RTT through the full tunnel stays sub-millisecond on loopback for both transports.
+This matters because real pen test workloads open many connections simultaneously: nmap scanning, multiple RDP sessions, parallel exploitation, or file transfers alongside interactive shells.
 
-## Synthetic Packet Loss
+### Latency Sweep (1% Loss)
 
-Same loopback topology with [netem](https://wiki.linuxfoundation.org/networking/netem) (`tc qdisc add dev eth0 root netem`) applied on the entry VM's ethernet interface. Netem acts on egress, so loss and delay affect the entry-to-exit direction only. 40 parallel TCP streams (`iperf3 -P 40`) over a 10-second run.
+Fixed 1% packet loss, varying one-way delay. This shows how latency amplifies the damage from loss. Throughput in Mbps.
 
-| Transport | 0.5% loss / 5ms delay | 2% loss / 25ms delay |
-|-----------|----------------------|----------------------|
-| QUIC | 880 Mbps | 880 Mbps |
-| WebSocket | 1.0 Gbps | 1.0 Gbps |
+| Delay (one-way) | p32 QUIC | p32 WS | p64 QUIC | p64 WS | p128 QUIC | p128 WS |
+|------------------|----------|--------|----------|--------|-----------|---------|
+| 1 ms | 67 | 107 | 95 | 69 | 165 | 105 |
+| 10 ms | 62 | 56 | 72 | 68 | 106 | 107 |
+| 20 ms | 54 | 45 | 68 | 66 | 99 | 0 |
+| 40 ms | 54 | 48 | 67 | 67 | 95 | 0 |
+| 80 ms | 52 | 43 | 66 | 64 | 97 | 0 |
+| 150 ms | 52 | 38 | 60 | 0 | 90 | 0 |
 
-On a high-bandwidth loopback link, both transports absorb modest loss without measurable throughput degradation. Retransmissions complete almost immediately because the underlying link has no bandwidth constraint.
+At 128 streams with 1% loss, WebSocket dies above 10 ms one-way delay (20 ms RTT). At 64 streams, WebSocket holds until 150 ms. At 32 streams, WebSocket degrades but survives.
+
+QUIC throughput scales with stream count under adversity: more streams means more independent recovery paths. WebSocket throughput degrades with stream count because all streams share a single TCP connection and a single lost packet stalls everything.
+
+### Latency Only (No Loss)
+
+Pure delay, no packet loss. This isolates the effect of distance. Throughput in Mbps.
+
+| Delay (one-way) | p32 QUIC | p32 WS | p64 QUIC | p64 WS | p128 QUIC | p128 WS |
+|------------------|----------|--------|----------|--------|-----------|---------|
+| 1 ms | 394 | 653 | 345 | 1039 | 379 | 687 |
+| 10 ms | 142 | 429 | 149 | 449 | 175 | 447 |
+| 40 ms | 146 | 110 | 163 | 101 | 176 | 155 |
+| 80 ms | 135 | 95 | 150 | 70 | 171 | 112 |
+| 150 ms | 134 | 59 | 145 | 68 | 195 | 108 |
+
+Without loss, WebSocket wins at low latency. But above 40 ms one-way delay (~80 ms RTT, a typical cross-country hop), QUIC takes over and the gap widens with distance. At 150 ms one-way (intercontinental), QUIC is 1.8-2.3x faster depending on stream count.
+
+## Why QUIC Survives
+
+WebSocket multiplexes all tunnel connections over a single TCP connection. When a packet is lost, TCP's head-of-line blocking stalls every stream until that packet is retransmitted. Each retransmission costs a full round-trip. More streams means more chances for any one packet loss to stall everything.
+
+QUIC multiplexes over independent streams within the same connection. A lost packet only stalls the affected stream. The other streams continue uninterrupted. More streams means more independent recovery, which is why QUIC throughput actually increases with stream count under loss.
+
+## Which Transport Should I Use?
+
+**Use QUIC (the default)** for most pen test scenarios. It handles unpredictable networks, high latency, and packet loss without collapsing. This covers remote engagements, cloud-hosted targets, mobile tethering, hotel wifi, and anything over the internet.
+
+**Use WebSocket** when you need to traverse an HTTP proxy, blend in with HTTPS traffic for DPI evasion, or front through a CDN. Also appropriate on reliable low-latency networks (same data centre, local LAN) where its raw throughput advantage matters and loss is negligible.
+
+If you are unsure, use QUIC. You can always switch transports by changing the address suffix (`/udp` or `/tcp`) without reconfiguring anything else.

@@ -10,9 +10,9 @@ Choosing the right transport depends on the network environment and operational 
 
 ## Choosing a Transport
 
-Use **TCP (WebSockets)** when UDP is unavailable, or on reliable networks where raw latency is the priority. TCP has a slightly lower RTT due to its well-optimized path through the OS network stack. WebSocket traffic appears as standard HTTPS and can pass through most HTTP proxies.
+Use **TCP (WebSockets)** when you need to traverse an HTTP proxy, blend in with HTTPS traffic for DPI evasion, or front through a CDN. WebSocket is also faster on clean, low-latency networks (same data centre, local LAN) where packet loss is negligible.
 
-Use **UDP (QUIC)** when packet loss is above ~1%, or when network conditions are unpredictable. QUIC's per-stream loss recovery prevents a single dropped packet from stalling the entire tunnel, making it more resilient for multiple concurrent connections.
+Use **UDP (QUIC)** for most pen test scenarios. QUIC's per-stream loss recovery prevents a single dropped packet from stalling the entire tunnel. Under real-world conditions (packet loss above 0.5% and latency above 20 ms), WebSocket throughput collapses while QUIC maintains usable speeds. See [Benchmarks](/docs/benchmarks) for the full data.
 
 ## UDP (QUIC)
 
