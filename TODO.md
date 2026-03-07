@@ -2,11 +2,11 @@
 
 ## Performance
 
-- [ ] Reverse throughput asymmetry: `tcp_entry_client` ~900 Mbps vs `tcp_exit_client`
-      ~190 Mbps (QUIC). Increasing recv buffer from 1500→65536 had no effect, so
-      it is not per-message protobuf overhead. Likely in `SyscallExitAdapter` —
-      investigate how TCP connections are managed in the exit adapter, poll loop
-      wakeup latency, and mutex contention between smoltcp writes and the poll loop.
+- [ ] Reverse throughput asymmetry: `tcp_upstream` ~987 Mbps vs `tcp_downstream`
+      ~188 Mbps (QUIC). Root cause: `poll_write` in entry-stack deposits data into
+      smoltcp TX buffer then calls `notify_one`, deferring TUN emission to the next
+      Tokio scheduler tick. Fix applied in `tcp_stream.rs` (call `inner.poll(now)`
+      immediately before dropping lock). Pending benchmark verification.
 - [ ] Buffer pooling for UDP packets and TUN reads
 - [ ] Reduce global lock contention in entry-stack
 - [x] ~~Broadcast → mpsc migration on data path~~ — done.
