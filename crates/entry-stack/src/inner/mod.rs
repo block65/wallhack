@@ -134,6 +134,24 @@ impl<D: Device> InnerStack<D> {
             != smoltcp::iface::PollResult::None
     }
 
+    /// Drain pending egress segments without re-processing ingress.
+    ///
+    /// smoltcp emits at most one TCP segment per socket per `poll_egress()`
+    /// call. This loops up to `max_rounds` times to emit a burst of segments
+    /// within a single lock acquisition, avoiding the Tokio scheduler overhead
+    /// of yielding between each segment.
+    pub fn drain_egress(&mut self, timestamp: Instant, max_rounds: usize) {
+        for _ in 0..max_rounds {
+            if self
+                .iface
+                .poll_egress(timestamp, &mut self.device, &mut self.sockets)
+                == smoltcp::iface::PollResult::None
+            {
+                break;
+            }
+        }
+    }
+
     /// Returns the next time the stack should be polled, if any.
     ///
     /// Returns [`None`] if there is no pending timer and the stack only needs to
@@ -187,6 +205,7 @@ impl<D: Device> InnerStack<D> {
         let rx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_rx_buffer_size]);
         let tx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_tx_buffer_size]);
         let mut socket = tcp::Socket::new(rx_buf, tx_buf);
+        socket.set_nagle_enabled(false);
         socket.listen(port)?;
         self.sockets.add(socket);
         Ok(())
@@ -255,6 +274,7 @@ impl<D: Device> InnerStack<D> {
         let rx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_rx_buffer_size]);
         let tx_buf = tcp::SocketBuffer::new(vec![0u8; self.tcp_tx_buffer_size]);
         let mut socket = tcp::Socket::new(rx_buf, tx_buf);
+        socket.set_nagle_enabled(false);
         socket.listen(port)?;
 
         let handle = self.sockets.add(socket);

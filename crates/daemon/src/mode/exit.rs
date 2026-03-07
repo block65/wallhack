@@ -458,6 +458,7 @@ pub(crate) async fn run_stream_listener(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
     let header: wallhack_wire::data::TcpStreamHeader = stream
         .read_proto(TCP_STREAM_HEADER_MTU)
@@ -482,7 +483,13 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
                         .write_proto(&status)
                         .await
                         .map_err(|e| NodeError::Stream(Box::new(e)))?;
-                    let _ = tokio::io::copy_bidirectional(&mut *stream, &mut socket).await?;
+                    let _ = tokio::io::copy_bidirectional_with_sizes(
+                        &mut *stream,
+                        &mut socket,
+                        64 * 1024,
+                        64 * 1024,
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     let status_code = match e.kind() {

@@ -255,10 +255,17 @@ impl smoltcp::phy::TxToken for TunTxToken {
     {
         let mut buf = vec![0u8; len];
         let result = f(&mut buf);
-        if let Err(e) = self.inner.get_ref().send(&buf)
-            && e.kind() != std::io::ErrorKind::WouldBlock
-        {
-            tracing::warn!("tun send failed: {e}");
+        // WouldBlock means the kernel TUN buffer is full. Dropping the packet
+        // is correct TCP backpressure — smoltcp will retransmit via RTO. We
+        // log it so we can measure whether this is actually firing.
+        match self.inner.get_ref().send(&buf) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                tracing::warn!("tun send: WouldBlock, packet dropped ({len} bytes)");
+            }
+            Err(e) => {
+                tracing::warn!("tun send failed: {e}");
+            }
         }
         result
     }

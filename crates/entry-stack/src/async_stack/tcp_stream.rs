@@ -161,10 +161,8 @@ impl<D: Device + Send + 'static> AsyncWrite for TcpStream<D> {
             Ok(0) => Poll::Pending,
             Ok(n) => {
                 tracing::trace!(bytes = n, "TcpStream send");
-                let now = inner.now();
-                inner.poll(now); // flush immediately — avoids scheduler round-trip
                 drop(inner);
-                self.shared.notify.notify_one(); // still needed for timers/retransmits
+                self.shared.notify.notify_one();
                 Poll::Ready(Ok(n))
             }
             Err(tcp::SendError::InvalidState) => Poll::Ready(Err(io::Error::new(

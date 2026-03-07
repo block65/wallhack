@@ -440,8 +440,11 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
                 jit_poll_ingress(&mut inner, &config, &notify);
             }
 
-            // smoltcp processes remaining packets.
+            // smoltcp emits at most one TCP segment per socket per poll().
+            // After the normal poll (ingress + one egress), drain additional
+            // egress segments to emit a burst without re-doing ingress.
             inner.poll(now);
+            inner.drain_egress(now, 64);
 
             prune_and_notify(&mut inner, &notify, &mut prune_counter);
             inner.poll_at(now).map(|poll_at| {
