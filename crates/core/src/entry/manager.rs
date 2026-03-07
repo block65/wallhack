@@ -11,7 +11,7 @@ use bytes::Bytes;
 use smoltcp::phy::Device;
 use tokio::{
     io::unix::AsyncFd,
-    sync::{Notify, broadcast},
+    sync::{Notify, mpsc},
     time::Instant,
 };
 use wallhack_entry_stack::async_stack::{
@@ -75,9 +75,9 @@ pub struct ConnectionManager<D: Device + Send + 'static> {
     /// SYN proxy: shared state for fast mode toggle and port cache.
     syn_proxy_state: Arc<SynProxyState>,
     /// Unified data stream: send UDP instructions to the exit node.
-    instructions_tx: broadcast::Sender<EntryNodeInstruction>,
+    instructions_tx: mpsc::Sender<EntryNodeInstruction>,
     /// Unified data stream: receive responses from the exit node.
-    responses_rx: broadcast::Receiver<ExitNodeResponse>,
+    responses_rx: mpsc::Receiver<ExitNodeResponse>,
 }
 
 impl ConnectionManager<super::actor::SmoltcpTunDevice> {
@@ -86,8 +86,8 @@ impl ConnectionManager<super::actor::SmoltcpTunDevice> {
         transport: Arc<dyn ErasedTransport>,
         metrics: SharedMetrics,
         fast_mode: bool,
-        instructions_tx: broadcast::Sender<EntryNodeInstruction>,
-        responses_rx: broadcast::Receiver<ExitNodeResponse>,
+        instructions_tx: mpsc::Sender<EntryNodeInstruction>,
+        responses_rx: mpsc::Receiver<ExitNodeResponse>,
     ) -> (Self, Arc<SynProxyState>) {
         let (mut stack, tun_writer) = actor.into_stack();
         let state = Arc::new(SynProxyState::new(fast_mode));
@@ -209,26 +209,19 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                             },
                         )),
                     };
-                    if self.instructions_tx.send(instr).is_err() {
-                        tracing::warn!("UDP: no receivers for instruction (connection closing?)");
-                    } else {
-                        self.metrics.inc_packets_out(1);
-                        self.metrics.inc_bytes_out(size as u64);
+                    if self.instructions_tx.send(instr).await.is_err() {
+                        tracing::debug!("UDP: instructions channel closed, stopping");
+                        return Ok(());
                     }
+                    self.metrics.inc_packets_out(1);
+                    self.metrics.inc_bytes_out(size as u64);
                 }
                 result = self.responses_rx.recv() => {
-                    match result {
-                        Ok(response) => {
-                            self.handle_exit_response(&mut udp, response);
-                        }
-                        Err(broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("Responses channel lagged, dropped {n} UDP packets");
-                            self.metrics.inc_packets_dropped(n);
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            tracing::debug!("Responses channel closed, connection dead");
-                            return Ok(());
-                        }
+                    if let Some(response) = result {
+                        self.handle_exit_response(&mut udp, response);
+                    } else {
+                        tracing::debug!("Responses channel closed, connection dead");
+                        return Ok(());
                     }
                 }
                 Some(held) = self.syn_rx.recv() => {

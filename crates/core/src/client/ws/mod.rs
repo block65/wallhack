@@ -19,7 +19,7 @@ use tokio_tungstenite::{
 };
 use wallhack_wire::{
     control::{ControlMessage, control_message},
-    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
+    data::Handshake,
 };
 use yamux::Mode;
 
@@ -27,6 +27,7 @@ use crate::{
     NodeRole,
     client::config::ClientConfig,
     psk::HandshakeExt,
+    server::server::DataChannels,
     transport::{
         Transport, protocol,
         websocket::{WebSocketByteStream, WebSocketTransport, WebSocketTransportConfig},
@@ -406,19 +407,18 @@ impl WsClient {
             }
         });
 
-        let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
-        let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
+        let channels = DataChannels::new();
 
-        // Data task 1: Incoming data
+        // Incoming data task: accept uni stream from peer, dispatch messages.
         let transport_data = Arc::clone(&transport);
-        let instructions_tx = instructions.clone();
-        let responses_tx = responses.clone();
+        let instructions_in = channels.instructions_tx.clone();
+        let responses_in = channels.responses_tx.clone();
 
         let incoming_handle = tokio::spawn(async move {
             match transport_data.accept_uni().await {
                 Ok(Some(mut recv)) => {
                     if let Err(e) =
-                        protocol::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
+                        protocol::run_data_in(&mut recv, &instructions_in, &responses_in).await
                     {
                         tracing::debug!("Data-in handler finished: {e}");
                     }
@@ -428,68 +428,18 @@ impl WsClient {
             }
         });
 
-        // Data task 2: Outgoing data based on role.
-        //
-        // Subscribe to the broadcast channel BEFORE spawning the task so that
-        // messages sent while open_uni() is in progress are not dropped.
-        // For WebSocket/yamux, open_uni() requires a round-trip through the
-        // yamux driver and is not instantaneous; a fast echo (e.g. UDP loopback)
-        // can produce a response before the subscription is established if we
-        // subscribe inside the task.
-        // Indeterminate nodes do not open data streams — the data plane is paused
-        // until the role is resolved.
-        let outgoing_handle = match role {
-            NodeRole::Indeterminate => {
-                tracing::info!("Data plane paused: role is indeterminate");
-                tokio::spawn(std::future::ready(()))
-            }
-            NodeRole::Entry | NodeRole::Relay => {
-                tracing::debug!("Opening stream to send instructions to peer");
-                let transport_out = Arc::clone(&transport);
-                let instructions_rx = instructions.subscribe();
-
-                tokio::spawn(async move {
-                    match transport_out.open_uni().await {
-                        Ok(mut send) => {
-                            if let Err(e) =
-                                protocol::run_send_instructions(&mut send, instructions_rx).await
-                            {
-                                tracing::debug!("Send-instructions handler finished: {e}");
-                            }
-                        }
-                        Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-                    }
-                })
-            }
-            NodeRole::Exit => {
-                tracing::debug!("Opening stream to send responses to peer");
-                let transport_out = Arc::clone(&transport);
-                let responses_rx = responses.subscribe();
-
-                tokio::spawn(async move {
-                    match transport_out.open_uni().await {
-                        Ok(mut send) => {
-                            if let Err(e) =
-                                protocol::run_send_responses(&mut send, responses_rx).await
-                            {
-                                tracing::debug!("Send-responses handler finished: {e}");
-                            }
-                        }
-                        Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-                    }
-                })
-            }
-        };
+        // Outgoing data task is NOT spawned here; the caller opens the uni stream
+        // and drives run_send_instructions / run_send_responses as appropriate for
+        // its role, consuming the receiver from DataChannels.
 
         let tasks = ConnectionTasks {
             incoming: incoming_handle,
-            outgoing: outgoing_handle,
             control: control_handle,
         };
 
         Ok(ConnectResult::new(
             Arc::clone(&transport),
-            (instructions, responses),
+            channels,
             remote_addr_str,
             tasks,
             control_tx,

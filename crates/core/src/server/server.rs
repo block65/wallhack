@@ -15,14 +15,47 @@ use crate::{
 
 use super::config;
 
-pub type Channels = (
-    tokio::sync::broadcast::Sender<EntryNodeInstruction>,
-    tokio::sync::broadcast::Sender<ExitNodeResponse>,
-);
+/// Capacity for data-plane mpsc channels (instructions and responses).
+pub const DATA_CHANNEL_CAPACITY: usize = 1024;
+
+/// Data-plane channels for a connection.
+///
+/// Carries both halves of the instructions (entry→exit) and responses
+/// (exit→entry) mpsc channel pairs.
+pub struct DataChannels {
+    /// Send instructions toward the exit peer.
+    pub instructions_tx: mpsc::Sender<EntryNodeInstruction>,
+    /// Receive instructions (consumed by the task that writes them to the transport).
+    pub instructions_rx: mpsc::Receiver<EntryNodeInstruction>,
+    /// Send responses toward the entry peer.
+    pub responses_tx: mpsc::Sender<ExitNodeResponse>,
+    /// Receive responses (consumed by the entity that processes exit responses).
+    pub responses_rx: mpsc::Receiver<ExitNodeResponse>,
+}
+
+impl DataChannels {
+    #[must_use]
+    pub fn new() -> Self {
+        let (instructions_tx, instructions_rx) = mpsc::channel(DATA_CHANNEL_CAPACITY);
+        let (responses_tx, responses_rx) = mpsc::channel(DATA_CHANNEL_CAPACITY);
+        Self {
+            instructions_tx,
+            instructions_rx,
+            responses_tx,
+            responses_rx,
+        }
+    }
+}
+
+impl Default for DataChannels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Result of accepting a connection on the server.
 pub struct AcceptResult<T: Transport> {
-    channels: Channels,
+    channels: DataChannels,
     peer_addr: String,
     metrics: SharedMetrics,
     /// The already-received peer `Handshake` (extracted from the control stream).
@@ -38,34 +71,13 @@ pub struct AcceptResult<T: Transport> {
 }
 
 impl<T: Transport> AcceptResult<T> {
-    /// Creates a new accept result.
-    #[must_use]
-    pub fn new(
-        transport: std::sync::Arc<T>,
-        channels: Channels,
-        peer_addr: String,
-        metrics: SharedMetrics,
-        control_tx: mpsc::Sender<ControlMessage>,
-    ) -> Self {
-        Self {
-            channels,
-            peer_addr,
-            metrics,
-            peer_handshake: None,
-            transport,
-            control_tx,
-            latency_rx: None,
-            channel_binding: None,
-        }
-    }
-
     /// Creates a new accept result with an already-received peer `Handshake`
     /// and a latency receiver for pong-derived RTT measurements.
     #[must_use]
     #[allow(clippy::too_many_arguments)] // accept result construction; will be simplified when builder pattern is adopted
     pub fn with_handshake(
         transport: std::sync::Arc<T>,
-        channels: Channels,
+        channels: DataChannels,
         peer_addr: String,
         metrics: SharedMetrics,
         peer_handshake: Option<Handshake>,
@@ -91,7 +103,7 @@ impl<T: Transport> AcceptResult<T> {
     /// as the connection should stay alive — dropping it closes the control
     /// stream.
     #[must_use]
-    pub fn channels(self) -> (Channels, mpsc::Sender<ControlMessage>) {
+    pub fn into_channels(self) -> (DataChannels, mpsc::Sender<ControlMessage>) {
         (self.channels, self.control_tx)
     }
 

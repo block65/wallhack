@@ -377,13 +377,21 @@ where
     T::RecvStream: 'static,
     T::BiStream: 'static,
 {
+    use wallhack_core::server::server::DataChannels;
+
     let transport: Arc<dyn ErasedTransport> = connect_result.transport();
-    let (instructions_tx, responses_tx) = connect_result.channels().clone();
-    drop(connect_result);
+    let (channels, _tasks, _control_tx) = connect_result.into_parts();
+    let DataChannels {
+        instructions_tx,
+        instructions_rx,
+        responses_tx: _responses_tx,
+        responses_rx,
+    } = channels;
     run_entry_connected_inner(
         transport,
         instructions_tx,
-        responses_tx,
+        instructions_rx,
+        responses_rx,
         metrics,
         fast_mode,
         peer_addr,
@@ -394,16 +402,32 @@ where
 /// Non-generic inner: monomorphized once regardless of transport type.
 pub(crate) async fn run_entry_connected_inner(
     transport: Arc<dyn ErasedTransport>,
-    instructions_tx: tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    responses_tx: tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
+    instructions_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
+    responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
     metrics: &Arc<Metrics>,
     fast_mode: bool,
     peer_addr: &str,
 ) -> Result<(), NodeError> {
     tracing::info!("Connected to {peer_addr}");
 
-    let responses_rx = responses_tx.subscribe();
-    drop(responses_tx);
+    // Spawn outgoing data task: open uni stream, send instructions to peer.
+    let transport_out = Arc::clone(&transport);
+    tokio::spawn(async move {
+        match transport_out.open_uni_erased().await {
+            Ok(mut send) => {
+                if let Err(e) = wallhack_core::transport::protocol::run_send_instructions(
+                    &mut send,
+                    instructions_rx,
+                )
+                .await
+                {
+                    tracing::debug!("Send-instructions handler finished: {e}");
+                }
+            }
+            Err(e) => tracing::debug!("Failed to open send stream: {e}"),
+        }
+    });
 
     let name = SessionManager::create_anonymous();
     let actor = create_tun_with_retry(name).await?;
@@ -507,7 +531,7 @@ where
                 let latency_rx = accept_result
                     .take_latency_rx()
                     .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
-                let (channels, control_tx) = accept_result.channels();
+                let (channels, control_tx) = accept_result.into_channels();
 
                 // Spawn non-generic handler
                 tokio::spawn(async move {
@@ -591,7 +615,7 @@ pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 struct ConnectionParams {
     metrics: Arc<Metrics>,
     transport: Arc<dyn ErasedTransport>,
-    channels: wallhack_core::server::server::Channels,
+    channels: wallhack_core::server::server::DataChannels,
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     sessions: SessionManager,
     peers: Arc<wallhack_core::control::peers::Registry>,
@@ -631,13 +655,17 @@ fn validate_handshake<T: wallhack_core::transport::Transport>(
     Ok(Some(hs.name))
 }
 
-/// Spawn background tasks that bridge transport data streams.
+/// Spawn background tasks that bridge transport data streams (entry server side).
+///
+/// - Incoming task: accepts the peer's uni stream and dispatches data messages.
+/// - Outgoing task: opens a uni stream and writes instructions from `instructions_rx`.
 pub(crate) fn spawn_data_tasks(
     transport: &Arc<dyn ErasedTransport>,
-    instructions_tx: &tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    responses_tx: &tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
+    instructions_tx: &tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    responses_tx: &tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+    instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
 ) {
-    // Incoming data: accept uni stream, read data messages.
+    // Incoming data: accept uni stream from exit peer, dispatch data messages.
     let transport_data = Arc::clone(transport);
     let instructions_in = instructions_tx.clone();
     let responses_in = responses_tx.clone();
@@ -659,9 +687,8 @@ pub(crate) fn spawn_data_tasks(
         }
     });
 
-    // Send instructions to peer: open uni stream, write instructions.
+    // Outgoing data: open uni stream to exit peer, write instructions.
     let transport_out = Arc::clone(transport);
-    let instructions_rx = instructions_tx.subscribe();
     tokio::spawn(async move {
         match transport_out.open_uni_erased().await {
             Ok(mut send) => {
@@ -731,10 +758,18 @@ impl ConnectionParams {
         ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
         latency_rx: tokio::sync::mpsc::Receiver<f64>,
     ) -> Result<String, NodeError> {
+        use wallhack_core::server::server::DataChannels;
+
         let ConnectionParams {
             metrics,
             transport,
-            channels: (instructions_tx, responses_tx),
+            channels:
+                DataChannels {
+                    instructions_tx,
+                    instructions_rx,
+                    responses_tx,
+                    responses_rx,
+                },
             control_tx,
             sessions,
             peers,
@@ -743,7 +778,7 @@ impl ConnectionParams {
             peer_addr,
         } = self;
 
-        spawn_data_tasks(&transport, &instructions_tx, &responses_tx);
+        spawn_data_tasks(&transport, &instructions_tx, &responses_tx, instructions_rx);
 
         // Get or create TUN adapter via session manager
         let name = if let Some(ref id) = peer {
@@ -759,8 +794,6 @@ impl ConnectionParams {
             peer_addr
         );
 
-        let responses_rx = responses_tx.subscribe();
-        drop(responses_tx);
         let (manager, _syn_proxy_state) = ConnectionManager::new(
             actor,
             Arc::clone(&transport),

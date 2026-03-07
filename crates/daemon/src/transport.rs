@@ -5,7 +5,7 @@
 
 use std::{net::SocketAddr, str::FromStr, time::Duration};
 
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 use crate::NodeError;
 
@@ -38,36 +38,6 @@ pub(crate) async fn resolve_endpoint(
     }
 
     Ok(resolved)
-}
-
-/// Retry a connection attempt with exponential backoff.
-///
-/// Calls `create_and_connect` in a loop. On success, returns the result.
-/// On dead errors (TLS/cert failures), returns immediately.
-/// On transient errors, retries with exponential backoff up to [`MAX_RETRY_DELAY`].
-pub(crate) async fn connect_with_retry<T, E, F, Fut>(create_and_connect: F) -> Result<T, NodeError>
-where
-    E: std::error::Error + Send + Sync + 'static,
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, E>>,
-{
-    let mut retry_delay = INITIAL_RETRY_DELAY;
-
-    loop {
-        match create_and_connect().await {
-            Ok(result) => return Ok(result),
-            Err(e) => {
-                let err = NodeError::Transport(Box::new(e));
-                if !err.is_retryable() {
-                    tracing::error!("Connection failed (not retrying): {err}");
-                    return Err(err);
-                }
-                tracing::warn!("Connection failed: {err}, retrying in {retry_delay:?}...");
-                tokio::time::sleep(retry_delay).await;
-                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-            }
-        }
-    }
 }
 
 /// Persistent connect loop: connect, run a session, reconnect on drop.
@@ -111,65 +81,87 @@ where
     }
 }
 
-/// Bridge a peer connection's channels to source broadcast channels.
+/// Bridge a peer connection's channels to source mpsc channels.
 ///
-/// Forwards instructions from the peer to the source, and responses from the
-/// source back to the peer. Holds the control channel sender alive for the
-/// lifetime of the bridged connection.
+/// Forwards instructions from the peer to the source (fan-in: N peers → 1 source).
+/// Registers the peer's response sender with the fan-out task for the source.
+/// Holds the control channel sender alive for the lifetime of the bridged connection.
 ///
-/// This replaces the identical `bridge_downstream` (relay) and `bridge_peer`
-/// (exit relay capability) functions.
+/// `fanout_register_tx` is a channel to the relay's fan-out task: each new
+/// peer sends its `responses_tx` there so the fan-out task can include it.
 pub(crate) fn bridge_channels(
     peer_addr: &str,
-    channels: wallhack_core::server::server::Channels,
+    peer_instructions_rx: mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
+    peer_responses_tx: mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    source_instr: &broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    source_resp: &broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
+    source_instr_tx: mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    fanout_register_tx: &mpsc::UnboundedSender<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>>,
 ) {
     tracing::debug!("Bridging peer connection: {peer_addr}");
 
-    let (peer_instr, peer_resp) = channels;
+    // Register this peer's response sender with the fan-out task.
+    if fanout_register_tx.send(peer_responses_tx).is_err() {
+        tracing::warn!("Fan-out task closed, dropping peer {peer_addr}");
+        return;
+    }
 
-    // Forward peer instructions to source (also holds control_tx to keep control stream alive)
-    let source_instr_clone = source_instr.clone();
-    let mut peer_instr_rx = peer_instr.subscribe();
+    // Forward peer instructions to source (fan-in).
+    // Also holds control_tx to keep the control stream alive.
+    let mut instructions_rx = peer_instructions_rx;
     tokio::spawn(async move {
         let _keep_alive = control_tx;
+        while let Some(instr) = instructions_rx.recv().await {
+            if source_instr_tx.send(instr).await.is_err() {
+                tracing::warn!("Source instruction channel closed");
+                break;
+            }
+        }
+    });
+}
+
+/// Spawn the relay fan-out task for a source connection.
+///
+/// The fan-out task reads responses from `source_resp_rx` and forwards each
+/// to all currently-registered peer response senders. Returns a registration
+/// channel: callers send a new `mpsc::Sender` for each peer that connects.
+pub(crate) fn spawn_fanout_task(
+    source_resp_rx: mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
+) -> mpsc::UnboundedSender<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>> {
+    let (register_tx, mut register_rx) =
+        mpsc::unbounded_channel::<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>>();
+
+    tokio::spawn(async move {
+        let mut peers: Vec<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>> = Vec::new();
+        let mut source_resp_rx = source_resp_rx;
+
         loop {
-            match peer_instr_rx.recv().await {
-                Ok(instr) => {
-                    if source_instr_clone.send(instr).is_err() {
-                        tracing::warn!("Source instruction channel closed");
-                        break;
-                    }
+            tokio::select! {
+                // New peer registered
+                Some(peer_tx) = register_rx.recv() => {
+                    peers.push(peer_tx);
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Lagged {n} instructions");
+                // Response from source
+                result = source_resp_rx.recv() => {
+                    let Some(resp) = result else {
+                        tracing::debug!("Source response channel closed, fan-out task exiting");
+                        break;
+                    };
+                    peers.retain(|tx| {
+                        match tx.try_send(resp.clone()) {
+                            Ok(()) => true,
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                tracing::warn!("Fan-out: peer channel full, dropping response");
+                                true
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => false,
+                        }
+                    });
                 }
             }
         }
     });
 
-    // Forward source responses to peer
-    let mut source_resp_rx = source_resp.subscribe();
-    let peer_resp_clone = peer_resp.clone();
-    tokio::spawn(async move {
-        loop {
-            match source_resp_rx.recv().await {
-                Ok(resp) => {
-                    if peer_resp_clone.send(resp).is_err() {
-                        tracing::warn!("Peer response channel closed");
-                        break;
-                    }
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Lagged {n} responses");
-                }
-            }
-        }
-    });
+    register_tx
 }
 
 #[cfg(test)]

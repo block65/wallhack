@@ -1,3 +1,4 @@
+# DONE
 # Phase 13d: Hints
 
 When auto-negotiation reaches an ambiguous state (typically two TUN-capable
