@@ -306,14 +306,16 @@ pub enum ConfigError {
     HintRequiresAutoMode,
     #[error("invalid role '{0}': expected 'entry', 'exit', or 'relay'")]
     InvalidRole(String),
-    #[error("{0}")]
-    Other(String),
-}
-
-impl From<String> for ConfigError {
-    fn from(s: String) -> Self {
-        Self::Other(s)
-    }
+    #[error("invalid address '{0}'")]
+    InvalidAddress(String),
+    #[error("entry requires exactly one of --listen or --connect")]
+    EntryRequiresOneTransport,
+    #[error("exit requires --listen or --connect")]
+    ExitRequiresTransport,
+    #[error("relay requires --connect")]
+    RelayRequiresConnect,
+    #[error("relay requires --listen")]
+    RelayRequiresListen,
 }
 
 /// Parse CLI from explicit arguments.
@@ -465,12 +467,18 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
         let connect = cli
             .connect
             .as_ref()
-            .map(|s| s.parse::<AddressSpec>())
+            .map(|s| {
+                s.parse::<AddressSpec>()
+                    .map_err(ConfigError::InvalidAddress)
+            })
             .transpose()?;
         let listen = cli
             .listen
             .as_ref()
-            .map(|s| s.parse::<AddressSpec>())
+            .map(|s| {
+                s.parse::<AddressSpec>()
+                    .map_err(ConfigError::InvalidAddress)
+            })
             .transpose()?;
 
         validate_fixed_hint(hint.as_ref(), connect.as_ref(), listen.as_ref())?;
@@ -527,11 +535,17 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
 /// Resolve entry transport direction.
 ///
 /// Defaults to listening on the default port when neither flag is provided.
-fn resolve_entry_transport(cmd: &EntryCommand) -> Result<ConnectivitySpec, String> {
+fn resolve_entry_transport(cmd: &EntryCommand) -> Result<ConnectivitySpec, ConfigError> {
     match (&cmd.listen, &cmd.connect) {
-        (Some(addr), None) => Ok(ConnectivitySpec::Listen(addr.parse::<AddressSpec>()?)),
-        (None, Some(addr)) => Ok(ConnectivitySpec::Connect(addr.parse::<AddressSpec>()?)),
-        (Some(_), Some(_)) => Err("entry requires exactly one of --listen or --connect".into()),
+        (Some(addr), None) => Ok(ConnectivitySpec::Listen(
+            addr.parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
+        )),
+        (None, Some(addr)) => Ok(ConnectivitySpec::Connect(
+            addr.parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
+        )),
+        (Some(_), Some(_)) => Err(ConfigError::EntryRequiresOneTransport),
         (None, None) => Ok(ConnectivitySpec::Listen(AddressSpec::listen_all(
             wallhack_core::server::config::DEFAULT_LISTEN_PORT,
         ))),
@@ -541,29 +555,43 @@ fn resolve_entry_transport(cmd: &EntryCommand) -> Result<ConnectivitySpec, Strin
 /// Resolve exit transport direction.
 ///
 /// No default — one or both of `--listen` or `--connect` is required.
-fn resolve_exit_transport(cmd: &ExitCommand) -> Result<ConnectivitySpec, String> {
+fn resolve_exit_transport(cmd: &ExitCommand) -> Result<ConnectivitySpec, ConfigError> {
     match (&cmd.listen, &cmd.connect) {
         (Some(listen), Some(connect)) => Ok(ConnectivitySpec::Both {
-            connect: connect.parse::<AddressSpec>()?,
-            listen: listen.parse::<AddressSpec>()?,
+            connect: connect
+                .parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
+            listen: listen
+                .parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
         }),
-        (Some(addr), None) => Ok(ConnectivitySpec::Listen(addr.parse::<AddressSpec>()?)),
-        (None, Some(addr)) => Ok(ConnectivitySpec::Connect(addr.parse::<AddressSpec>()?)),
-        (None, None) => Err("exit requires --listen or --connect".into()),
+        (Some(addr), None) => Ok(ConnectivitySpec::Listen(
+            addr.parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
+        )),
+        (None, Some(addr)) => Ok(ConnectivitySpec::Connect(
+            addr.parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
+        )),
+        (None, None) => Err(ConfigError::ExitRequiresTransport),
     }
 }
 
 /// Resolve relay transport directions.
 ///
 /// Relay requires **both** `--listen` and `--connect`.
-fn resolve_relay_transport(cmd: &RelayCommand) -> Result<(AddressSpec, AddressSpec), String> {
+fn resolve_relay_transport(cmd: &RelayCommand) -> Result<(AddressSpec, AddressSpec), ConfigError> {
     match (&cmd.connect, &cmd.listen) {
         (Some(connect), Some(listen)) => Ok((
-            connect.parse::<AddressSpec>()?,
-            listen.parse::<AddressSpec>()?,
+            connect
+                .parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
+            listen
+                .parse::<AddressSpec>()
+                .map_err(ConfigError::InvalidAddress)?,
         )),
-        (None, _) => Err("relay requires --connect".into()),
-        (_, None) => Err("relay requires --listen".into()),
+        (None, _) => Err(ConfigError::RelayRequiresConnect),
+        (_, None) => Err(ConfigError::RelayRequiresListen),
     }
 }
 
