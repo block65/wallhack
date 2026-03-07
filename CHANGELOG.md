@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.0...wallhack-cli-v0.6.1) (2026-03-07)
+
+### Bug Fixes
+
+* replace broadcast channels with mpsc on the data path ([65aeb57](https://github.com/block65/wallhack/commit/65aeb579039cd6ff822fb4fd965c19c97b47a005))
+* increase recv buffer to 64 KiB in exit adapter ([bcbb01c](https://github.com/block65/wallhack/commit/bcbb01c813ee6c65aa5deb0986e54df1076aff10))
+
+
 ## [0.6.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.5.0...wallhack-cli-v0.6.0) (2026-03-07)
 
 ### Features
