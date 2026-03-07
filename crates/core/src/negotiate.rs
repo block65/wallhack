@@ -28,13 +28,14 @@ impl std::fmt::Display for NegotiationResult {
     }
 }
 
-/// Convert a proto `NodeRole` to a core `NodeRole`.
-fn proto_to_core_role(proto: ProtoNodeRole) -> NodeRole {
-    match proto {
-        ProtoNodeRole::RoleEntry => NodeRole::Entry,
-        ProtoNodeRole::RoleExit => NodeRole::Exit,
-        ProtoNodeRole::RoleRelay => NodeRole::Relay,
-        ProtoNodeRole::RoleIndeterminate => NodeRole::Indeterminate,
+impl From<ProtoNodeRole> for NodeRole {
+    fn from(proto: ProtoNodeRole) -> Self {
+        match proto {
+            ProtoNodeRole::RoleEntry => NodeRole::Entry,
+            ProtoNodeRole::RoleExit => NodeRole::Exit,
+            ProtoNodeRole::RoleRelay => NodeRole::Relay,
+            ProtoNodeRole::RoleIndeterminate => NodeRole::Indeterminate,
+        }
     }
 }
 
@@ -50,7 +51,7 @@ fn parse_hint(hint: Option<&RoleHint>) -> Option<(HintLevel, NodeRole)> {
     if target == ProtoNodeRole::RoleIndeterminate {
         return None;
     }
-    Some((level, proto_to_core_role(target)))
+    Some((level, target.into()))
 }
 
 /// Derive the local node's role from the exchange of two `Handshake` messages.
