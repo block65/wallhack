@@ -225,8 +225,7 @@ async fn run_tcp_recv<A: ExitAdapter>(
     set: SocketSet,
     responses: MetricsSender,
 ) -> Result<(), Error> {
-    let mtu = 1500;
-    let mut recv_buf = vec![0; mtu];
+    let mut recv_buf = vec![0u8; 65536];
 
     let session = match adapter.tcp_recv_session(set) {
         Ok(Some(session)) => session,
@@ -402,8 +401,7 @@ async fn run_udp_recv<A: ExitAdapter>(
         }
     };
 
-    let mtu = 1500;
-    let mut recv_buf = vec![0; mtu];
+    let mut recv_buf = vec![0u8; 65536];
 
     loop {
         match session.recv(&mut recv_buf).await {
