@@ -7,7 +7,7 @@
 use prost::Message;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::{broadcast, mpsc, oneshot},
+    sync::{mpsc, oneshot},
 };
 use wallhack_wire::{
     control::{ControlMessage, control_message},
@@ -328,14 +328,14 @@ pub async fn run_control_stream_acceptor<T: Transport>(
 }
 
 /// Reads `TunnelMessage`s from a receive stream, dispatching only data
-/// messages (instructions and responses) to broadcast channels.
+/// messages (instructions and responses) to mpsc channels.
 ///
 /// Unlike `run_incoming_data`, this function does NOT handle Handshake,
 /// Ping, or Pong — those are handled on the control stream.
 pub async fn run_data_in<S: tokio::io::AsyncRead + Unpin>(
     recv: &mut S,
-    instructions_tx: &broadcast::Sender<EntryNodeInstruction>,
-    responses_tx: &broadcast::Sender<ExitNodeResponse>,
+    instructions_tx: &mpsc::Sender<EntryNodeInstruction>,
+    responses_tx: &mpsc::Sender<ExitNodeResponse>,
 ) -> Result<(), TransportError> {
     let mut read_buf = Vec::with_capacity(TUNNEL_MTU);
     loop {
@@ -350,13 +350,15 @@ pub async fn run_data_in<S: tokio::io::AsyncRead + Unpin>(
 
         match msg.message {
             Some(tunnel_message::Message::EntryNodeInstruction(instr)) => {
-                if instructions_tx.send(instr).is_err() {
-                    tracing::warn!("No receivers for EntryNodeInstruction");
+                if instructions_tx.send(instr).await.is_err() {
+                    tracing::debug!("Instructions receiver closed, stopping data-in");
+                    return Ok(());
                 }
             }
             Some(tunnel_message::Message::ExitNodeResponse(resp)) => {
-                if responses_tx.send(resp).is_err() {
-                    tracing::warn!("No receivers for ExitNodeResponse");
+                if responses_tx.send(resp).await.is_err() {
+                    tracing::debug!("Responses receiver closed, stopping data-in");
+                    return Ok(());
                 }
             }
             Some(tunnel_message::Message::RawPacket(pkt)) => {
@@ -369,30 +371,18 @@ pub async fn run_data_in<S: tokio::io::AsyncRead + Unpin>(
     }
 }
 
-/// Reads `EntryNodeInstruction`s from a pre-subscribed broadcast receiver and
-/// writes them as `TunnelMessage`s on a send stream.
-///
-/// The caller must subscribe to the broadcast channel **before** calling this
-/// function (and before any async work such as `open_uni`) to avoid the race
-/// where a message is sent before the subscription is created and silently
-/// dropped.
+/// Reads `EntryNodeInstruction`s from an mpsc receiver and writes them as
+/// `TunnelMessage`s on a send stream.
 pub async fn run_send_instructions<S: tokio::io::AsyncWrite + Unpin>(
     send: &mut S,
-    mut rx: broadcast::Receiver<EntryNodeInstruction>,
+    mut rx: mpsc::Receiver<EntryNodeInstruction>,
 ) -> Result<(), TransportError> {
     let mut buf = Vec::with_capacity(TUNNEL_MTU);
 
     loop {
-        let instruction = match rx.recv().await {
-            Ok(i) => i,
-            Err(broadcast::error::RecvError::Closed) => {
-                tracing::debug!("Instructions channel closed");
-                return Ok(());
-            }
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!("Instructions channel lagged by {n}");
-                continue;
-            }
+        let Some(instruction) = rx.recv().await else {
+            tracing::debug!("Instructions channel closed");
+            return Ok(());
         };
 
         let tunnel_msg = TunnelMessage::from(instruction);
@@ -403,31 +393,18 @@ pub async fn run_send_instructions<S: tokio::io::AsyncWrite + Unpin>(
     }
 }
 
-/// Reads `ExitNodeResponse`s from a pre-subscribed broadcast receiver and
-/// writes them as `TunnelMessage`s on a send stream.
-///
-/// The caller must subscribe to the broadcast channel **before** calling this
-/// function (and before any async work such as `open_uni`) to avoid the race
-/// where a response is sent before the subscription is created and silently
-/// dropped. This race is particularly acute for WebSocket/yamux where
-/// `open_uni` requires a round-trip through the yamux driver.
+/// Reads `ExitNodeResponse`s from an mpsc receiver and writes them as
+/// `TunnelMessage`s on a send stream.
 pub async fn run_send_responses<S: tokio::io::AsyncWrite + Unpin>(
     send: &mut S,
-    mut rx: broadcast::Receiver<ExitNodeResponse>,
+    mut rx: mpsc::Receiver<ExitNodeResponse>,
 ) -> Result<(), TransportError> {
     let mut buf = Vec::with_capacity(TUNNEL_MTU);
 
     loop {
-        let response = match rx.recv().await {
-            Ok(r) => r,
-            Err(broadcast::error::RecvError::Closed) => {
-                tracing::debug!("Responses channel closed");
-                return Ok(());
-            }
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!("Responses channel lagged by {n}");
-                continue;
-            }
+        let Some(response) = rx.recv().await else {
+            tracing::debug!("Responses channel closed");
+            return Ok(());
         };
 
         tracing::debug!(
@@ -554,9 +531,8 @@ mod tests {
     async fn test_data_in_dispatches_responses() {
         let (sender, receiver) = MockTransport::pair();
 
-        let (instructions_tx, _) = broadcast::channel::<EntryNodeInstruction>(16);
-        let (responses_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
-        let mut responses_rx = responses_tx.subscribe();
+        let (instructions_tx, _instructions_rx) = tokio_mpsc::channel::<EntryNodeInstruction>(16);
+        let (responses_tx, mut responses_rx) = tokio_mpsc::channel::<ExitNodeResponse>(16);
 
         let recv_handle = tokio::spawn(async move {
             match receiver.accept_uni().await {
@@ -579,7 +555,7 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_secs(2), responses_rx.recv())
                 .await
                 .expect("timed out")
-                .expect("channel error");
+                .expect("channel closed");
         }
 
         drop(sender);
@@ -591,14 +567,11 @@ mod tests {
     async fn test_data_out_to_data_in_roundtrip() {
         let (exit_transport, entry_transport) = MockTransport::pair();
 
-        let (responses_src_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
-        let (instructions_dst_tx, _) = broadcast::channel::<EntryNodeInstruction>(16);
-        let (responses_dst_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
-        let mut responses_dst_rx = responses_dst_tx.subscribe();
+        let (responses_src_tx, responses_src_rx) = tokio_mpsc::channel::<ExitNodeResponse>(16);
+        let (instructions_dst_tx, _instructions_dst_rx) =
+            tokio_mpsc::channel::<EntryNodeInstruction>(16);
+        let (responses_dst_tx, mut responses_dst_rx) = tokio_mpsc::channel::<ExitNodeResponse>(16);
 
-        // Subscribe before spawning to avoid the race where messages sent before
-        // the task starts are dropped.
-        let responses_src_rx = responses_src_tx.subscribe();
         let outgoing = tokio::spawn({
             async move {
                 match exit_transport.open_uni().await {
@@ -618,14 +591,17 @@ mod tests {
         });
 
         for _ in 0..3 {
-            responses_src_tx.send(ExitNodeResponse::default()).unwrap();
+            responses_src_tx
+                .send(ExitNodeResponse::default())
+                .await
+                .unwrap();
         }
 
         for _ in 0..3 {
             tokio::time::timeout(std::time::Duration::from_secs(2), responses_dst_rx.recv())
                 .await
                 .expect("timed out")
-                .expect("channel error");
+                .expect("channel closed");
         }
 
         drop(responses_src_tx);
@@ -964,42 +940,36 @@ mod tests {
 
     /// Data plane is paused for `NodeRole::Indeterminate`: the outgoing data
     /// task completes immediately without opening a uni stream, so no data
-    /// is sent even though the broadcast channel has messages.
+    /// is sent even though the channel has messages.
     #[tokio::test]
     async fn test_data_plane_paused_indeterminate() {
         use crate::NodeRole;
 
         let (transport_a, transport_b) = MockTransport::pair();
-        let (responses_tx, _) = broadcast::channel::<ExitNodeResponse>(16);
-        let (instructions_tx, _) = broadcast::channel::<EntryNodeInstruction>(16);
+        let (_responses_tx, responses_rx) = tokio_mpsc::channel::<ExitNodeResponse>(16);
+        let (_instructions_tx, instructions_rx) = tokio_mpsc::channel::<EntryNodeInstruction>(16);
 
         // Simulate the Indeterminate arm from client/quic and client/ws:
         // spawns a no-op future instead of opening a data stream.
         let role = NodeRole::Indeterminate;
         let outgoing_handle = match role {
             NodeRole::Indeterminate => tokio::spawn(std::future::ready(())),
-            NodeRole::Entry | NodeRole::Relay => {
-                let rx = instructions_tx.subscribe();
-                tokio::spawn(async move {
-                    match transport_a.open_uni().await {
-                        Ok(mut send) => {
-                            let _ = run_send_instructions(&mut send, rx).await;
-                        }
-                        Err(e) => panic!("open_uni failed: {e}"),
+            NodeRole::Entry | NodeRole::Relay => tokio::spawn(async move {
+                match transport_a.open_uni().await {
+                    Ok(mut send) => {
+                        let _ = run_send_instructions(&mut send, instructions_rx).await;
                     }
-                })
-            }
-            NodeRole::Exit => {
-                let rx = responses_tx.subscribe();
-                tokio::spawn(async move {
-                    match transport_a.open_uni().await {
-                        Ok(mut send) => {
-                            let _ = run_send_responses(&mut send, rx).await;
-                        }
-                        Err(e) => panic!("open_uni failed: {e}"),
+                    Err(e) => panic!("open_uni failed: {e}"),
+                }
+            }),
+            NodeRole::Exit => tokio::spawn(async move {
+                match transport_a.open_uni().await {
+                    Ok(mut send) => {
+                        let _ = run_send_responses(&mut send, responses_rx).await;
                     }
-                })
-            }
+                    Err(e) => panic!("open_uni failed: {e}"),
+                }
+            }),
         };
 
         // The outgoing task should complete immediately.

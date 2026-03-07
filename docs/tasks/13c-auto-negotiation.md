@@ -1,3 +1,4 @@
+# DONE
 # Phase 13c: Auto-Negotiation
 
 The core logic that determines which role each node operates in, derived

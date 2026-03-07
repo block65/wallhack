@@ -60,9 +60,10 @@ pub async fn run(
     let ctx = Arc::new(ExitContext { metrics, peers });
 
     match &cfg.connectivity {
-        ConnectivitySpec::Both { connect, listen } => {
-            run_exit_both(global, &cfg.name, connect, listen, &ctx).await
-        }
+        ConnectivitySpec::Both { .. } => Err(NodeError::Config(
+            "exit nodes do not support both connect and listen simultaneously; use relay mode"
+                .into(),
+        )),
         ConnectivitySpec::Connect(spec) => {
             run_exit_connector(global, &cfg.name, spec, &security, &ctx).await
         }
@@ -156,215 +157,6 @@ async fn run_exit_connector(
     }
 }
 
-/// Run with both connect and listen (`ConnectivitySpec::Both`).
-// TODO(13c): ConnectivitySpec::Both should resolve to the relay role via
-// auto-negotiation, not run as exit. This entire code path goes away once
-// Phase 13c lands.
-async fn run_exit_both(
-    global: &GlobalConfig,
-    name: &str,
-    connect_spec: &AddressSpec,
-    listen_spec: &AddressSpec,
-    ctx: &Arc<ExitContext>,
-) -> Result<(), NodeError> {
-    tracing::info!("Connecting to {}...", connect_spec.addr);
-    let peer_addr =
-        crate::transport::resolve_endpoint(&connect_spec.addr, global.dns_server.as_deref())
-            .await?;
-    let listen_addr: std::net::SocketAddr =
-        listen_spec.addr.parse::<crate::net::ListenAddr>()?.into();
-
-    let security = SecurityParams {
-        psk: global.psk.clone(),
-        accept_fingerprint: None,
-    };
-
-    match connect_spec.protocol {
-        Protocol::Udp => {
-            #[cfg(feature = "quic")]
-            {
-                run_quic_exit_both(global, peer_addr, listen_addr, name, ctx, &security).await
-            }
-            #[cfg(not(feature = "quic"))]
-            Err(NodeError::TransportUnavailable("quic"))
-        }
-        Protocol::Tcp => {
-            #[cfg(feature = "websocket")]
-            {
-                run_ws_exit_both(global, peer_addr, listen_addr, name, ctx, &security).await
-            }
-            #[cfg(not(feature = "websocket"))]
-            Err(NodeError::TransportUnavailable("websocket"))
-        }
-    }
-}
-
-#[cfg(feature = "quic")]
-async fn run_quic_exit_both(
-    global: &GlobalConfig,
-    peer_addr: std::net::SocketAddr,
-    listen_addr: std::net::SocketAddr,
-    name: &str,
-    ctx: &Arc<ExitContext>,
-    security: &SecurityParams,
-) -> Result<(), NodeError> {
-    use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
-
-    let client_config = crate::config::build_quic_client_config(
-        global,
-        peer_addr,
-        Some(name.to_string()),
-        security,
-        None,
-    );
-    let connect_result = crate::transport::connect_with_retry(|| {
-        let cfg = client_config.clone();
-        async move {
-            use wallhack_core::client::client::Client;
-            let mut client = wallhack_core::client::quic::QuicClient::try_new(cfg)?;
-            client.connect(NodeRole::Exit).await
-        }
-    })
-    .await?;
-
-    tracing::info!("Connected to peer {peer_addr}");
-    let (source_instr, source_resp) = connect_result.channels().clone();
-
-    let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(
-            NodeRole::Exit,
-            crate::built_info::PKG_NAME.to_string(),
-            crate::built_info::PKG_VERSION.to_string(),
-        ),
-        metrics: Some(Arc::clone(&ctx.metrics)),
-        peers: Some(Arc::clone(&ctx.peers)),
-        routes: None,
-        local_handshake: Some(wallhack_wire::data::Handshake {
-            capabilities: Some(wallhack_wire::data::Capabilities {
-                tun_capable: false,
-                listening: true,
-                connecting: true,
-            }),
-            name: name.to_string(),
-            version: crate::built_info::PKG_VERSION.to_string(),
-            psk_proof: Vec::new(),
-            routes: Vec::new(),
-            hint: None,
-        }),
-    };
-    let server_config =
-        crate::config::build_server_config(&global.tls, listen_addr, global.psk.clone(), None);
-    let mut server =
-        wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
-            .map_err(|e| NodeError::Transport(Box::new(e)))?;
-    let bound = server.local_addr()?;
-    tracing::info!(
-        "Exit (both): connected to {peer_addr}, listening on {bound} ({})",
-        server.protocol_name()
-    );
-    run_accept_bridge_loop(&mut server, &source_instr, &source_resp).await
-}
-
-#[cfg(feature = "websocket")]
-async fn run_ws_exit_both(
-    global: &GlobalConfig,
-    peer_addr: std::net::SocketAddr,
-    listen_addr: std::net::SocketAddr,
-    name: &str,
-    ctx: &Arc<ExitContext>,
-    security: &SecurityParams,
-) -> Result<(), NodeError> {
-    use wallhack_core::{control::handler::HandlerConfig, server::server::ServerOptions};
-
-    let client_config = crate::config::build_ws_client_config(
-        global,
-        peer_addr,
-        Some(name.to_string()),
-        security,
-        None,
-    );
-    let connect_result = crate::transport::connect_with_retry(|| {
-        let cfg = client_config.clone();
-        async move {
-            let mut client = wallhack_core::client::ws::WsClient::new(cfg)?;
-            client.connect(NodeRole::Exit).await
-        }
-    })
-    .await?;
-
-    tracing::info!("Connected to peer {peer_addr}");
-    let (source_instr, source_resp) = connect_result.channels().clone();
-
-    let server_options = ServerOptions {
-        handler_config: HandlerConfig::new(
-            NodeRole::Exit,
-            crate::built_info::PKG_NAME.to_string(),
-            crate::built_info::PKG_VERSION.to_string(),
-        ),
-        metrics: Some(Arc::clone(&ctx.metrics)),
-        peers: Some(Arc::clone(&ctx.peers)),
-        routes: None,
-        local_handshake: Some(wallhack_wire::data::Handshake {
-            capabilities: Some(wallhack_wire::data::Capabilities {
-                tun_capable: false,
-                listening: true,
-                connecting: true,
-            }),
-            name: name.to_string(),
-            version: crate::built_info::PKG_VERSION.to_string(),
-            psk_proof: Vec::new(),
-            routes: Vec::new(),
-            hint: None,
-        }),
-    };
-    let server_config =
-        crate::config::build_server_config(&global.tls, listen_addr, global.psk.clone(), None);
-    let mut server =
-        wallhack_core::server::ws::WebSocketServer::try_new(server_config, server_options)?;
-    let bound = server.local_addr()?;
-    tracing::info!(
-        "Exit (both): connected to {peer_addr}, listening on {bound} ({})",
-        server.protocol_name()
-    );
-    run_accept_bridge_loop(&mut server, &source_instr, &source_resp).await
-}
-
-/// Accept loop that bridges each peer connection to source channels.
-async fn run_accept_bridge_loop<S: Server>(
-    server: &mut S,
-    source_instr: &tokio::sync::broadcast::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    source_resp: &tokio::sync::broadcast::Sender<wallhack_wire::data::ExitNodeResponse>,
-) -> Result<(), NodeError>
-where
-    S::Error: std::error::Error + Send + Sync + 'static,
-    S::Transport: Send + Sync + 'static,
-{
-    loop {
-        match server.accept(NodeRole::Exit).await {
-            Ok(Some(accept_result)) => {
-                let peer_addr = accept_result.peer_addr().to_string();
-                tracing::info!("Peer connected: {peer_addr}");
-                let (channels, control_tx) = accept_result.channels();
-                crate::transport::bridge_channels(
-                    &peer_addr,
-                    channels,
-                    control_tx,
-                    source_instr,
-                    source_resp,
-                );
-            }
-            Ok(None) => {
-                tracing::info!("Server closed");
-                break;
-            }
-            Err(e) => {
-                tracing::warn!("Accept error: {e}");
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Run in listen mode.
 async fn run_exit_listener(
     global: &GlobalConfig,
@@ -442,6 +234,14 @@ where
     <S::Transport as Transport>::RecvStream: 'static,
     <S::Transport as Transport>::BiStream: 'static,
 {
+    use wallhack_core::{
+        server::server::DataChannels,
+        transport::{
+            ErasedTransport,
+            protocol::{run_data_in, run_send_responses},
+        },
+    };
+
     loop {
         match server.accept(NodeRole::Exit).await {
             Ok(Some(accept_result)) => {
@@ -462,13 +262,51 @@ where
                     std::time::Duration::from_mins(5),
                 );
                 let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
+                let (
+                    DataChannels {
+                        instructions_tx,
+                        instructions_rx,
+                        responses_tx,
+                        responses_rx,
+                    },
+                    control_tx,
+                ) = accept_result.into_channels();
+
+                // Incoming: accept uni stream from entry peer, dispatch instructions.
+                let transport_in = Arc::clone(&transport);
+                let instr_in = instructions_tx.clone();
+                let resp_in = responses_tx.clone();
+                tokio::spawn(async move {
+                    match transport_in.accept_uni_erased().await {
+                        Ok(Some(mut recv)) => {
+                            if let Err(e) = run_data_in(&mut recv, &instr_in, &resp_in).await {
+                                tracing::debug!("Data-in handler finished: {e}");
+                            }
+                        }
+                        Ok(None) => tracing::debug!("Transport closed before data-in stream"),
+                        Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
+                    }
+                });
+
+                // Outgoing: open uni stream to entry peer, send responses.
+                let transport_out = Arc::clone(&transport);
+                tokio::spawn(async move {
+                    match transport_out.open_uni_erased().await {
+                        Ok(mut send) => {
+                            if let Err(e) = run_send_responses(&mut send, responses_rx).await {
+                                tracing::debug!("Send-responses handler finished: {e}");
+                            }
+                        }
+                        Err(e) => tracing::debug!("Failed to open send stream: {e}"),
+                    }
+                });
+
                 let stream_fut = run_stream_listener(transport);
-                let ((instr, resp), control_tx) = accept_result.channels();
                 let ctx = Arc::clone(ctx);
                 tokio::spawn(async move {
                     let _keep_alive = control_tx;
                     tokio::select! {
-                        result = orchestrator.drive(resp.clone(), instr.subscribe()) => {
+                        result = orchestrator.drive(responses_tx, instructions_rx) => {
                             if let Err(e) = result {
                                 tracing::error!("Orchestrator error: {e}");
                             }
@@ -479,7 +317,6 @@ where
                             }
                         }
                     }
-                    // Unregister peer when connection ends.
                     ctx.peers.unregister(&peer_name);
                 });
             }
@@ -508,12 +345,22 @@ where
     T::RecvStream: 'static,
     T::BiStream: 'static,
 {
+    use wallhack_core::server::server::DataChannels;
+
     let transport: Arc<dyn ErasedTransport> = connect_result.transport();
     let (channels, mut tasks, control_tx) = connect_result.into_parts();
     let disconnect_fut = tasks.wait_for_disconnect();
+    let DataChannels {
+        instructions_tx: _,
+        instructions_rx,
+        responses_tx,
+        responses_rx,
+    } = channels;
     run_exit_loop_inner(
         transport,
-        channels,
+        instructions_rx,
+        responses_tx,
+        responses_rx,
         control_tx,
         disconnect_fut,
         peer_addr,
@@ -523,14 +370,19 @@ where
 }
 
 /// Non-generic exit loop: monomorphized once regardless of transport type.
+#[allow(clippy::too_many_arguments)]
 async fn run_exit_loop_inner(
     transport: Arc<dyn ErasedTransport>,
-    channels: wallhack_core::server::server::Channels,
+    instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
+    responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+    responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
     _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     disconnect_fut: impl std::future::Future<Output = ()>,
     peer_addr: &str,
     ctx: &ExitContext,
 ) -> Result<(), NodeError> {
+    use wallhack_core::transport::protocol::run_send_responses;
+
     tracing::info!("Connected to {peer_addr}");
 
     ctx.peers.register(
@@ -539,6 +391,19 @@ async fn run_exit_loop_inner(
         NodeRole::Entry,
     );
 
+    // Outgoing: open uni stream to entry peer, send responses.
+    let transport_out = Arc::clone(&transport);
+    tokio::spawn(async move {
+        match transport_out.open_uni_erased().await {
+            Ok(mut send) => {
+                if let Err(e) = run_send_responses(&mut send, responses_rx).await {
+                    tracing::debug!("Send-responses handler finished: {e}");
+                }
+            }
+            Err(e) => tracing::debug!("Failed to open send stream: {e}"),
+        }
+    });
+
     let adapter = SyscallExitAdapter::new();
     let _reaper = adapter.start_reaper(
         std::time::Duration::from_mins(1),
@@ -546,11 +411,10 @@ async fn run_exit_loop_inner(
     );
     let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
 
-    let (instr, resp) = channels;
     let stream_fut = run_stream_listener(transport);
     tokio::pin!(stream_fut);
     tokio::pin!(disconnect_fut);
-    let drive_fut = orchestrator.drive(resp, instr.subscribe());
+    let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
     tokio::pin!(drive_fut);
 
     tokio::select! {

@@ -69,9 +69,8 @@
       resource exhaustion and process kill (OOM or SIGKILL). Needs proper TUN
       lifecycle tracking — ensure the old actor is fully dropped before allowing
       a new connection to reuse the name.
-- [ ] No color in `[+]` notification messages — `format_notification()` in
-      `cli/src/output.rs` emits plain text; should apply terminal colors
-      conditionally (color support is already gated on `IsTerminal`).
+- [x] ~~No color in `[+]` notification messages~~ — done, uses `nu-ansi-term`
+      behind `repl` feature gate.
 - [ ] Log prefix inconsistency in REPL — mix of `warn:` prefix (from
       `tracing::warn!`) and `[+]`/`[-]`/`[!]` prefixes (from notifications).
       Consolidate into a consistent style. Broader fix: unified logging format
@@ -90,9 +89,8 @@
       overlapping messages ("Connection tasks died", "Transport disconnected",
       "Connection dropped") fire at non-verbose log levels. Consolidate into a
       single clean message.
-- [ ] Website CLI docs still say "Ping the daemon or a peer" — should be
-      "Ping a peer" (daemon ping was removed, `website/src/content/docs/cli.mdoc`
-      line 15).
+- [x] ~~Website CLI docs ping description~~ — updated to "Measure latency to
+      a peer".
 
 ## UX
 
@@ -109,6 +107,9 @@
 
 ## Build / Config
 
+- [ ] Release process: `feat:` commits trigger a minor (0.x.0) bump, which
+      per semver pre-1.0 signals breaking changes. Make `feat:` a patch bump
+      while pre-1.0, reserve minor bumps for genuinely breaking changes.
 - [ ] Drop glibc release builds in favour of musl static only. Add
       `aarch64-unknown-linux-musl`. Consider armv7 for older 32-bit targets.
 
@@ -119,10 +120,12 @@
       (`struct Psk(String)` with `ZeroizeOnDrop`, `struct PeerId(String)`) so
       the compiler prevents mixing, reduces ambiguous clone noise, and documents
       intent at the type level.
-- [ ] `Metrics` field visibility — seven `AtomicU64` fields in
-      `crates/core/src/control/metrics.rs` are `pub`. Make them private; the
-      existing `inc_*`/`dec_*` methods are the correct API surface. Direct
-      callers should not be able to `store(0)` or `fetch_add(arbitrary)`.
+- [x] ~~`Metrics` field visibility~~ — fields now private with `snapshot()`
+      accessor returning `node_api::Metrics`.
+- [ ] Redundant role conversion helper — `crates/core/src/negotiate.rs`
+      has `proto_to_core_role()` even though `impl From<ProtoNodeRole> for
+      NodeRole` already exists in `crates/core/src/types.rs`. Replace the free
+      helper with `.into()` and remove the duplicate conversion logic.
 - [ ] `run_control_loop` parameter object — seven parameters (four of which are
       `Option<&Tx>`) in `crates/core/src/transport/bridge.rs`. Group the channel
       handles into a `ControlLoopHandles` struct to enforce all-or-nothing
@@ -198,3 +201,7 @@
 
 - [ ] AWS-LC: Timing side-channel in AES-CCM tag verification (high) — `aws-lc-fips-sys`, `aws-lc-sys`
 - [ ] AWS-LC: `PKCS7_verify` certificate chain validation bypass (high) — `aws-lc-sys` GHSA-vw5v-4f2q-w9xf
+
+
+## Website
+- [ ] `website.just` file is in the wrong place?

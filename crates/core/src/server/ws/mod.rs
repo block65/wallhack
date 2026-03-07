@@ -19,7 +19,7 @@ use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::WebSocketConfig}
 use wallhack_transport::Transport;
 use wallhack_wire::{
     control::{ControlMessage, control_message},
-    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
+    data::Handshake,
 };
 use yamux::Mode;
 
@@ -277,8 +277,7 @@ impl Server for WebSocketServer {
             .clone()
             .unwrap_or_else(|| Arc::new(Metrics::default()));
 
-        let (instructions, _) = tokio::sync::broadcast::channel::<EntryNodeInstruction>(65536);
-        let (responses, _) = tokio::sync::broadcast::channel::<ExitNodeResponse>(65536);
+        let channels = super::server::DataChannels::new();
 
         // Create control channel for injecting outgoing control messages
         let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
@@ -318,7 +317,7 @@ impl Server for WebSocketServer {
         // Data tasks are NOT spawned here — the caller does that after PSK validation.
         Ok(Some(AcceptResult::with_handshake(
             Arc::clone(&transport),
-            (instructions, responses),
+            channels,
             peer_addr.to_string(),
             metrics,
             peer_handshake,

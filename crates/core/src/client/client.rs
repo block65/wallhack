@@ -3,27 +3,17 @@ use tokio::{
     task::JoinHandle,
 };
 
-use wallhack_wire::{
-    control::ControlMessage,
-    data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
-};
+use wallhack_wire::{control::ControlMessage, data::Handshake};
 
-use crate::NodeRole;
+use crate::{NodeRole, server::server::DataChannels};
 
 use super::config;
-
-pub type Channels = (
-    tokio::sync::broadcast::Sender<EntryNodeInstruction>,
-    tokio::sync::broadcast::Sender<ExitNodeResponse>,
-);
 
 /// Handles to the background tasks that service the connection.
 /// When these tasks complete, the connection is dead and reconnection should be attempted.
 pub struct ConnectionTasks {
     /// Task handling incoming data from the transport.
     pub incoming: JoinHandle<()>,
-    /// Task handling outgoing data to the transport.
-    pub outgoing: JoinHandle<()>,
     /// Task running the persistent control bidi stream.
     pub control: JoinHandle<()>,
 }
@@ -35,9 +25,6 @@ impl ConnectionTasks {
             _ = &mut self.incoming => {
                 tracing::debug!("Incoming task completed - connection dead");
             }
-            _ = &mut self.outgoing => {
-                tracing::debug!("Outgoing task completed - connection dead");
-            }
             _ = &mut self.control => {
                 tracing::debug!("Control task completed - connection dead");
             }
@@ -46,7 +33,7 @@ impl ConnectionTasks {
 }
 
 pub struct ConnectResult<T: wallhack_transport::Transport + ?Sized> {
-    channels: Channels,
+    channels: DataChannels,
     peer_addr: String,
     tasks: ConnectionTasks,
     transport: std::sync::Arc<T>,
@@ -60,7 +47,7 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
     #[must_use]
     pub fn new(
         transport: std::sync::Arc<T>,
-        channels: Channels,
+        channels: DataChannels,
         peer_addr: String,
         tasks: ConnectionTasks,
         control_tx: mpsc::Sender<ControlMessage>,
@@ -77,12 +64,7 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
     }
 
     #[must_use]
-    pub fn channels(&self) -> &Channels {
-        &self.channels
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (Channels, ConnectionTasks, mpsc::Sender<ControlMessage>) {
+    pub fn into_parts(self) -> (DataChannels, ConnectionTasks, mpsc::Sender<ControlMessage>) {
         (self.channels, self.tasks, self.control_tx)
     }
 

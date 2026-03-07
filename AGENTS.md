@@ -77,3 +77,8 @@ first
 
 PR: `just open-pr`
 Merge: `just do-merge`
+
+# Thou shalt not `git reset --hard` on a dirty tree.
+
+If you know you need to `git stash` and the response is "nothing stashed" then
+STOP. LOOK. LISTEN. something is wrong.
