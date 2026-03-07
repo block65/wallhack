@@ -1,4 +1,3 @@
-#![feature(ip_as_octets)]
 #![warn(unused_extern_crates)]
 #![warn(clippy::pedantic)]
 // These functions are internal APIs where error types are self-documenting;
