@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.4.0...wallhack-cli-v0.5.0) (2026-03-07)
+
+### Features
+
+* **negotiate:** support role hints for auto-negotiation ([a8a03d4](https://github.com/block65/wallhack/commit/a8a03d431ba66c2f08a88a4eba5ef63cc78d3244))
+
+### Bug Fixes
+
+* **core:** remove unused ip_as_octets feature flag from wallhack-core ([da319d2](https://github.com/block65/wallhack/commit/da319d2198fbd25ce8bb066a311c6a48475bf83e))
+* **transport:** remove unused trait_alias feature flag ([76e2d7d](https://github.com/block65/wallhack/commit/76e2d7d96ef9dd3afa09df4301b0e5e5a4046ed1))
+
+7 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.4.0...wallhack-cli-v0.5.0)
+
+
 ## [0.4.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.3.1...wallhack-cli-v0.4.0) (2026-03-01)
 
 ### Features
