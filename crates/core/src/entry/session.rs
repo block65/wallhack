@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::io::copy_bidirectional;
+use tokio::io::copy_bidirectional_with_sizes;
 use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream as _, ErasedTransport, TransportError};
 use wallhack_wire::data::{ResponseStatus, SessionProtocol, TcpStreamHeader, TcpStreamStatus};
@@ -61,7 +61,7 @@ where
         "exit confirmed, starting copy_bidirectional"
     );
 
-    match copy_bidirectional(&mut local, &mut remote).await {
+    match copy_bidirectional_with_sizes(&mut local, &mut remote, 64 * 1024, 64 * 1024).await {
         Ok((to_remote, to_local)) => {
             tracing::debug!(?target, to_remote, to_local, "copy_bidirectional completed");
         }
