@@ -84,6 +84,7 @@ SCENARIO=$(_param scenario)
 TRANSPORT=$(_param transport)
 LOSS=$(_param loss)
 DELAY=$(_param delay)
+RATE=$(_param rate)
 METRIC=$(_param metric)
 DEBUG=$(_param debug)
 
@@ -310,13 +311,18 @@ _run_benchmark() {
 	# All throughput scenarios use --json for sub-Mbps precision.
 	# sum_sent = client-side sender stats (tcp_upstream, udp, parallel)
 	# sum_received = client-side receiver stats (tcp_downstream with -R)
+	# 5s is enough for TCP to converge on loopback; even with 200ms RTT
+	# netem, cwnd stabilises within ~2s.
 	case "${METRIC}" in
-		tcp_upstream)   _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json    | _iperf3_bps_mbps "sum_sent") ;;
-		tcp_downstream) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -R | _iperf3_bps_mbps "sum_received") ;;
-		udp)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -u -b 0 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel10) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 10 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel40) _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 10 --json -P 40 | _iperf3_bps_mbps "sum_sent") ;;
-		*)         _fail "unknown benchmark metric: ${METRIC}"; return ;;
+		tcp_upstream)    _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json    | _iperf3_bps_mbps "sum_sent") ;;
+		tcp_downstream)  _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -R | _iperf3_bps_mbps "sum_received") ;;
+		udp)             _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -u -b 0 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel4)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 4 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel8)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 8 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel32)      _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 32 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel64)      _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 64 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel128)     _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 128 | _iperf3_bps_mbps "sum_sent") ;;
+		*)               _fail "unknown benchmark metric: ${METRIC}"; return ;;
 	esac
 
 	: "${_VALUE:=0}"
@@ -332,10 +338,19 @@ _run_entry() {
 	ip link set "${IFACE}" up
 
 	# Apply netem on eth0 BEFORE starting wallhack (resilience scenarios)
-	if [ -n "${LOSS}" ] || [ -n "${DELAY}" ]; then
+	if [ -n "${LOSS}" ] || [ -n "${DELAY}" ] || [ -n "${RATE}" ]; then
+		# Diagnostic: check tc + netem support
+		echo "NETEM_DIAG: tc binary: $(which tc 2>&1)"
+		echo "NETEM_DIAG: tc version: $(tc -V 2>&1)"
+		echo "NETEM_DIAG: modinfo sch_netem: $(modinfo sch_netem 2>&1)"
+		echo "NETEM_DIAG: loopback test: $(tc qdisc add dev lo root netem delay 1ms 2>&1; echo "exit=$?"; tc qdisc del dev lo root 2>/dev/null)"
+		echo "NETEM_DIAG: applying: tc qdisc add dev ${IFACE} root netem ${DELAY:+delay $DELAY} ${LOSS:+loss $LOSS} ${RATE:+rate $RATE}"
 		tc qdisc add dev "${IFACE}" root netem \
 			${DELAY:+delay "$DELAY"} \
-			${LOSS:+loss "$LOSS"}
+			${LOSS:+loss "$LOSS"} \
+			${RATE:+rate "$RATE"} 2>&1
+		echo "NETEM_DIAG: tc exit=$?"
+		echo "NETEM_DIAG: qdisc show: $(tc qdisc show dev ${IFACE} 2>&1)"
 	fi
 
 	echo "WALLHACK_TS: entry_wallhack_start=$(date +%s%3N)"

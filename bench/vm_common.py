@@ -68,7 +68,7 @@ def qemu_cmd(port, role, scenario, transport, netem=None, metric=None, debug=Fal
     """Build a QEMU command for a wallhack VM.
 
     port   — TCP port for inter-VM L2 socket (entry listens, exit connects)
-    netem  — dict with optional 'loss' and 'delay' keys (test runner)
+    netem  — dict with optional 'loss', 'delay', and 'rate' keys (test runner)
     metric — benchmark metric name string (benchmark runner)
     """
     # Unique MAC for each role to avoid L2 conflicts
@@ -97,6 +97,8 @@ def qemu_cmd(port, role, scenario, transport, netem=None, metric=None, debug=Fal
             cmdline += f" wallhack.loss={netem['loss']}"
         if "delay" in netem:
             cmdline += f" wallhack.delay={netem['delay']}"
+        if "rate" in netem:
+            cmdline += f" wallhack.rate={netem['rate']}"
     if debug:
         cmdline += " wallhack.debug=1"
 

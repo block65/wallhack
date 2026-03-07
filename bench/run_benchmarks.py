@@ -23,16 +23,70 @@ from vm_common import (
 )
 
 SCENARIOS = [
+    # ── Loopback (no netem) ──────────────────────────────────────────────────
     ("benchmark", "tcp_upstream", "throughput_mbps", None),
     ("benchmark", "tcp_downstream", "throughput_mbps", None),
     ("benchmark", "udp", "throughput_mbps", None),
     ("benchmark", "latency", "latency_ms", None),
-    ("benchmark", "parallel10", "throughput_mbps", None),
-    ("benchmark", "parallel40", "throughput_mbps", None),
-    # Packet-loss throughput (40 parallel streams under netem).
-    # delay is one-way, so 5ms delay ≈ 10ms RTT, 25ms ≈ 50ms RTT.
-    ("benchmark", "parallel40", "throughput_mbps", {"loss": "0.5%", "delay": "5ms"}),
-    ("benchmark", "parallel40", "throughput_mbps", {"loss": "2%", "delay": "25ms"}),
+    ("benchmark", "parallel4", "throughput_mbps", None),
+    ("benchmark", "parallel8", "throughput_mbps", None),
+    ("benchmark", "parallel32", "throughput_mbps", None),
+    ("benchmark", "parallel64", "throughput_mbps", None),
+    ("benchmark", "parallel128", "throughput_mbps", None),
+    # ── Loss + delay sweep (40ms one-way / 80ms RTT) ─────────────────────────
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "0.1%", "delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "0.5%", "delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "2%", "delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "3%", "delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "5%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "0.1%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "0.5%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "2%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "3%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "5%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "0.1%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "0.5%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "2%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "3%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "5%", "delay": "40ms"}),
+    # ── Delay sweep (1% loss, isolate latency effect) ────────────────────────
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "1ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "10ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "20ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "80ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"loss": "1%", "delay": "150ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "1ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "10ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "20ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "80ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"loss": "1%", "delay": "150ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "1ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "10ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "20ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "80ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"loss": "1%", "delay": "150ms"}),
+    # ── Delay only (no loss, pure latency baseline) ──────────────────────────
+    ("benchmark", "parallel32", "throughput_mbps", {"delay": "1ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"delay": "10ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"delay": "40ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"delay": "80ms"}),
+    ("benchmark", "parallel32", "throughput_mbps", {"delay": "150ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"delay": "1ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"delay": "10ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"delay": "40ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"delay": "80ms"}),
+    ("benchmark", "parallel64", "throughput_mbps", {"delay": "150ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"delay": "1ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"delay": "10ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"delay": "40ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"delay": "80ms"}),
+    ("benchmark", "parallel128", "throughput_mbps", {"delay": "150ms"}),
 ]
 
 
@@ -84,6 +138,12 @@ def run_one_benchmark(transport, metric, netem=None, debug=False):
         exit_drainer.start()
 
         outcome, err = wait_for_result(entry_log, entry_proc, RESULT_TIMEOUT)
+
+        # Print any diagnostic lines from the VM
+        for line in list(entry_log):
+            if line.startswith("NETEM_DIAG:"):
+                print(f"\n  {line}", flush=True)
+
         if err:
             return None, f"entry VM: {err}", exit_log, entry_log
 

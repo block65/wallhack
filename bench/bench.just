@@ -2,6 +2,7 @@ iperf3_ver := "3.20"
 kernel_ver := "6.19"
 busybox_ver := "1.37.0"
 socat_ver := "1.8.1.1"
+iproute2_ver := "6.12.0"
 musl_target := "x86_64-unknown-linux-musl"
 musl_target_dir := "target/musl"
 vm_dir := "vm"
@@ -14,6 +15,7 @@ wallhack_bin := justfile_directory() / musl_target_dir / musl_target / "release"
 busybox_bin := tools_dir / "busybox"
 iperf3_bin := tools_dir / "iperf3"
 socat_bin := tools_dir / "socat"
+tc_bin := tools_dir / "tc"
 
 # Default: run benchmarks
 default: benchmark
@@ -84,6 +86,24 @@ fetch-iperf3:
     chmod +x "{{ iperf3_bin }}"
     echo "iperf3 downloaded to {{ iperf3_bin }}"
 
+# Build static tc binary from iproute2 (for netem in benchmark VMs).
+build-tc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f "{{ tc_bin }}" ]]; then
+        echo "using cached tc"
+        exit 0
+    fi
+    mkdir -p "{{ staging_dir }}" "{{ tools_dir }}"
+    echo "Building tc (iproute2 {{ iproute2_ver }})..."
+    DOCKER_BUILDKIT=1 docker build \
+        -f "{{ vm_dir }}/iproute2/Dockerfile" \
+        --progress=plain \
+        --build-arg IPROUTE2_VERSION="{{ iproute2_ver }}" \
+        --output "type=local,dest={{ staging_dir }}" \
+        "{{ vm_dir }}/iproute2/"
+    echo "tc built"
+
 cargo-build-musl:
     echo "Building musl binary (slim)..."
     CARGO_TARGET_DIR={{ musl_target_dir }} cross build --release --target "{{ musl_target }}" -p wallhack-cli --no-default-features --features slim
@@ -92,7 +112,7 @@ clean:
     rm -rf "{{ staging_dir }}"
 
 # Build initramfs from musl wallhack + busybox + socat + iperf3 + init.sh
-build-initrd: cargo-build-musl build-kernel build-socat fetch-busybox fetch-iperf3
+build-initrd: cargo-build-musl build-kernel build-socat build-tc fetch-busybox fetch-iperf3
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -113,6 +133,9 @@ build-initrd: cargo-build-musl build-kernel build-socat fetch-busybox fetch-iper
     chmod +x "{{ rootfs_dir }}/bin/socat"
     cp "{{ iperf3_bin }}" "{{ rootfs_dir }}/bin/iperf3"
     chmod +x "{{ rootfs_dir }}/bin/iperf3"
+    rm -f "{{ rootfs_dir }}/bin/tc"
+    cp "{{ tc_bin }}" "{{ rootfs_dir }}/bin/tc"
+    chmod +x "{{ rootfs_dir }}/bin/tc"
     cp "{{ vm_dir }}/init.sh" "{{ rootfs_dir }}/init"
     chmod +x "{{ rootfs_dir }}/init"
 
