@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.5.0...wallhack-cli-v0.6.0) (2026-03-07)
+
+### Features
+
+* **cli:** add color to notification prefixes in REPL ([1ab1def](https://github.com/block65/wallhack/commit/1ab1def832d06f94ee8311fb0325b3f489de851d))
+
+2 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.5.0...wallhack-cli-v0.6.0)
+
+
 ## [0.5.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.4.0...wallhack-cli-v0.5.0) (2026-03-07)
 
 ### Features
