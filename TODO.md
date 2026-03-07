@@ -2,16 +2,14 @@
 
 ## Performance
 
-- [ ] Reverse throughput asymmetry: forward ~3500 Mbps vs reverse ~968 Mbps on
-      symmetric `copy_bidirectional` bi-stream path. Investigate Quinn flow control
-      defaults, poll loop wakeup latency under egress load, and mutex contention
-      between smoltcp writes and the poll loop.
+- [ ] Reverse throughput asymmetry: `tcp_entry_client` ~900 Mbps vs `tcp_exit_client`
+      ~190 Mbps (QUIC). Increasing recv buffer from 1500→65536 had no effect, so
+      it is not per-message protobuf overhead. Likely in `SyscallExitAdapter` —
+      investigate how TCP connections are managed in the exit adapter, poll loop
+      wakeup latency, and mutex contention between smoltcp writes and the poll loop.
 - [ ] Buffer pooling for UDP packets and TUN reads
 - [ ] Reduce global lock contention in entry-stack
-- [ ] Broadcast → mpsc migration on data path — **see docs/tasks/07-broadcast-to-mpsc.md**.
-      `tokio::sync::broadcast` still used for instructions/responses channels;
-      `RecvError::Lagged` still present in 5 files. Needs mpsc conversion for
-      backpressure and to eliminate silent packet loss.
+- [x] ~~Broadcast → mpsc migration on data path~~ — done.
 
 ## Transports
 
@@ -59,6 +57,12 @@
 - [ ] Integration test for full pivot chain
 - [ ] Fuzzing for protocol parsers
 - [ ] Chaos testing (network partitions, latency)
+- [ ] Benchmark scenario naming — `tcp_fwd`/`tcp_rev` uses directional
+      terminology that is confusing. Rename to role-based names that
+      describe where iperf3 server and client run:
+      `tcp_fwd` → `tcp_entry_client` (iperf3 client on entry, server on exit),
+      `tcp_rev` → `tcp_exit_client` (iperf3 client on exit, server on entry).
+      Update `run_benchmarks.py`, `init.sh`, and any results parsing.
 
 ## Bugs
 
