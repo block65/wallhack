@@ -190,23 +190,19 @@ fn format_notification(notif: &DaemonNotification) -> Option<String> {
                 peer.addr
             ))
         }
-        Some(daemon_notification::Event::PeerDisconnected(pd)) => {
-            Some(format!(
-                "{} peer \"{}\" disconnected",
-                Color::Red.paint("[-]"),
-                pd.name
-            ))
-        }
+        Some(daemon_notification::Event::PeerDisconnected(pd)) => Some(format!(
+            "{} peer \"{}\" disconnected",
+            Color::Red.paint("[-]"),
+            pd.name
+        )),
         Some(daemon_notification::Event::TunnelError(te)) => {
             Some(format!("{} {}", Color::Yellow.paint("[!]"), te.message))
         }
-        Some(daemon_notification::Event::ShuttingDown(sd)) => {
-            Some(format!(
-                "{} daemon shutting down: {}",
-                Color::Cyan.paint("[*]"),
-                sd.reason
-            ))
-        }
+        Some(daemon_notification::Event::ShuttingDown(sd)) => Some(format!(
+            "{} daemon shutting down: {}",
+            Color::Cyan.paint("[*]"),
+            sd.reason
+        )),
         _ => None,
     }
 }
