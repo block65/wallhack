@@ -245,7 +245,7 @@ impl WsClient {
             .clone()
             .unwrap_or_else(|| addr.ip().to_string());
 
-        tracing::debug!("{role:?} connecting to {addr} via WebSocket");
+        tracing::debug!("Connecting to {addr} via WebSocket (role={role:?})");
 
         // Build WebSocket URL
         let scheme = if self.tls_connector.is_some() {

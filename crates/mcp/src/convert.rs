@@ -8,9 +8,9 @@ use wallhack_wire::management::{ManagementResponse, management_response};
 pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
     match &resp.response {
         Some(management_response::Response::Status(s)) => {
-            let role = s.role();
+            let role = format!("{:?}", s.role()).to_lowercase();
             let mut out = String::new();
-            let _ = writeln!(out, "role: {role:?}");
+            let _ = writeln!(out, "role: {role}");
             if !s.peer_addr.is_empty() {
                 let _ = writeln!(out, "peer addr: {}", s.peer_addr);
             }
@@ -27,9 +27,9 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             Ok(out)
         }
         Some(management_response::Response::Ping(p)) => {
-            let role = p.node_role();
+            let role = format!("{:?}", p.node_role()).to_lowercase();
             Ok(format!(
-                "pong — role: {role:?}, version: {}, uptime: {}",
+                "pong — role: {role}, version: {}, uptime: {}",
                 p.version,
                 format_uptime(p.uptime_ms),
             ))
@@ -51,8 +51,8 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             }
             let mut out = String::new();
             for peer in &p.peers {
-                let status = peer.status();
-                let role = peer.role();
+                let status = format!("{:?}", peer.status()).to_lowercase();
+                let role = format!("{:?}", peer.role()).to_lowercase();
                 let latency = if peer.latency_ms > 0.0 {
                     format!("{:.1}ms", peer.latency_ms)
                 } else {
@@ -60,7 +60,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
                 };
                 let _ = writeln!(
                     out,
-                    "{} addr={} role={role:?} status={status:?} latency={latency} \
+                    "{} addr={} role={role} status={status} latency={latency} \
                      tun={} listen={} connect={}",
                     peer.name, peer.addr, peer.tun_capable, peer.listening, peer.connecting,
                 );
