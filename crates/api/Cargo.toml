@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 wallhack-core = { path = "../core", default-features = false }
+wallhack-ipc = { path = "../ipc" }
+wallhack-wire = { path = "../wire" }
 axum = { version = "0.7", default-features = false, features = [
     "tokio",
     "json",
@@ -15,8 +17,7 @@ axum-server = { version = "0.7", default-features = false, features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { workspace = true }
-tokio-stream = { version = "0.1", features = ["sync"] }
+tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 urlencoding = "2"
 base64 = "0.22"

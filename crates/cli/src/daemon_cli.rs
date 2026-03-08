@@ -32,6 +32,10 @@ use wallhackd::{
 #[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
 #[derive(FromArgs, Debug, Clone)]
 pub struct WallhackCli {
+    /// daemon socket path (overrides `WALLHACK_HOST` env var)
+    #[argh(option, short = 'H')]
+    pub host: Option<String>,
+
     /// TLS certificate file
     #[argh(option)]
     pub cert: Option<PathBuf>,

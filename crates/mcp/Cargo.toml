@@ -1,0 +1,22 @@
+[package]
+name = "wallhack-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "wallhack-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "1.1", features = ["server", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { workspace = true, features = ["net", "io-util", "rt-multi-thread", "macros"] }
+tracing.workspace = true
+wallhack-ipc = { path = "../ipc" }
+wallhack-wire = { path = "../wire" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = "warn"

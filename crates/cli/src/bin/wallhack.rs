@@ -130,8 +130,9 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
         .build()
         .expect("failed to build tokio runtime");
 
+    let socket_override = cli.host.as_deref().map(wallhack_cli::ipc::resolve_host);
     let exit_code = rt.block_on(async {
-        match wallhackd::run_daemon_engine(config).await {
+        match wallhackd::run_daemon_engine(config, socket_override).await {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -144,6 +145,7 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
 }
 
 #[cfg(feature = "repl")]
+#[allow(clippy::too_many_lines)]
 fn run_daemon_repl(
     cli: &wallhack_cli::daemon_cli::WallhackCli,
     config: &wallhackd::daemon_config::DaemonConfig,
@@ -190,7 +192,10 @@ fn run_daemon_repl(
         };
 
         // Start IPC listener so wallhackctl can still connect.
-        let socket_path = wallhack_core::ipc::socket_path();
+        let socket_path = cli.host.as_deref().map_or_else(
+            wallhack_core::ipc::socket_path,
+            wallhack_cli::ipc::resolve_host,
+        );
         let ipc_api = handle.api_arc();
         let peer_events = handle.peer_events_sender();
         let shutdown_rx = handle.shutdown_rx();
@@ -273,7 +278,11 @@ fn run_ctl(cli: wallhack_cli::cli::Cli) -> ! {
 }
 
 async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlError> {
-    let mut stream = ipc::connect().await.map_err(ipc::IpcError::from)?;
+    let mut stream = match &cli.host {
+        Some(host) => ipc::connect_to(&ipc::resolve_host(host)).await,
+        None => ipc::connect().await,
+    }
+    .map_err(ipc::IpcError::from)?;
 
     let Some(command) = cli.command else {
         eprintln!("error: missing subcommand\nRun with --help for usage information.");

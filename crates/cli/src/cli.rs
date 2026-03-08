@@ -5,6 +5,10 @@ use argh::FromArgs;
 /// Control the wallhack daemon.
 #[derive(FromArgs, Debug)]
 pub struct Cli {
+    /// daemon socket path (overrides `WALLHACK_HOST` env var)
+    #[argh(option, short = 'H')]
+    pub host: Option<String>,
+
     /// print version information and exit
     #[argh(switch)]
     pub version: bool,

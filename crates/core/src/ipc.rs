@@ -31,12 +31,22 @@ use crate::{
 /// Default socket filename within the runtime directory.
 const SOCKET_NAME: &str = "wallhackd.sock";
 
+/// Environment variable for overriding the socket path (like `DOCKER_HOST`).
+const HOST_ENV: &str = "WALLHACK_HOST";
+
 /// Resolve the IPC socket path.
 ///
-/// Uses `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock` when available,
-/// falling back to `/tmp/wallhack-<uid>/wallhackd.sock`.
+/// Checks (in order):
+/// 1. `WALLHACK_HOST` environment variable
+/// 2. `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock`
+/// 3. `/tmp/wallhack-<user>/wallhackd.sock`
+/// 4. `$HOME/.wallhack/wallhackd.sock`
+/// 5. `/tmp/wallhack-shared/wallhackd.sock`
 #[must_use]
 pub fn socket_path() -> PathBuf {
+    if let Ok(host) = std::env::var(HOST_ENV) {
+        return PathBuf::from(host.strip_prefix("unix://").unwrap_or(&host));
+    }
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         Path::new(&runtime_dir).join("wallhack").join(SOCKET_NAME)
     } else if let Ok(user) = std::env::var("USER") {

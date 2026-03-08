@@ -14,7 +14,7 @@ quic = ["wallhack-core/quic"]
 websocket = ["wallhack-core/websocket"]
 
 # REST API feature
-http-api = ["dep:wallhack-api"]
+http-api = ["dep:wallhack-api", "dep:wallhack-ipc"]
 
 [dependencies]
 hickory-resolver = { version = "0.25", default-features = false, features = [
@@ -31,6 +31,7 @@ tokio.workspace = true
 tracing.workspace = true
 wallhack-core = { path = "../core", default-features = false }
 wallhack-api = { path = "../api", optional = true }
+wallhack-ipc = { path = "../ipc", optional = true }
 console-subscriber = { workspace = true, optional = true }
 parking_lot = "0.12.5"
 zeroize = "1"

@@ -25,7 +25,7 @@ use axum::{
 };
 
 pub use auth::Auth;
-pub use state::{Event, State};
+pub use state::State;
 
 /// Security middleware that adds protective headers and validates requests.
 async fn security_middleware(req: Request<Body>, next: Next) -> Response {
@@ -96,7 +96,6 @@ pub fn router(state: State) -> Router {
             get(handlers::list_routes).post(handlers::add_route),
         )
         .route("/routes/{cidr}", delete(handlers::delete_route))
-        .route("/events", get(handlers::events))
         .layer(middleware::from_fn(move |req, next| {
             let auth = auth.clone();
             auth::middleware(auth, req, next)

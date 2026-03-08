@@ -2,60 +2,25 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
-use tokio::sync::broadcast;
-use wallhack_core::node_api::NodeApi;
+use tokio::sync::Mutex;
+use wallhack_ipc::client::IpcConnection;
 
 use super::auth::Auth;
-
-/// Event types for SSE stream.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", content = "data")]
-pub enum Event {
-    PeerConnected {
-        peer: String,
-        addr: String,
-    },
-    PeerDisconnected {
-        peer: String,
-        reason: String,
-    },
-    PeerLatency {
-        peer: String,
-        latency_ms: f64,
-    },
-    Error {
-        message: String,
-    },
-    StatsUpdate {
-        bytes_in: u64,
-        bytes_out: u64,
-        active_connections: u64,
-    },
-}
 
 /// Shared state for the API server.
 #[derive(Clone)]
 pub struct State {
-    pub(super) node_api: Arc<dyn NodeApi>,
-    pub(super) events_tx: broadcast::Sender<Event>,
+    pub(super) ipc: Arc<Mutex<IpcConnection>>,
     pub(super) auth: Auth,
 }
 
 impl State {
-    /// Create API state with a `NodeApi` implementation and optional auth.
+    /// Create API state with an IPC connection and optional auth.
     #[must_use]
-    pub fn new(node_api: Arc<dyn NodeApi>, auth: Auth) -> Self {
-        let (events_tx, _) = broadcast::channel(256);
+    pub fn new(ipc: IpcConnection, auth: Auth) -> Self {
         Self {
-            node_api,
-            events_tx,
+            ipc: Arc::new(Mutex::new(ipc)),
             auth,
         }
-    }
-
-    /// Emit an event to all SSE subscribers.
-    pub fn emit(&self, event: Event) {
-        let _ = self.events_tx.send(event);
     }
 }
