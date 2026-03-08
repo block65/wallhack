@@ -533,7 +533,11 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
         }
     };
 
-    Ok(DaemonConfig { global, mode })
+    Ok(DaemonConfig {
+        global,
+        mode,
+        binary_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+    })
 }
 
 /// Resolve entry transport direction.

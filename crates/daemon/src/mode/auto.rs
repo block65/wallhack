@@ -553,7 +553,11 @@ where
         tracing::warn!(
             "No authentication configured. Set a pre-shared key (PSK) to require authentication."
         );
+    } else {
+        tracing::info!("PSK authentication configured");
     }
+
+    let mut psk_failures = super::PskFailTracker::new();
 
     loop {
         match server.accept(NodeRole::Indeterminate).await {

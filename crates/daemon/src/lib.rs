@@ -55,10 +55,23 @@ pub async fn run_daemon_engine(
     config: DaemonConfig,
     socket_path_override: Option<std::path::PathBuf>,
 ) -> Result<(), NodeError> {
+    let display_version = config
+        .binary_version
+        .as_deref()
+        .unwrap_or(built_info::PKG_VERSION);
+    let dirty = if built_info::GIT_DIRTY == Some(true) {
+        "-dirty"
+    } else {
+        ""
+    };
+    let build_id = match built_info::GIT_COMMIT_HASH_SHORT {
+        Some(hash) => format!("{hash}{dirty}"),
+        None => format!("{}{dirty}", built_info::BUILT_TIME_UTC),
+    };
     tracing::info!(
-        "{} {}  {}",
+        "{} {} ({build_id})  {}",
         built_info::PKG_NAME,
-        built_info::PKG_VERSION,
+        display_version,
         config.mode.name()
     );
 
