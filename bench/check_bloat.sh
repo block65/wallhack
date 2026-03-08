@@ -21,15 +21,15 @@ mkdir -p "$RESULTS_DIR"
 cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
-# Updated: 2026-03-08, baseline: fix/13g-role-transitions (75f85f6)
+# Updated: 2026-02-28, baseline: feat/capability-handshake (4bb6213)
 # Set ~1% above current measured sizes. Keep tight — log top 30 on every bump.
 declare -A THRESHOLDS=(
     # glibc x86_64 (~1% headroom)
-    ["default-glibc"]=6910000      # current: 6783080 → ~6840000 after 13g; +1%
-    ["slim-glibc"]=5160000         # current: 5108280 (4.87M) after 13g role transitions; +1%
+    ["default-glibc"]=6850000      # current: 6783080 (6.47M); +59KB from handshake/PSK/proto
+    ["slim-glibc"]=5103000         # current: 5052552 (4.82M); +59KB from handshake/PSK/proto
     # musl x86_64 (~1% headroom, estimated)
-    ["default-musl"]=6910000       # estimated — update after musl build
-    ["slim-musl"]=5160000          # estimated — update after musl build
+    ["default-musl"]=6850000       # estimated — update after musl build
+    ["slim-musl"]=5103000          # estimated — update after musl build
 )
 
 # --- Build definitions ---
