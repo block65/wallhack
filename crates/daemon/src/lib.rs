@@ -51,29 +51,29 @@ use wallhack_core::{
 /// # Errors
 ///
 /// Returns [`NodeError`] for node failures.
-pub async fn run_daemon_engine(
-    config: DaemonConfig,
-    socket_path_override: Option<std::path::PathBuf>,
-) -> Result<(), NodeError> {
-    let display_version = config
-        .binary_version
-        .as_deref()
-        .unwrap_or(built_info::PKG_VERSION);
+/// Build the canonical version string used everywhere: startup, IPC, handshake.
+///
+/// Format: `0.6.2 (abc1234-dirty)` or `0.6.2 (dev)` when no git info.
+#[must_use]
+pub fn version_string(binary_version: Option<&str>) -> String {
+    let ver = binary_version.unwrap_or(built_info::PKG_VERSION);
     let dirty = if built_info::GIT_DIRTY == Some(true) {
         "-dirty"
     } else {
         ""
     };
-    let build_id = match built_info::GIT_COMMIT_HASH_SHORT {
-        Some(hash) => format!("{hash}{dirty}"),
-        None => format!("{}{dirty}", built_info::BUILT_TIME_UTC),
-    };
-    tracing::info!(
-        "{} {} ({build_id})  {}",
-        built_info::PKG_NAME,
-        display_version,
-        config.mode.name()
-    );
+    match built_info::GIT_COMMIT_HASH_SHORT {
+        Some(hash) => format!("{ver} ({hash}{dirty})"),
+        None => format!("{ver} (dev{dirty})"),
+    }
+}
+
+pub async fn run_daemon_engine(
+    config: DaemonConfig,
+    socket_path_override: Option<std::path::PathBuf>,
+) -> Result<(), NodeError> {
+    let version = version_string(config.binary_version.as_deref());
+    tracing::info!("wallhack {version}  {}", config.mode.name());
 
     sys::check_entropy_ready();
 
@@ -126,8 +126,8 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
     let handler = Handler::new(
         HandlerConfig::new(
             role,
-            built_info::PKG_NAME.to_string(),
-            built_info::PKG_VERSION.to_string(),
+            "wallhack".to_string(),
+            version_string(config.binary_version.as_deref()),
         ),
         Arc::clone(&metrics),
         Arc::clone(&peers),
