@@ -59,7 +59,7 @@ services:
       XDG_RUNTIME_DIR: /var/run
     volumes:
       - ./range-ipc:/var/run/wallhack
-    command: ["wallhack", "daemon", "--name", "attacker", "--fixed-role", "entry", "--listen", "0.0.0.0:4433"]
+    command: ["wallhack", "daemon", "--name", "attacker", "--debug", "--fixed-role", "entry", "--listen", "0.0.0.0:4433"]
     networks:
       perimeter:
         ipv4_address: 10.99.1.100
