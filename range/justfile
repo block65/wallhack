@@ -33,6 +33,14 @@ record:
     docker compose up -d --build --wait
     vhs demo.tape
 
+# Fix socket permissions so host can connect (container runs as root)
+fix-socket:
+    docker exec wallhack-range-attacker-1 chmod 777 /var/run/wallhack/wallhackd.sock
+
+# Query the attacker daemon from the host via wallhackctl
+ctl *args:
+    {{ root }}/target/debug/wallhack -H {{ justfile_directory() }}/range-ipc/wallhackd.sock {{ args }}
+
 # Stop and remove all volumes/images
 clean:
     docker compose down -v --rmi local

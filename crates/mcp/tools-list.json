@@ -1,0 +1,175 @@
+{
+    "id": 2,
+    "jsonrpc": "2.0",
+    "result": {
+        "tools": [
+            {
+                "annotations": {
+                    "readOnlyHint": true
+                },
+                "description": "Get node status: role, version, uptime, listen/peer addresses, capabilities",
+                "inputSchema": {
+                    "properties": {},
+                    "type": "object"
+                },
+                "name": "wallhack_status"
+            },
+            {
+                "annotations": {
+                    "readOnlyHint": true
+                },
+                "description": "Ping the daemon (or a specific peer by name prefix)",
+                "inputSchema": {
+                    "properties": {
+                        "peer": {
+                            "description": "Peer name prefix to ping. Leave empty to ping the daemon itself.",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "peer"
+                    ],
+                    "type": "object"
+                },
+                "name": "wallhack_ping"
+            },
+            {
+                "annotations": {
+                    "readOnlyHint": true
+                },
+                "description": "Get traffic statistics: bytes/packets in/out, active connections and flows",
+                "inputSchema": {
+                    "properties": {},
+                    "type": "object"
+                },
+                "name": "wallhack_stats"
+            },
+            {
+                "annotations": {
+                    "readOnlyHint": true
+                },
+                "description": "List all connected peers with their name, address, status, latency, and capabilities",
+                "inputSchema": {
+                    "properties": {},
+                    "type": "object"
+                },
+                "name": "wallhack_peers"
+            },
+            {
+                "annotations": {
+                    "readOnlyHint": true
+                },
+                "description": "List all configured routes (CIDR \u2192 peer mappings)",
+                "inputSchema": {
+                    "properties": {},
+                    "type": "object"
+                },
+                "name": "wallhack_routes"
+            },
+            {
+                "description": "Add a route: forward traffic for a CIDR range to a peer",
+                "inputSchema": {
+                    "properties": {
+                        "peer": {
+                            "description": "Target peer name",
+                            "type": "string"
+                        },
+                        "cidr": {
+                            "description": "CIDR range, e.g. \"10.0.0.0/8\"",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "cidr",
+                        "peer"
+                    ],
+                    "type": "object"
+                },
+                "name": "wallhack_add_route"
+            },
+            {
+                "description": "Remove a route by CIDR",
+                "inputSchema": {
+                    "properties": {
+                        "cidr": {
+                            "description": "CIDR range to remove, e.g. \"10.0.0.0/8\"",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "cidr"
+                    ],
+                    "type": "object"
+                },
+                "name": "wallhack_remove_route"
+            },
+            {
+                "description": "Disconnect a peer by name",
+                "inputSchema": {
+                    "properties": {
+                        "peer": {
+                            "description": "Peer name (or unambiguous prefix)",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "peer"
+                    ],
+                    "type": "object"
+                },
+                "name": "wallhack_disconnect_peer"
+            },
+            {
+                "description": "Connect to a remote peer by address (e.g. \"1.2.3.4:4433\")",
+                "inputSchema": {
+                    "properties": {
+                        "addr": {
+                            "description": "Peer address to connect to",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "addr"
+                    ],
+                    "type": "object"
+                },
+                "name": "wallhack_connect"
+            },
+            {
+                "description": "Start listening for incoming peer connections on an address",
+                "inputSchema": {
+                    "properties": {
+                        "addr": {
+                            "description": "Address to listen on, e.g. \"0.0.0.0:4433\"",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "addr"
+                    ],
+                    "type": "object"
+                },
+                "name": "wallhack_listen"
+            },
+            {
+                "description": "Disconnect from the current transport (stop connecting/listening)",
+                "inputSchema": {
+                    "properties": {},
+                    "type": "object"
+                },
+                "name": "wallhack_disconnect"
+            },
+            {
+                "annotations": {
+                    "destructiveHint": true
+                },
+                "description": "Gracefully shut down the wallhack daemon",
+                "inputSchema": {
+                    "properties": {},
+                    "type": "object"
+                },
+                "name": "wallhack_shutdown"
+            }
+        ]
+    }
+}

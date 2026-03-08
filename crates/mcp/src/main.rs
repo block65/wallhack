@@ -15,9 +15,16 @@ use rmcp::ServiceExt;
 #[tokio::main]
 async fn main() {
     let transport = rmcp::transport::io::stdio();
-    let server = tools::WallhackServer
-        .serve(transport)
-        .await
-        .expect("failed to start MCP server");
-    server.waiting().await.expect("MCP server error");
+    let mut router = rmcp::handler::server::router::Router::new(tools::WallhackServer);
+    router.tool_router = tools::WallhackServer::tool_router();
+    let server = match router.serve(transport).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("wallhack-mcp: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = server.waiting().await {
+        eprintln!("wallhack-mcp: {e}");
+    }
 }
