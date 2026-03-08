@@ -11,11 +11,9 @@ pub(crate) mod relay;
 
 use std::sync::Arc;
 
-use tokio::sync::watch;
 use wallhack_core::control::{
-    handler::SharedRole, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
+    handler::SharedNodeState, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
 };
-use wallhack_wire::data::RoleHint;
 
 use crate::{
     NodeError,
@@ -27,8 +25,7 @@ pub(crate) struct NodeResources {
     pub metrics: Arc<Metrics>,
     pub peers: Arc<Registry>,
     pub routes: SharedRouteTable,
-    pub shared_role: SharedRole,
-    pub hint_rx: watch::Receiver<Option<RoleHint>>,
+    pub node_state: SharedNodeState,
 }
 
 /// Dispatch to the appropriate node mode based on the config.
@@ -45,13 +42,23 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.metrics,
                 resources.peers,
                 resources.routes,
+                resources.node_state,
             )
             .await
         }
         ModeConfig::Exit(cfg) => {
-            exit::run(&config.global, cfg, resources.metrics, resources.peers).await
+            exit::run(
+                &config.global,
+                cfg,
+                resources.metrics,
+                resources.peers,
+                resources.node_state,
+            )
+            .await
         }
-        ModeConfig::Relay(cfg) => relay::run(&config.global, cfg, resources.metrics).await,
+        ModeConfig::Relay(cfg) => {
+            relay::run(&config.global, cfg, resources.metrics, resources.node_state).await
+        }
         ModeConfig::Auto(cfg) => {
             auto::run(
                 &config.global,
@@ -59,8 +66,7 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.metrics,
                 resources.peers,
                 resources.routes,
-                resources.shared_role,
-                resources.hint_rx,
+                resources.node_state,
             )
             .await
         }

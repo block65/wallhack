@@ -85,7 +85,7 @@ impl<D: Device> InnerStack<D> {
         let mut iface = Interface::new(iface_config, &mut device, now);
         if config.any_ip {
             #[cfg(feature = "async")]
-            tracing::info!("Enabling AnyIP mode");
+            tracing::debug!("Enabling AnyIP mode");
             iface.set_any_ip(true);
 
             // Add default routes (required for AnyIP to work with smoltcp)

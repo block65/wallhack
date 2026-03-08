@@ -12,7 +12,10 @@ use wallhack_core::psk::HandshakeExt;
 use wallhack_core::{
     NodeRole,
     control::{
-        handler::HandlerConfig, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
+        handler::{HandlerConfig, SharedNodeState},
+        metrics::Metrics,
+        peers::Registry,
+        routes::SharedRouteTable,
     },
     entry::{actor::TunActor, manager::ConnectionManager},
     server::server::{Server, ServerOptions},
@@ -34,6 +37,7 @@ struct EntryResources {
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    node_state: SharedNodeState,
     sessions: SessionManager,
 }
 
@@ -112,12 +116,21 @@ pub async fn run(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
+    // Set capabilities that are known at startup (TUN detection).
+    node_state.update_capabilities(wallhack_wire::data::Capabilities {
+        tun_capable: crate::tun_cap::detect_tun_capable(),
+        listening: false,
+        connecting: false,
+    });
+
     let res = EntryResources {
         sessions: SessionManager::default(),
         metrics,
         peers,
         routes,
+        node_state,
     };
 
     match &cfg.connectivity {
@@ -125,7 +138,11 @@ pub async fn run(
             "entry nodes do not support both connect and listen simultaneously".into(),
         )),
         ConnectivitySpec::Listen(spec) => run_entry_listen(global, cfg, spec, res).await,
-        ConnectivitySpec::Connect(spec) => run_entry_connect(global, cfg, spec, res.metrics).await,
+        ConnectivitySpec::Connect(spec) => {
+            let node_state = res.node_state.clone();
+            node_state.set_connected(&spec.addr);
+            run_entry_connect(global, cfg, spec, res.metrics).await
+        }
     }
 }
 
@@ -221,6 +238,7 @@ where
     <S::Transport as Transport>::BiStream: 'static,
 {
     let local_addr = server.local_addr()?;
+    res.node_state.set_listen_addr(local_addr);
     let proto = server.protocol_name();
     tracing::info!("Listening on {local_addr} ({proto})");
     tracing::info!("Certificate fingerprint: {}", server.fingerprint());
@@ -460,6 +478,7 @@ where
         metrics: _,
         peers,
         routes,
+        node_state: _,
         sessions,
     } = res;
     let EntryListenOptions {
@@ -529,7 +548,7 @@ async fn handle_connection_erased(
     let peer_addr = erased.peer_addr.clone();
 
     // Validate handshake before spawning (keeps generic code minimal).
-    let peer = match validate_handshake_erased(&mut erased, server_psk, &peers) {
+    let identity = match validate_handshake_erased(&mut erased, server_psk) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!("Handshake validation failed for {peer_addr}: {e}");
@@ -537,10 +556,11 @@ async fn handle_connection_erased(
         }
     };
 
-    let peer_name = peer.as_deref().unwrap_or(&peer_addr).to_string();
+    let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
 
-    // Register peer in the registry
+    // Register peer in the registry and apply handshake capabilities.
     peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
+    peers.update_capabilities(&peer_name, &identity.capabilities);
 
     // Create ping channel for this peer
     #[allow(deprecated)] // TODO: replace with peer events
@@ -561,7 +581,7 @@ async fn handle_connection_erased(
         control_tx,
         sessions: sessions.clone(),
         peers: Arc::clone(&peers),
-        peer,
+        peer: identity.name,
         fast_mode,
         peer_addr: peer_addr.clone(),
     };
@@ -633,16 +653,24 @@ struct ConnectionParams {
     peer_addr: String,
 }
 
+/// Validated handshake result containing the peer's name and capabilities.
+struct PeerIdentity {
+    name: Option<String>,
+    capabilities: wallhack_wire::data::Capabilities,
+}
+
 /// Validate the peer's handshake (PSK proof + identity).
 fn validate_handshake_erased(
     accept_result: &mut wallhack_core::server::server::ErasedAcceptResult,
     server_psk: Option<&str>,
-    peers: &Registry,
-) -> Result<Option<String>, NodeError> {
+) -> Result<PeerIdentity, NodeError> {
     let channel_binding = accept_result.channel_binding;
     let Some(hs) = accept_result.peer_handshake.take() else {
         tracing::debug!("No Handshake received, peer unidentified");
-        return Ok(None);
+        return Ok(PeerIdentity {
+            name: None,
+            capabilities: wallhack_wire::data::Capabilities::default(),
+        });
     };
 
     if let Some(expected_psk) = server_psk {
@@ -655,13 +683,21 @@ fn validate_handshake_erased(
         }
     }
 
-    if !hs.name.is_empty() {
-        let capabilities = hs.capabilities.unwrap_or_default();
-        peers.update_capabilities(&hs.name, &capabilities);
-    }
+    let capabilities = hs.capabilities.unwrap_or_default();
 
-    tracing::debug!("Peer {} identified (v{})", hs.name, hs.version);
-    Ok(Some(hs.name))
+    if hs.name.is_empty() {
+        tracing::debug!("Peer identified with empty name (v{})", hs.version);
+        Ok(PeerIdentity {
+            name: None,
+            capabilities,
+        })
+    } else {
+        tracing::debug!("Peer {} identified (v{})", hs.name, hs.version);
+        Ok(PeerIdentity {
+            name: Some(hs.name),
+            capabilities,
+        })
+    }
 }
 
 /// Spawn background tasks that bridge transport data streams (entry server side).

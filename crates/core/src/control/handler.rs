@@ -3,7 +3,7 @@
 //! Handles incoming [`ControlRequest`] messages and produces
 //! [`ControlResponse`] messages.
 
-use std::{sync::Arc, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
 use tokio::sync::watch;
@@ -12,15 +12,98 @@ use wallhack_wire::{
         ControlRequest, ControlResponse, ErrorResponse, PeerInfo, PingResponse, RouteInfo,
         StatsResponse, control_request, control_response,
     },
-    data::{NodeRole as ProtoNodeRole, RoleHint},
+    data::{Capabilities, NodeRole as ProtoNodeRole, RoleHint},
 };
 
 use crate::NodeRole;
 
 use super::{metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable};
 
-/// Shared mutable role state, readable from any thread without locking.
-pub type SharedRole = Arc<ArcSwap<NodeRole>>;
+/// Mutable runtime state that can change after construction.
+///
+/// Stored behind `ArcSwap` for wait-free reads (same pattern as `Registry`).
+#[derive(Debug, Clone)]
+struct NodeState {
+    role: NodeRole,
+    capabilities: Capabilities,
+    listen_addr: Option<SocketAddr>,
+    connected: bool,
+    peer_addr: Option<String>,
+}
+
+/// Shared node state handle, cloneable and cheaply updatable.
+///
+/// Consumers call [`SharedNodeState::update_role`], [`SharedNodeState::update_capabilities`],
+/// etc. after negotiation or listening starts so that `wallhack info` /
+/// `wallhack_status` reflects the real state of the daemon.
+#[derive(Clone, Debug)]
+pub struct SharedNodeState(Arc<ArcSwap<NodeState>>);
+
+impl SharedNodeState {
+    fn new(role: NodeRole) -> Self {
+        Self(Arc::new(ArcSwap::from_pointee(NodeState {
+            role,
+            capabilities: Capabilities::default(),
+            listen_addr: None,
+            connected: false,
+            peer_addr: None,
+        })))
+    }
+
+    fn load(&self) -> arc_swap::Guard<Arc<NodeState>> {
+        self.0.load()
+    }
+
+    /// Update the node role (e.g. after auto-negotiation resolves).
+    pub fn update_role(&self, role: NodeRole) {
+        self.0.rcu(|old| {
+            let mut new = (**old).clone();
+            new.role = role;
+            new
+        });
+    }
+
+    /// Update the node's own capabilities.
+    pub fn update_capabilities(&self, capabilities: Capabilities) {
+        self.0.rcu(|old| {
+            let mut new = (**old).clone();
+            new.capabilities = capabilities;
+            new
+        });
+    }
+
+    /// Record that the node is now listening on `addr`.
+    pub fn set_listen_addr(&self, addr: SocketAddr) {
+        self.0.rcu(|old| {
+            let mut new = (**old).clone();
+            new.listen_addr = Some(addr);
+            new.capabilities.listening = true;
+            new
+        });
+    }
+
+    /// Record that the node has connected to a peer.
+    pub fn set_connected(&self, peer_addr: &str) {
+        let addr = peer_addr.to_string();
+        self.0.rcu(|old| {
+            let mut new = (**old).clone();
+            new.connected = true;
+            new.peer_addr = Some(addr.clone());
+            new.capabilities.connecting = true;
+            new
+        });
+    }
+
+    /// Record that the node has disconnected from its peer.
+    pub fn set_disconnected(&self) {
+        self.0.rcu(|old| {
+            let mut new = (**old).clone();
+            new.connected = false;
+            new.peer_addr = None;
+            new
+        });
+    }
+}
 
 /// Configuration for the control handler.
 #[derive(Debug, Clone)]
@@ -51,14 +134,13 @@ impl HandlerConfig {
 /// on the current state of metrics and configuration.
 pub struct Handler {
     config: HandlerConfig,
-    /// Shared mutable role — updated at runtime by auto-negotiation or REPL.
-    role: SharedRole,
     /// Sender for hint changes. The mode task watches the receiver and
     /// re-evaluates when a new hint arrives. `None` means no hint is active.
     hint_tx: watch::Sender<Option<RoleHint>>,
     metrics: SharedMetrics,
     peers: SharedRegistry,
     routes: SharedRouteTable,
+    state: SharedNodeState,
     start_time: Instant,
 }
 
@@ -71,23 +153,27 @@ impl Handler {
         peers: SharedRegistry,
         routes: SharedRouteTable,
     ) -> Self {
-        let role = Arc::new(ArcSwap::new(Arc::new(config.node_role)));
+        let state = SharedNodeState::new(config.node_role);
         let (hint_tx, _) = watch::channel(None);
         Self {
             config,
-            role,
             hint_tx,
             metrics,
             peers,
             routes,
+            state,
             start_time: Instant::now(),
         }
     }
 
-    /// Returns the shared role handle for read access from other components.
+    /// Returns a handle to the shared node state.
+    ///
+    /// Callers (daemon modes) use this to update role, capabilities, and
+    /// listen/connect state after negotiation so that `status()` reports
+    /// accurate information.
     #[must_use]
-    pub fn shared_role(&self) -> SharedRole {
-        Arc::clone(&self.role)
+    pub fn node_state(&self) -> SharedNodeState {
+        self.state.clone()
     }
 
     /// Returns a receiver that fires when the runtime hint changes.
@@ -118,12 +204,12 @@ impl Handler {
 
     fn handle_ping(&self) -> ControlResponse {
         let uptime = self.start_time.elapsed();
-        let current_role = **self.role.load();
+        let state = self.state.load();
         ControlResponse {
             response: Some(control_response::Response::Ping(PingResponse {
                 uptime_ms: u64::try_from(uptime.as_millis()).unwrap_or(u64::MAX),
                 version: self.config.version.clone(),
-                node_role: ProtoNodeRole::from(current_role).into(),
+                node_role: ProtoNodeRole::from(state.role).into(),
             })),
         }
     }
@@ -288,6 +374,7 @@ impl crate::node_api::NodeApi for Handler {
             .map(|p| crate::node_api::PeerInfo {
                 name: p.name,
                 addr: p.addr,
+                role: p.role,
                 capabilities: p.capabilities,
                 status: crate::node_api::PeerStatus::Connected,
                 connected_at_secs: p.connected_at.elapsed().as_secs(),
@@ -315,12 +402,13 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn status(&self) -> crate::node_api::NodeStatus {
+        let state = self.state.load();
         crate::node_api::NodeStatus {
-            role: **self.role.load(),
-            connected: false,
-            peer_addr: None,
-            capabilities: wallhack_wire::data::Capabilities::default(),
-            listen_addr: None,
+            role: state.role,
+            connected: state.connected,
+            peer_addr: state.peer_addr.clone(),
+            capabilities: state.capabilities,
+            listen_addr: state.listen_addr,
             name: self.config.name.clone(),
             version: self.config.version.clone(),
             uptime_ms: u64::try_from(self.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -328,18 +416,25 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn connect(&self, _addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
-        Err(crate::node_api::NodeApiError::NotSupported)
+        Err(crate::node_api::NodeApiError::NotSupported(
+            "connect is not supported on this node (entry nodes cannot initiate connections)"
+                .into(),
+        ))
     }
 
     fn listen(
         &self,
         _addr: std::net::SocketAddr,
     ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
-        Err(crate::node_api::NodeApiError::NotSupported)
+        Err(crate::node_api::NodeApiError::NotSupported(
+            "listen is not supported on this node".into(),
+        ))
     }
 
     fn disconnect(&self) -> crate::node_api::Result<()> {
-        Err(crate::node_api::NodeApiError::NotSupported)
+        Err(crate::node_api::NodeApiError::NotSupported(
+            "disconnect is not supported on this node".into(),
+        ))
     }
 
     fn add_route(&self, cidr: crate::Cidr, peer: String) -> crate::node_api::Result<()> {
@@ -368,7 +463,7 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn current_role(&self) -> NodeRole {
-        **self.role.load()
+        self.state.load().role
     }
 
     fn set_hint(&self, hint: RoleHint) -> crate::node_api::Result<()> {
@@ -678,5 +773,62 @@ mod tests {
             }
             _ => panic!("Expected route list response"),
         }
+    }
+
+    #[test]
+    fn test_status_reflects_node_state_updates() {
+        let handler = Handler::new(
+            HandlerConfig::new(
+                NodeRole::Indeterminate,
+                "wallhackd".to_string(),
+                "0.0.0".to_string(),
+            ),
+            Arc::new(Metrics::default()),
+            Arc::new(Registry::new()),
+            RouteTable::shared(),
+        );
+
+        // Initially indeterminate with no capabilities.
+        let status = crate::node_api::NodeApi::status(&handler);
+        assert_eq!(status.role, NodeRole::Indeterminate);
+        assert!(!status.capabilities.tun_capable);
+        assert!(!status.capabilities.listening);
+        assert!(status.listen_addr.is_none());
+        assert!(!status.connected);
+
+        // Simulate negotiation resolving to Entry.
+        let state = handler.node_state();
+        state.update_role(NodeRole::Entry);
+        state.update_capabilities(Capabilities {
+            tun_capable: true,
+            listening: false,
+            connecting: false,
+        });
+
+        let status = crate::node_api::NodeApi::status(&handler);
+        assert_eq!(status.role, NodeRole::Entry);
+        assert!(status.capabilities.tun_capable);
+
+        // Simulate listen address being set.
+        let addr: SocketAddr = "0.0.0.0:4433".parse().unwrap();
+        state.set_listen_addr(addr);
+
+        let status = crate::node_api::NodeApi::status(&handler);
+        assert_eq!(status.listen_addr, Some(addr));
+        assert!(status.capabilities.listening);
+
+        // Simulate connection.
+        state.set_connected("1.2.3.4:5678");
+
+        let status = crate::node_api::NodeApi::status(&handler);
+        assert!(status.connected);
+        assert_eq!(status.peer_addr.as_deref(), Some("1.2.3.4:5678"));
+
+        // Simulate disconnection.
+        state.set_disconnected();
+
+        let status = crate::node_api::NodeApi::status(&handler);
+        assert!(!status.connected);
+        assert!(status.peer_addr.is_none());
     }
 }

@@ -226,11 +226,7 @@ impl Server for WebSocketServer {
         let peer_handshake: Option<Handshake> = match handshake_result {
             Ok(Ok(msg)) => match msg.message {
                 Some(control_message::Message::Handshake(handshake)) => {
-                    tracing::info!(
-                        "Received Handshake: name={}, version={}",
-                        handshake.name,
-                        handshake.version,
-                    );
+                    tracing::debug!("Handshake from {} ({})", handshake.name, handshake.version,);
                     Some(handshake)
                 }
                 other => {

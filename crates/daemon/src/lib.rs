@@ -120,8 +120,7 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
         Arc::clone(&peers),
         Arc::clone(&routes),
     );
-    let shared_role = handler.shared_role();
-    let hint_rx = handler.hint_rx();
+    let node_state = handler.node_state();
     let node_api: Arc<dyn NodeApi> = Arc::new(handler);
 
     let (shutdown_tx, _shutdown_rx) = watch::channel(());
@@ -132,8 +131,7 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
         metrics,
         peers,
         routes,
-        shared_role,
-        hint_rx,
+        node_state,
     };
     let task = tokio::spawn(async move { mode::run(&config, resources).await.map_err(Into::into) });
 

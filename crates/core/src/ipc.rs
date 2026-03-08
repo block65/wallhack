@@ -423,10 +423,7 @@ fn error_response(e: &NodeApiError) -> management_response::Response {
         NodeApiError::RouteNotFound(c) => {
             (ErrorCode::RouteNotFound, format!("route not found: {c}"))
         }
-        NodeApiError::NotSupported => (
-            ErrorCode::NotSupported,
-            "operation not supported".to_string(),
-        ),
+        NodeApiError::NotSupported(msg) => (ErrorCode::NotSupported, msg.clone()),
         NodeApiError::InvalidAddress(a) => {
             (ErrorCode::InvalidAddress, format!("invalid address: {a}"))
         }
@@ -478,6 +475,7 @@ impl From<crate::node_api::PeerInfo> for management::PeerInfo {
             tun_capable: p.capabilities.tun_capable,
             listening: p.capabilities.listening,
             connecting: p.capabilities.connecting,
+            role: management::NodeRole::from(p.role).into(),
         }
     }
 }
