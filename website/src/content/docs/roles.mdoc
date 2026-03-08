@@ -1,0 +1,31 @@
+---
+title: Roles & Topology
+description: The three roles a wallhack node can take — entry, relay, and exit.
+order: 4
+---
+
+# Roles & Topology
+
+Each wallhack node operates as one of three roles. Roles are assigned automatically based on your network topology — see [Zero Config](/zero-config) for how negotiation works.
+
+## Entry
+
+Runs on the attacker's machine. Creates a TUN interface — a virtual network device — that routes traffic into the tunnel chain. Any traffic sent to a routed subnet arrives here and is forwarded onward.
+
+{% codeblock code="wallhack" /%}
+
+## Exit
+
+The far end of the chain. Packets are unwrapped and delivered into the target network. No TUN interface required.
+
+{% codeblock code="wallhack --connect HOST:PORT" /%}
+
+## Relay *(optional)*
+
+An intermediate host. Connects to a previous hop and listens for the next. Used for multi-hop pivoting through segmented networks where no direct path exists between entry and exit.
+
+{% codeblock code="wallhack --connect HOST:PORT --listen :PORT" /%}
+
+---
+
+Transport direction (`--listen` / `--connect`) is independent of role — entry and exit nodes can either listen or connect, which is how reverse tunnels work.

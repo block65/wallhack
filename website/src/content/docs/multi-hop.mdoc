@@ -14,21 +14,21 @@ The binary reached the DMZ host via initial access — a web shell, exposed serv
 
 {% steps %}
 {% step title="Attacker (192.168.1.5)" number=1 %}
-With no arguments, `wallhack` starts an [entry node](/concepts) on the default port (6565/udp, QUIC).
+With no arguments, `wallhack` listens on the default port and negotiates the entry role automatically.
 
 {% codeblock code="wallhack" /%}
 {% /step %}
 
 {% step title="DMZ Host (10.0.1.10)" number=2 %}
-A [relay node](/concepts) connecting to the entry node and listening for the next hop on an arbitrary internal port.
+Connecting to the attacker and listening for the next hop. With both `--connect` and `--listen`, the node negotiates the relay role automatically.
 
-{% codeblock code="wallhack relay --connect 192.168.1.5 --listen :6565" /%}
+{% codeblock code="wallhack --connect 192.168.1.5 --listen :6565" /%}
 {% /step %}
 
 {% step title="Internal Host (10.10.1.5)" number=3 %}
-An [exit node](/concepts) connecting back to the relay. `--name` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL. It can be anything you choose.
+Connecting back to the relay. With no TUN capability, the node negotiates the exit role automatically. `--name` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL.
 
-{% codeblock code="wallhack exit --connect 10.0.1.10 --name peer1" /%}
+{% codeblock code="wallhack --connect 10.0.1.10 --name peer1" /%}
 
 If `--name` is omitted, a random name is generated — run `peers` in the REPL to discover it.
 {% /step %}

