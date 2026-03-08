@@ -266,6 +266,7 @@ html {
 		margin-bottom: 1.5em;
 		border-collapse: separate;
 		border-spacing: 0;
+		table-layout: fixed;
 	}
 
 	th {
@@ -274,6 +275,10 @@ html {
 
 	td {
 		@apply border-b border-border/60 px-4 py-2;
+	}
+
+	td em {
+		@apply text-muted-foreground not-italic;
 	}
 
 	tbody tr:last-child td {

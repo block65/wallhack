@@ -1,104 +1,192 @@
 ---
 title: Benchmarks
-description: Throughput and latency benchmarks for QUIC and WebSocket transports, including degraded network performance with packet loss and latency.
+description: Throughput and latency benchmarks comparing UDP and TCP transports, from ideal conditions through to real-world packet loss and latency.
 order: 5
 ---
 
 # Benchmarks
 
-These benchmarks measure the cost of the tunnel itself and how each transport holds up when the network gets rough. The goal is to give you enough data to pick the right transport for the job.
+A tunnel can run over UDP or TCP (see [Transport Modes](/transport-modes)). These benchmarks measure how that choice affects throughput and latency for traffic flowing through a tunnel, especially as network conditions degrade.
 
-All results use `iperf3` pushing traffic through a full end-to-end tunnel with encryption active. Entry and exit run as QEMU microVMs on the same host (2 vCPUs each, KVM, Linux x86_64). Degraded scenarios use `tc netem` on the entry VM's ethernet interface to simulate real-world loss and latency. Each run is 5 seconds. To reproduce: `just bench benchmark` from the repo root.
+## tl;dr
 
-## Clean Network
+UDP outperforms TCP on lossy, unpredictable networks — degraded wifi, mobile tethering, unstable VPNs, anything over the internet.
 
-No packet loss or added latency. This isolates the cost of encryption, framing, and multiplexing.
+TCP has a raw throughput advantage on stable, predictable, low-latency networks where packet loss is not a concern.
 
-### Single Stream
+The five most telling scenarios:
 
-| Metric | QUIC | WebSocket |
-|--------|------|-----------|
-| TCP upstream (to exit) | 830 Mbps | 900 Mbps |
-| TCP downstream (to entry) | 300 Mbps | 330 Mbps |
-| UDP | 5.3 Gbps | 4.5 Gbps |
+| Scenario | UDP transport | TCP transport |
+|----------|---------------|---------------|
+| No loss, no latency (1 connection) | 830 Mbps | 900 Mbps |
+| No loss, high latency — 150 ms one-way, ~Singapore to London (32 connections) | 134 Mbps | 59 Mbps |
+| 1% loss, cross-country — 40 ms one-way (32 connections) | 49 Mbps | 45 Mbps |
+| 1% loss, cross-country — 40 ms one-way (128 connections) | 95 Mbps | *0 Mbps* |
+| 5% loss, cross-country — 40 ms one-way (128 connections) | 90 Mbps | *0 Mbps* |
+
+## No Packet Loss or Latency
+
+### Single Connection
+
+| Metric | UDP transport | TCP transport |
+|--------|---------------|---------------|
+| TCP traffic upstream (to exit) | 830 Mbps | 900 Mbps |
+| TCP traffic downstream (to entry) | 300 Mbps | 330 Mbps |
+| UDP traffic | 5.3 Gbps | 4.5 Gbps |
 | Latency (RTT) | 0.7 ms | 1.1 ms |
 
-Downstream is lower than upstream because the entry-side userspace TCP stack must generate TCP segments from tunnel data. UDP throughput is high because there is no congestion window or retransmission overhead on the inner flow. QUIC has 35% lower latency.
+TCP is slightly faster for throughput. UDP has meaningfully lower latency. Downstream is lower than upstream because traffic arriving at the entry node requires extra processing to reconstruct into TCP connections.
 
-### Parallel Streams
+### Parallel Connections
 
-| Streams | QUIC | WebSocket |
-|---------|------|-----------|
-| 4 | - | - |
-| 8 | - | - |
+| Connections | UDP transport | TCP transport |
+|-------------|---------------|---------------|
 | 32 | 794 Mbps | 932 Mbps |
 | 64 | 744 Mbps | 896 Mbps |
 | 128 | 578 Mbps | 815 Mbps |
 
-On a clean network, WebSocket is faster. It benefits from the OS kernel's highly optimised TCP stack. No surprises here. But clean networks are not where tunnels get tested.
+## With Packet Loss and Latency
 
-## Degraded Network
+### Varying Loss
 
-This is where transport choice actually matters. Pen test tunnels run over hotel wifi, mobile tethering, intercontinental VPNs, and congested corporate networks. These links have packet loss and latency. The question is: which transport survives?
+**32 connections** — a few parallel scans, SSH sessions, or file transfers.
 
-### Loss + Latency (80 ms RTT)
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 0.1% | 40 ms | 110 Mbps | 66 Mbps |
+| 0.5% | 40 ms | 54 Mbps | 48 Mbps |
+| 1% | 40 ms | 49 Mbps | 45 Mbps |
+| 2% | 40 ms | 52 Mbps | 46 Mbps |
+| 3% | 40 ms | 51 Mbps | 43 Mbps |
+| 5% | 40 ms | 49 Mbps | 46 Mbps |
 
-40 ms one-way delay (80 ms round-trip, typical cross-country link). Loss applied on the entry VM's egress. Throughput in Mbps.
+Both transports survive at 32 connections, but the UDP transport is consistently faster.
 
-| Loss | p32 QUIC | p32 WS | p64 QUIC | p64 WS | p128 QUIC | p128 WS |
-|------|----------|--------|----------|--------|-----------|---------|
-| 0.1% | 110 | 66 | 103 | 71 | 150 | 112 |
-| 0.5% | 54 | 48 | 68 | 66 | 92 | 0 |
-| 1% | 49 | 45 | 69 | 68 | 95 | 0 |
-| 2% | 52 | 46 | 67 | 62 | 91 | 0 |
-| 3% | 51 | 43 | 66 | 66 | 93 | 0 |
-| 5% | 49 | 46 | 63 | 0 | 90 | 0 |
+**64 connections** — multiple scans in parallel, several RDP or SSH sessions.
 
-**WebSocket collapses as stream count increases.** At 128 parallel connections, WebSocket produces zero throughput at just 0.5% loss. QUIC maintains 90+ Mbps even at 5% loss. At 64 streams, WebSocket dies at 5% loss. At 32 streams, WebSocket survives but is consistently slower.
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 0.1% | 40 ms | 103 Mbps | 71 Mbps |
+| 0.5% | 40 ms | 68 Mbps | 66 Mbps |
+| 1% | 40 ms | 69 Mbps | 68 Mbps |
+| 2% | 40 ms | 67 Mbps | 62 Mbps |
+| 3% | 40 ms | 66 Mbps | 66 Mbps |
+| 5% | 40 ms | 63 Mbps | *0 Mbps* |
 
-This matters because real pen test workloads open many connections simultaneously: nmap scanning, multiple RDP sessions, parallel exploitation, or file transfers alongside interactive shells.
+The TCP transport drops to zero throughput at 5% loss. The UDP transport maintains throughput.
 
-### Latency Sweep (1% Loss)
+**128 connections** — dictionary attacks, full nmap scans, mass HTTP requests.
 
-Fixed 1% packet loss, varying one-way delay. This shows how latency amplifies the damage from loss. Throughput in Mbps.
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 0.1% | 40 ms | 150 Mbps | 112 Mbps |
+| 0.5% | 40 ms | 92 Mbps | *0 Mbps* |
+| 1% | 40 ms | 95 Mbps | *0 Mbps* |
+| 2% | 40 ms | 91 Mbps | *0 Mbps* |
+| 3% | 40 ms | 93 Mbps | *0 Mbps* |
+| 5% | 40 ms | 90 Mbps | *0 Mbps* |
 
-| Delay (one-way) | p32 QUIC | p32 WS | p64 QUIC | p64 WS | p128 QUIC | p128 WS |
-|------------------|----------|--------|----------|--------|-----------|---------|
-| 1 ms | 67 | 107 | 95 | 69 | 165 | 105 |
-| 10 ms | 62 | 56 | 72 | 68 | 106 | 107 |
-| 20 ms | 54 | 45 | 68 | 66 | 99 | 0 |
-| 40 ms | 54 | 48 | 67 | 67 | 95 | 0 |
-| 80 ms | 52 | 43 | 66 | 64 | 97 | 0 |
-| 150 ms | 52 | 38 | 60 | 0 | 90 | 0 |
+At 128 connections, the TCP transport collapses at very low packet loss. The UDP transport maintains throughput across all tested loss rates.
 
-At 128 streams with 1% loss, WebSocket dies above 10 ms one-way delay (20 ms RTT). At 64 streams, WebSocket holds until 150 ms. At 32 streams, WebSocket degrades but survives.
+### Varying Latency
 
-QUIC throughput scales with stream count under adversity: more streams means more independent recovery paths. WebSocket throughput degrades with stream count because all streams share a single TCP connection and a single lost packet stalls everything.
+**32 connections**
 
-### Latency Only (No Loss)
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 1% | 1 ms | 67 Mbps | 107 Mbps |
+| 1% | 10 ms | 62 Mbps | 56 Mbps |
+| 1% | 20 ms | 54 Mbps | 45 Mbps |
+| 1% | 40 ms | 54 Mbps | 48 Mbps |
+| 1% | 80 ms | 52 Mbps | 43 Mbps |
+| 1% | 150 ms | 52 Mbps | 38 Mbps |
 
-Pure delay, no packet loss. This isolates the effect of distance. Throughput in Mbps.
+The TCP transport is faster at very low latency. As latency increases, the UDP transport takes over. Both survive across all latencies at 32 connections.
 
-| Delay (one-way) | p32 QUIC | p32 WS | p64 QUIC | p64 WS | p128 QUIC | p128 WS |
-|------------------|----------|--------|----------|--------|-----------|---------|
-| 1 ms | 394 | 653 | 345 | 1039 | 379 | 687 |
-| 10 ms | 142 | 429 | 149 | 449 | 175 | 447 |
-| 40 ms | 146 | 110 | 163 | 101 | 176 | 155 |
-| 80 ms | 135 | 95 | 150 | 70 | 171 | 112 |
-| 150 ms | 134 | 59 | 145 | 68 | 195 | 108 |
+**64 connections**
 
-Without loss, WebSocket wins at low latency. But above 40 ms one-way delay (~80 ms RTT, a typical cross-country hop), QUIC takes over and the gap widens with distance. At 150 ms one-way (intercontinental), QUIC is 1.8-2.3x faster depending on stream count.
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 1% | 1 ms | 95 Mbps | 69 Mbps |
+| 1% | 10 ms | 72 Mbps | 68 Mbps |
+| 1% | 20 ms | 68 Mbps | 66 Mbps |
+| 1% | 40 ms | 67 Mbps | 67 Mbps |
+| 1% | 80 ms | 66 Mbps | 64 Mbps |
+| 1% | 150 ms | 60 Mbps | *0 Mbps* |
 
-## Why QUIC Survives
+At high latency, the TCP transport produces zero throughput.
 
-WebSocket multiplexes all tunnel connections over a single TCP connection. When a packet is lost, TCP's head-of-line blocking stalls every stream until that packet is retransmitted. Each retransmission costs a full round-trip. More streams means more chances for any one packet loss to stall everything.
+**128 connections**
 
-QUIC multiplexes over independent streams within the same connection. A lost packet only stalls the affected stream. The other streams continue uninterrupted. More streams means more independent recovery, which is why QUIC throughput actually increases with stream count under loss.
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 1% | 1 ms | 165 Mbps | 105 Mbps |
+| 1% | 10 ms | 106 Mbps | 107 Mbps |
+| 1% | 20 ms | 99 Mbps | *0 Mbps* |
+| 1% | 40 ms | 95 Mbps | *0 Mbps* |
+| 1% | 80 ms | 97 Mbps | *0 Mbps* |
+| 1% | 150 ms | 90 Mbps | *0 Mbps* |
 
-## Which Transport Should I Use?
+The TCP transport drops to zero throughput beyond low latency. The UDP transport remains stable across all latencies.
 
-**Use QUIC (the default)** for most pen test scenarios. It handles unpredictable networks, high latency, and packet loss without collapsing. This covers remote engagements, cloud-hosted targets, mobile tethering, hotel wifi, and anything over the internet.
+### Varying Latency, No Loss
 
-**Use WebSocket** when you need to traverse an HTTP proxy, blend in with HTTPS traffic for DPI evasion, or front through a CDN. Also appropriate on reliable low-latency networks (same data centre, local LAN) where its raw throughput advantage matters and loss is negligible.
+**32 connections**
 
-If you are unsure, use QUIC. You can always switch transports by changing the address suffix (`/udp` or `/tcp`) without reconfiguring anything else.
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 0% | 1 ms | 394 Mbps | 653 Mbps |
+| 0% | 10 ms | 142 Mbps | 429 Mbps |
+| 0% | 40 ms | 146 Mbps | 110 Mbps |
+| 0% | 80 ms | 135 Mbps | 95 Mbps |
+| 0% | 150 ms | 134 Mbps | 59 Mbps |
+
+**64 connections**
+
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 0% | 1 ms | 345 Mbps | 1039 Mbps |
+| 0% | 10 ms | 149 Mbps | 449 Mbps |
+| 0% | 40 ms | 163 Mbps | 101 Mbps |
+| 0% | 80 ms | 150 Mbps | 70 Mbps |
+| 0% | 150 ms | 145 Mbps | 68 Mbps |
+
+**128 connections**
+
+| Loss | Delay (one-way) | UDP transport | TCP transport |
+|------|-----------------|---------------|---------------|
+| 0% | 1 ms | 379 Mbps | 687 Mbps |
+| 0% | 10 ms | 175 Mbps | 447 Mbps |
+| 0% | 40 ms | 176 Mbps | 155 Mbps |
+| 0% | 80 ms | 171 Mbps | 112 Mbps |
+| 0% | 150 ms | 195 Mbps | 108 Mbps |
+
+Without loss, the TCP transport wins at low latency. As latency increases, the UDP transport takes over and the gap widens.
+
+## TCP Advantages
+
+### Strengths
+
+Benefits from the OS kernel's highly optimised TCP stack. On stable, low-latency networks with negligible packet loss, it reaches gigabit-class throughput. At very low latency (e.g. same data centre), it outperforms UDP by a meaningful margin. It also traverses HTTP proxies and CDN infrastructure via WebSocket, which UDP cannot.
+
+### Trade-offs
+
+Multiplexes all tunnel connections over a single TCP connection — one port, one connection, one queue. When a packet at the front of that queue is lost, every connection behind it has to wait for the retransmission. The more connections sharing the queue, the more likely any single packet loss stalls everything. This is called head-of-line blocking, and it is a fundamental property of TCP — not a flaw in the WebSocket transport itself.
+
+## UDP Advantages
+
+### Strengths
+
+Under the hood, QUIC gives each tunnel connection its own independent stream. A lost packet only stalls the affected connection. Everything else continues uninterrupted. More connections means more independent recovery paths, which is why UDP throughput scales with connection count under loss while TCP throughput drops to zero.
+
+### Trade-offs
+
+Slightly lower raw throughput on clean, low-latency networks compared to TCP.
+
+## Methodology
+
+Traffic is generated with `iperf3` through a full end-to-end tunnel with encryption active. Entry and exit run as QEMU microVMs on the same host with KVM. Throughput values are medians across multiple runs.
+
+Packet loss and latency scenarios use `tc netem` on the entry VM's ethernet interface. Loss is applied on egress. All delay values are one-way — double them to get round-trip time.
+
+To reproduce: `just bench benchmark` from the repo root. The benchmark harness, VM images, and network emulation scripts are all in the repository.
