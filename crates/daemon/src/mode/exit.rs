@@ -289,7 +289,7 @@ where
                     .peer_handshake()
                     .filter(|h| !h.name.is_empty())
                     .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
-                tracing::info!("Peer connected: {peer_name} ({peer_addr})");
+                tracing::info!("Peer connected: name={peer_name} addr={peer_addr}");
                 ctx.peers
                     .register(peer_name.clone(), peer_addr, NodeRole::Entry);
 

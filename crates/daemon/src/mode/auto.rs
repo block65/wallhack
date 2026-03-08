@@ -315,7 +315,10 @@ async fn run_auto_connect_session_dispatch(
 
     match result {
         NegotiationResult::Resolved(NodeRole::Entry) => {
-            tracing::info!("Peer negotiated: {} ({peer_addr}) role=entry", peer_hs.name,);
+            tracing::info!(
+                "Role resolved: name={} addr={peer_addr} role=entry",
+                peer_hs.name,
+            );
             node_state.update_role(NodeRole::Entry);
             drop(tasks);
             drop(control_tx);
@@ -331,7 +334,10 @@ async fn run_auto_connect_session_dispatch(
             .await
         }
         NegotiationResult::Resolved(NodeRole::Exit) => {
-            tracing::info!("Peer negotiated: {} ({peer_addr}) role=exit", peer_hs.name,);
+            tracing::info!(
+                "Role resolved: name={} addr={peer_addr} role=exit",
+                peer_hs.name,
+            );
             node_state.update_role(NodeRole::Exit);
             let peer_name = if peer_hs.name.is_empty() {
                 peer_addr.to_string()
@@ -674,7 +680,10 @@ async fn run_auto_accept_session_inner(
 
     match result {
         NegotiationResult::Resolved(NodeRole::Entry) => {
-            tracing::info!("Peer negotiated: {} ({peer_addr}) role=entry", peer_hs.name,);
+            tracing::info!(
+                "Role resolved: name={} addr={peer_addr} role=entry",
+                peer_hs.name,
+            );
             node_state.update_role(NodeRole::Entry);
 
             // Spawn data tasks: incoming (peer→instructions/responses) + outgoing (instructions→peer).
@@ -689,7 +698,7 @@ async fn run_auto_accept_session_inner(
             let actor = super::entry::create_tun_with_retry(tun_name.clone()).await?;
 
             tracing::info!(
-                "Peer connected: {} ({peer_addr}, tun: {tun_name})",
+                "Peer connected: name={} addr={peer_addr} tun={tun_name}",
                 peer_hs.name,
             );
 
@@ -718,7 +727,10 @@ async fn run_auto_accept_session_inner(
             peers.unregister(&peer_name);
         }
         NegotiationResult::Resolved(NodeRole::Exit) => {
-            tracing::info!("Peer negotiated: {} ({peer_addr}) role=exit", peer_hs.name,);
+            tracing::info!(
+                "Role resolved: name={} addr={peer_addr} role=exit",
+                peer_hs.name,
+            );
             node_state.update_role(NodeRole::Exit);
 
             // Spawn data tasks for exit: incoming (peer→broadcasts) + outgoing (responses→peer).
