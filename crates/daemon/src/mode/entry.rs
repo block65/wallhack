@@ -834,10 +834,7 @@ impl ConnectionParams {
         let actor = create_tun_with_retry(name.clone()).await?;
 
         let peer_display = peer.as_deref().unwrap_or(&peer_addr);
-        tracing::info!(
-            "Peer connected: {peer_display} ({}, tun: {name})",
-            peer_addr
-        );
+        tracing::info!("Peer connected: name={peer_display} addr={peer_addr} tun={name}");
 
         let (manager, _syn_proxy_state) = ConnectionManager::new(
             actor,

@@ -12,7 +12,7 @@ use crate::NodeError;
 /// Initial retry delay for connection attempts.
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(50);
 /// Maximum retry delay (caps exponential backoff).
-const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+const MAX_BACKOFF_DELAY: Duration = Duration::from_secs(30);
 
 /// Resolve a hostname:port to a [`SocketAddr`], using an optional custom DNS server.
 ///
@@ -61,6 +61,7 @@ where
     let mut drop_delay = reconnect_delay;
     let mut last_error: Option<String> = None;
     let mut repeat_count: u32 = 0;
+    let mut attempt: u32 = 0;
 
     loop {
         match create_and_connect().await {
@@ -68,16 +69,18 @@ where
                 retry_delay = INITIAL_RETRY_DELAY;
                 last_error = None;
                 repeat_count = 0;
+                attempt = 0;
                 let session_start = tokio::time::Instant::now();
                 run_session(result).await?;
+                attempt += 1;
                 // Reset backoff if the session was stable (lasted longer than
                 // the current delay), otherwise keep increasing.
                 if session_start.elapsed() > drop_delay {
                     drop_delay = reconnect_delay;
                 }
-                tracing::warn!("Connection dropped, reconnecting in {drop_delay:?}...");
+                tracing::warn!("Session ended, reconnecting in {drop_delay:?} (attempt {attempt})");
                 tokio::time::sleep(drop_delay).await;
-                drop_delay = (drop_delay * 2).min(MAX_RETRY_DELAY);
+                drop_delay = (drop_delay * 2).min(MAX_BACKOFF_DELAY);
             }
             Err(e) => {
                 let err = NodeError::Transport(Box::new(e));
@@ -85,19 +88,20 @@ where
                     tracing::error!("Connection failed (not retrying): {err}");
                     return Err(err);
                 }
+                attempt += 1;
                 let msg = err.to_string();
                 if last_error.as_deref() == Some(&msg) {
                     repeat_count += 1;
                     tracing::warn!(
-                        "Connection failed (repeated x{repeat_count}), retrying in {retry_delay:?}..."
+                        "Reconnecting in {retry_delay:?} (attempt {attempt}, same error x{repeat_count})"
                     );
                 } else {
                     repeat_count = 1;
                     last_error = Some(msg);
-                    tracing::warn!("Connection failed: {err}, retrying in {retry_delay:?}...");
+                    tracing::warn!("Reconnecting in {retry_delay:?} (attempt {attempt}): {err}");
                 }
                 tokio::time::sleep(retry_delay).await;
-                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+                retry_delay = (retry_delay * 2).min(MAX_BACKOFF_DELAY);
             }
         }
     }
