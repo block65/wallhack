@@ -72,8 +72,7 @@ pub async fn run_daemon_engine(
     config: DaemonConfig,
     socket_path_override: Option<std::path::PathBuf>,
 ) -> Result<(), NodeError> {
-    let version = version_string(config.binary_version.as_deref());
-    tracing::info!("wallhack {version}  {}", config.mode.name());
+    tracing::info!("wallhack {}  {}", config.global.version, config.mode.name());
 
     sys::check_entropy_ready();
 
@@ -124,11 +123,7 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
     let routes = RouteTable::shared();
 
     let handler = Handler::new(
-        HandlerConfig::new(
-            role,
-            "wallhack".to_string(),
-            version_string(config.binary_version.as_deref()),
-        ),
+        HandlerConfig::new(role, "wallhack".to_string(), config.global.version.clone()),
         Arc::clone(&metrics),
         Arc::clone(&peers),
         Arc::clone(&routes),

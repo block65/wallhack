@@ -459,6 +459,7 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
         dns_server: cli.dns.clone(),
         timeout: Duration::from_secs(cli.timeout),
         psk: resolve_psk(cli.psk.as_ref()).map(zeroize::Zeroizing::new),
+        version: wallhackd::version_string(Some(env!("CARGO_PKG_VERSION"))),
     };
 
     let hint = resolve_hint(cli)?;
@@ -533,11 +534,7 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
         }
     };
 
-    Ok(DaemonConfig {
-        global,
-        mode,
-        binary_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-    })
+    Ok(DaemonConfig { global, mode })
 }
 
 /// Resolve entry transport direction.

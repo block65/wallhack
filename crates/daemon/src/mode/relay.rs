@@ -29,12 +29,12 @@ use crate::{
 /// Delay before reconnecting after the source peer connection drops.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 
-fn build_server_options(cfg: &RelayConfig, metrics: Arc<Metrics>) -> ServerOptions {
+fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>) -> ServerOptions {
     ServerOptions {
         handler_config: HandlerConfig::new(
             NodeRole::Relay,
-            crate::built_info::PKG_NAME.to_string(),
-            crate::built_info::PKG_VERSION.to_string(),
+            "wallhack".to_string(),
+            version.to_string(),
         ),
         metrics: Some(metrics),
         peers: None,
@@ -46,7 +46,7 @@ fn build_server_options(cfg: &RelayConfig, metrics: Arc<Metrics>) -> ServerOptio
                 connecting: true,
             }),
             name: cfg.name.clone(),
-            version: crate::built_info::PKG_VERSION.to_string(),
+            version: version.to_string(),
             psk_proof: Vec::new(),
             routes: Vec::new(),
             hint: None,
@@ -76,7 +76,7 @@ pub async fn run(
         connecting: true,
     });
     let addr: std::net::SocketAddr = cfg.listen.addr.parse::<crate::net::ListenAddr>()?.into();
-    let server_options = build_server_options(cfg, metrics);
+    let server_options = build_server_options(cfg, &global.version, metrics);
 
     tracing::info!("Connecting to {}...", cfg.connect.addr);
     let target_addr =
@@ -95,7 +95,7 @@ pub async fn run(
             connecting: true,
         }),
         name: cfg.name.clone(),
-        version: crate::built_info::PKG_VERSION.to_string(),
+        version: global.version.clone(),
         psk_proof: Vec::new(),
         routes: Vec::new(),
         hint: None,

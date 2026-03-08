@@ -206,8 +206,8 @@ async fn run_exit_listener(
     let server_options = ServerOptions {
         handler_config: HandlerConfig::new(
             NodeRole::Exit,
-            crate::built_info::PKG_NAME.to_string(),
-            crate::built_info::PKG_VERSION.to_string(),
+            "wallhack".to_string(),
+            global.version.clone(),
         ),
         metrics: Some(Arc::clone(&ctx.metrics)),
         peers: Some(Arc::clone(&ctx.peers)),
@@ -219,7 +219,7 @@ async fn run_exit_listener(
                 connecting: false,
             }),
             name: node_name.to_string(),
-            version: crate::built_info::PKG_VERSION.to_string(),
+            version: global.version.clone(),
             psk_proof: Vec::new(),
             routes: Vec::new(),
             hint: None,
