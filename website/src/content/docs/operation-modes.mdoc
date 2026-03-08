@@ -6,15 +6,15 @@ order: 6
 
 # Operation Modes
 
-When a TCP SYN arrives at the entry node's TUN interface, the destination port's reachability on the target network isn't yet known. The entry node has to decide what to do before completing the handshake.
+When a TCP SYN arrives at an entry node's TUN interface, the destination port's reachability on the target network isn't yet known. A decision has to be made before completing the handshake.
 
-By default, the exit node is probed first. If the port is closed, the exit responds and a RST is sent back, preserving correct TCP semantics. Tools like nmap see `closed` for closed ports, not `filtered`.
+By default, the exit node is probed first. If the port is closed, it responds and a RST is sent back, preserving correct TCP semantics. Tools like nmap see `closed` for closed ports, not `filtered`.
 
 The tradeoff is one round-trip per connection. For interactive sessions this is negligible. For high-rate scanning where throughput matters more than per-port accuracy, use `--fast` to skip the probe entirely.
 
 ## Default
 
-Before completing each TCP handshake, the exit node is probed to check port reachability. Closed ports return RSTs, so tools like nmap work correctly without any special configuration.
+Before completing each TCP handshake, the exit node is probed to check port reachability. Closed ports return RSTs so tools like nmap work correctly without any special configuration.
 
 {% codeblock code="wallhack" /%}
 

