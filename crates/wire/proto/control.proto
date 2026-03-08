@@ -113,10 +113,18 @@ message ControlMessage {
     ControlRequest control_request = 4;
     ControlResponse control_response = 5;
     Disconnect disconnect = 6;
+    RoleTransition role_transition = 7;
   }
 }
 
 // Sent to signal graceful shutdown of the connection.
 message Disconnect {
   string reason = 1;
+}
+
+// Announces a role change to the peer. No acknowledgement; propagation is
+// implicit — each peer re-evaluates and, if its own role changes, sends its
+// own RoleTransition to its peers.
+message RoleTransition {
+  wallhack.data.NodeRole new_role = 1;
 }

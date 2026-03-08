@@ -203,6 +203,15 @@ fn format_notification(notif: &DaemonNotification) -> Option<String> {
             Color::Cyan.paint("[*]"),
             sd.reason
         )),
+        Some(daemon_notification::Event::RoleChanged(rc)) => {
+            let new_role = wallhack_wire::management::NodeRole::try_from(rc.new_role)
+                .unwrap_or(wallhack_wire::management::NodeRole::Unspecified);
+            Some(format!(
+                "{} role changed to {}",
+                Color::Cyan.paint("[*]"),
+                new_role
+            ))
+        }
         _ => None,
     }
 }

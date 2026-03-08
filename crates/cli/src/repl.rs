@@ -4,7 +4,7 @@
 //! management requests; no new IPC features are introduced.
 
 use reedline::{DefaultPrompt, DefaultPromptSegment, ExternalPrinter, Reedline, Signal};
-use wallhack_wire::management::management_request;
+use wallhack_wire::management::{self, management_request};
 
 use crate::{ipc::IpcConnection, output};
 
@@ -157,6 +157,8 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
         "shutdown" => Some(management_request::Request::Shutdown(
             wallhack_wire::management::ShutdownRequest {},
         )),
+        "role" => parse_role_command(&parts),
+        "hint" => parse_hint_command(&parts),
         _ => None,
     }
 }
@@ -187,6 +189,65 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
     }
 }
 
+/// Parse `role` command: `role` (show) or `role <entry|exit|relay>` (set fixed).
+fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
+    match parts.get(1).copied() {
+        None => {
+            // `role` alone → show current role via status.
+            Some(management_request::Request::Status(
+                wallhack_wire::management::StatusRequest {},
+            ))
+        }
+        Some(target) => {
+            // `role <target>` → shorthand for `hint fixed <target>`.
+            let role = parse_role_name(target)?;
+            Some(management_request::Request::SetHint(
+                management::SetHintRequest {
+                    level: management::HintLevel::Fixed.into(),
+                    role: role.into(),
+                },
+            ))
+        }
+    }
+}
+
+/// Parse `hint` command: `hint clear` or `hint <level> <role>`.
+fn parse_hint_command(parts: &[&str]) -> Option<management_request::Request> {
+    let sub = parts.get(1).copied()?;
+    match sub {
+        "clear" => Some(management_request::Request::ClearHints(
+            management::ClearHintsRequest {},
+        )),
+        "prefer" | "exclude" | "fixed" => {
+            let role_name = parts.get(2).copied()?;
+            let role = parse_role_name(role_name)?;
+            let level = match sub {
+                "prefer" => management::HintLevel::Prefer,
+                "exclude" => management::HintLevel::Exclude,
+                "fixed" => management::HintLevel::Fixed,
+                _ => unreachable!(),
+            };
+            Some(management_request::Request::SetHint(
+                management::SetHintRequest {
+                    level: level.into(),
+                    role: role.into(),
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Parse a role name string into a management `NodeRole`.
+fn parse_role_name(s: &str) -> Option<management::NodeRole> {
+    match s {
+        "entry" => Some(management::NodeRole::Entry),
+        "exit" => Some(management::NodeRole::Exit),
+        "relay" => Some(management::NodeRole::Relay),
+        _ => None,
+    }
+}
+
 fn print_help() {
     use std::io::Write;
     use tabwriter::TabWriter;
@@ -204,6 +265,13 @@ fn print_help() {
     let _ = writeln!(tw, "  connect <addr>\tConnect to a peer");
     let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
     let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");
+    let _ = writeln!(tw, "  role\tShow current role");
+    let _ = writeln!(tw, "  role <entry|exit|relay>\tSet fixed role");
+    let _ = writeln!(
+        tw,
+        "  hint <prefer|exclude|fixed> <role>\tApply a role hint"
+    );
+    let _ = writeln!(tw, "  hint clear\tClear all role hints");
     let _ = writeln!(tw, "  shutdown\tShut down the daemon");
     let _ = writeln!(tw, "  help / ?\tShow this help");
     let _ = writeln!(tw, "  quit \tQuit the REPL");

@@ -179,6 +179,7 @@ impl Client for QuicClient {
                 handshake_tx: Some(handshake_tx), // receive server's Handshake
                 latency_tx: None,                 // pong handled inline
                 control_response_tx: None,        // no ControlResponse channel needed now
+                role_transition_tx: None,
             };
             match protocol::run_control_stream_initiator(
                 &*transport_ctrl,

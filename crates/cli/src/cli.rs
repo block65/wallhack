@@ -25,6 +25,8 @@ pub enum CtlCommand {
     Connect(ConnectCmd),
     Listen(ListenCmd),
     Disconnect(DisconnectCmd),
+    Role(RoleCmd),
+    Hint(HintCmd),
     Shutdown(ShutdownCmd),
 }
 
@@ -118,6 +120,65 @@ pub struct ListenCmd {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "disconnect")]
 pub struct DisconnectCmd {}
+
+/// Show or set the node role.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "role")]
+pub struct RoleCmd {
+    /// target role (entry, exit, relay). Omit to show current role.
+    #[argh(positional)]
+    pub target: Option<String>,
+}
+
+/// Manage role hints.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "hint")]
+pub struct HintCmd {
+    #[argh(subcommand)]
+    pub action: HintAction,
+}
+
+/// Hint sub-commands.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand)]
+pub enum HintAction {
+    Prefer(HintPreferCmd),
+    Exclude(HintExcludeCmd),
+    Fixed(HintFixedCmd),
+    Clear(HintClearCmd),
+}
+
+/// Set a prefer hint.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "prefer")]
+pub struct HintPreferCmd {
+    /// target role (entry, exit, relay)
+    #[argh(positional)]
+    pub role: String,
+}
+
+/// Set an exclude hint.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "exclude")]
+pub struct HintExcludeCmd {
+    /// target role (entry, exit, relay)
+    #[argh(positional)]
+    pub role: String,
+}
+
+/// Set a fixed hint.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "fixed")]
+pub struct HintFixedCmd {
+    /// target role (entry, exit, relay)
+    #[argh(positional)]
+    pub role: String,
+}
+
+/// Clear all role hints.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "clear")]
+pub struct HintClearCmd {}
 
 /// Shut down the daemon.
 #[derive(FromArgs, Debug)]
