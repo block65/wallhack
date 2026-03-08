@@ -53,6 +53,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             let mut out = String::new();
             for peer in &p.peers {
                 let status = peer.status();
+                let role = peer.role();
                 let latency = if peer.latency_ms > 0.0 {
                     format!("{:.1}ms", peer.latency_ms)
                 } else {
@@ -60,7 +61,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
                 };
                 let _ = writeln!(
                     out,
-                    "{} addr={} status={status:?} latency={latency} \
+                    "{} addr={} role={role:?} status={status:?} latency={latency} \
                      tun={} listen={} connect={}",
                     peer.name, peer.addr, peer.tun_capable, peer.listening, peer.connecting,
                 );

@@ -175,6 +175,7 @@ message PeerInfo {
   bool tun_capable = 8;
   bool listening = 9;
   bool connecting = 10;
+  NodeRole role = 11;         // peer's negotiated role
 }
 
 message PeersResponse {

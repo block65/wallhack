@@ -11,7 +11,10 @@ use std::{sync::Arc, time::Duration};
 
 use wallhack_core::{
     NodeRole,
-    control::{handler::HandlerConfig, metrics::Metrics},
+    control::{
+        handler::{HandlerConfig, SharedNodeState},
+        metrics::Metrics,
+    },
     server::server::{Server, ServerOptions},
     transport::Transport,
 };
@@ -64,7 +67,14 @@ pub async fn run(
     global: &GlobalConfig,
     cfg: &RelayConfig,
     metrics: Arc<Metrics>,
+    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
+    // Relay capabilities are known at startup.
+    node_state.update_capabilities(wallhack_wire::data::Capabilities {
+        tun_capable: false,
+        listening: true,
+        connecting: true,
+    });
     let addr: std::net::SocketAddr = cfg.listen.addr.parse::<crate::net::ListenAddr>()?.into();
     let server_options = build_server_options(cfg, metrics);
 

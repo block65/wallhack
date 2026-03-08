@@ -35,6 +35,8 @@ pub struct PeerInfo {
     pub name: String,
     /// Remote address of the peer.
     pub addr: String,
+    /// The peer's negotiated role.
+    pub role: NodeRole,
     /// Advertised capabilities from the handshake.
     pub capabilities: Capabilities,
     /// Connection status.
@@ -120,8 +122,8 @@ pub enum NodeApiError {
     PeerAmbiguous(String, Vec<String>),
     #[error("route not found: {0}")]
     RouteNotFound(Cidr),
-    #[error("operation not supported on this node type")]
-    NotSupported,
+    #[error("{0}")]
+    NotSupported(String),
     #[error("invalid address: {0}")]
     InvalidAddress(String),
     #[error("already connected")]

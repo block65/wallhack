@@ -231,11 +231,7 @@ impl ControlChannels {
     ) -> Option<ControlLoopExit> {
         match msg.message {
             Some(control_message::Message::Handshake(hs)) => {
-                tracing::info!(
-                    "Control: received Handshake name={} version={}",
-                    hs.name,
-                    hs.version,
-                );
+                tracing::info!("Handshake from {} ({})", hs.name, hs.version);
                 if let Some(tx) = self.handshake_tx.take() {
                     let _ = tx.send(hs);
                 }

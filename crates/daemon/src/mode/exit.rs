@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 
 use wallhack_core::{
     NodeRole,
-    control::{metrics::Metrics, peers::Registry},
+    control::{handler::SharedNodeState, metrics::Metrics, peers::Registry},
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     server::server::Server,
     transport::{
@@ -35,6 +35,7 @@ const UDP_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 struct ExitContext {
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
+    node_state: SharedNodeState,
 }
 
 /// Run as an exit node (headless daemon).
@@ -50,13 +51,18 @@ pub async fn run(
     cfg: &ExitConfig,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
+    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     let security = SecurityParams {
         psk: global.psk.clone(),
         accept_fingerprint: cfg.accept_fingerprint.clone(),
     };
 
-    let ctx = Arc::new(ExitContext { metrics, peers });
+    let ctx = Arc::new(ExitContext {
+        metrics,
+        peers,
+        node_state,
+    });
 
     match &cfg.connectivity {
         ConnectivitySpec::Both { .. } => Err(NodeError::Config(
@@ -64,6 +70,7 @@ pub async fn run(
                 .into(),
         )),
         ConnectivitySpec::Connect(spec) => {
+            ctx.node_state.set_connected(&spec.addr);
             run_exit_connector(global, &cfg.name, spec, &security, &ctx).await
         }
         ConnectivitySpec::Listen(spec) => run_exit_listener(global, &cfg.name, spec, &ctx).await,
@@ -118,6 +125,7 @@ async fn run_exit_connector(
                                 e.channels.responses_rx,
                                 e.control_tx,
                                 e.tasks,
+                                e.peer_handshake_rx,
                                 &pa,
                                 &ctx,
                             )
@@ -165,6 +173,7 @@ async fn run_exit_connector(
                                 e.channels.responses_rx,
                                 e.control_tx,
                                 e.tasks,
+                                e.peer_handshake_rx,
                                 &pa,
                                 &ctx,
                             )
@@ -228,6 +237,7 @@ async fn run_exit_listener(
                     wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
                 let bound = server.local_addr()?;
+                ctx.node_state.set_listen_addr(bound);
                 tracing::info!("Listening on {bound} ({})", server.protocol_name());
                 run_accept_loop(server, ctx).await
             }
@@ -242,6 +252,7 @@ async fn run_exit_listener(
                     server_options,
                 )?;
                 let bound = server.local_addr()?;
+                ctx.node_state.set_listen_addr(bound);
                 tracing::info!("Listening on {bound} ({})", server.protocol_name());
                 run_accept_loop(server, ctx).await
             }
@@ -272,12 +283,13 @@ where
         match server.accept(NodeRole::Exit).await {
             Ok(Some(accept_result)) => {
                 let peer_addr = accept_result.peer_addr().to_string();
-                tracing::info!("Peer connected: {peer_addr}");
 
-                // Register the connecting peer.
+                // Register the connecting peer using handshake name if available.
                 let peer_name = accept_result
                     .peer_handshake()
+                    .filter(|h| !h.name.is_empty())
                     .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
+                tracing::info!("Peer connected: {peer_name} ({peer_addr})");
                 ctx.peers
                     .register(peer_name.clone(), peer_addr, NodeRole::Entry);
 
@@ -365,6 +377,7 @@ async fn run_exit_loop_inner(
     responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
     _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     mut tasks: wallhack_core::client::client::ConnectionTasks,
+    peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
     peer_addr: &str,
     ctx: &ExitContext,
 ) -> Result<(), NodeError> {
@@ -372,11 +385,12 @@ async fn run_exit_loop_inner(
 
     tracing::info!("Connected to {peer_addr}");
 
-    ctx.peers.register(
-        peer_addr.to_string(),
-        peer_addr.to_string(),
-        NodeRole::Entry,
-    );
+    // Resolve the peer's handshake name (delivered asynchronously via the
+    // control loop). Fall back to the address if unavailable.
+    let peer_name = resolve_peer_name(peer_handshake_rx, peer_addr).await;
+
+    ctx.peers
+        .register(peer_name.clone(), peer_addr.to_string(), NodeRole::Entry);
 
     // Outgoing: open uni stream to entry peer, send responses.
     let transport_out = Arc::clone(&transport);
@@ -420,9 +434,26 @@ async fn run_exit_loop_inner(
         }
     }
 
-    ctx.peers.unregister(peer_addr);
+    ctx.peers.unregister(&peer_name);
 
     Ok(())
+}
+
+/// Await the peer's handshake name from a oneshot receiver (with timeout).
+///
+/// Returns the handshake name if non-empty, otherwise falls back to the
+/// peer address.
+async fn resolve_peer_name(
+    rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
+    peer_addr: &str,
+) -> String {
+    let Some(rx) = rx else {
+        return peer_addr.to_string();
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(Ok(hs)) if !hs.name.is_empty() => hs.name,
+        _ => peer_addr.to_string(),
+    }
 }
 
 pub(crate) async fn run_stream_listener(
@@ -440,7 +471,13 @@ pub(crate) async fn run_stream_listener(
         tracing::trace!("Accepted bi-stream from entry");
         tokio::spawn(async move {
             if let Err(e) = handle_stream(&mut stream).await {
-                tracing::warn!("stream handler failed: {e}");
+                // QUIC STOP_SENDING with code 0 is a graceful close, not an error.
+                let msg = e.to_string();
+                if msg.contains("error 0") {
+                    tracing::debug!("Stream closed by peer");
+                } else {
+                    tracing::warn!("Stream handler failed: {msg}");
+                }
             }
         });
     }
