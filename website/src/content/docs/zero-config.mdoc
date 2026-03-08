@@ -1,0 +1,50 @@
+---
+title: Zero Config
+description: How wallhack negotiates roles, encryption, and transport automatically from your network topology.
+order: 3
+---
+
+# Zero Config
+
+wallhack requires no configuration beyond your network topology. When two nodes connect, they negotiate roles, encryption, and transport automatically.
+
+## Role Auto-Negotiation
+
+The only inputs are facts you already know from recon: which hosts can reach which, what ports are open, and whether you have elevated privileges on the host.
+
+**Connectivity** — which side listens (`--listen`) and which connects (`--connect`) is dictated by your network constraints: firewall rules, NAT, and what's reachable from where.
+
+**Privilege** — creating a TUN interface requires `CAP_NET_ADMIN`. Only entry nodes need it. A host without this capability automatically becomes an exit or relay.
+
+| Flags | CAP_NET_ADMIN | Role |
+|-------|---------------|------|
+| `--listen` (or no args) | Yes | Entry |
+| `--listen` | No | Exit |
+| `--connect` only | Any | Exit |
+| `--connect` + `--listen` | Any | Relay |
+
+See [Roles & Topology](/roles) for what each role does.
+
+## Encryption
+
+mTLS with end-to-end encryption is on by default. Nodes generate ephemeral keys on startup and mutually authenticate — no certificate management or pre-shared secrets required.
+
+## Transport
+
+The default transport is QUIC over UDP, which works on any open outbound port. If the environment requires traffic to appear as HTTPS, switch to WebSockets over TCP:
+
+{% codeblock code="wallhack --connect HOST:443/tcp" /%}
+
+See [Transport Modes](/transport-modes) for details.
+
+## When Both Sides Have CAP_NET_ADMIN
+
+If both nodes are TUN-capable and topology alone is ambiguous, negotiation lands in indeterminate — the connection is held open but no tunnel is established. Resolve it at runtime from the REPL on either side:
+
+```
+wallhack> role entry
+```
+
+This propagates along the chain: once one node resolves, its peers re-evaluate and the rest of the chain comes up automatically.
+
+To set a preference at startup, use `--prefer entry` on one side. For hard constraints, `--fixed-role entry` forces the role regardless of what the peer negotiates. `--exclude-role` prevents a specific role from being assigned.

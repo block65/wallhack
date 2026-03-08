@@ -1,30 +1,5 @@
 ---
-title: Node Types
-description: "Entry, relay, and exit: the three building blocks of a wallhack tunnel"
-order: 3
+title: Roles & Topology
+description: Moved to /roles
+redirect: /roles
 ---
-
-# Node Types
-
-Three node types form the building blocks of a tunnel. Entry and exit are required. Relays are optional, only needed when pivoting through intermediate hosts.
-
-### Entry
-
-The entry node runs on the local machine. A [TUN interface](https://en.wikipedia.org/wiki/TUN/TAP) (a virtual network device) is established to route traffic into the tunnel chain.
-
-{% codeblock code="wallhack" /%}
-
-### Relay *(optional)*
-
-An intermediate host forwards traffic deeper into the network. Relays connect to a previous hop and listen for a subsequent hop.
-
-{% codeblock code="wallhack relay --connect HOST:PORT --listen :PORT" /%}
-
-### Exit
-
-The far end of the tunnel chain. Packets are unwrapped and delivered to the target network.
-
-{% codeblock code="wallhack exit --connect HOST:PORT" /%}
-
-Transport direction (`--listen` / `--connect`) is independent of node role. Entry and exit nodes can either listen or connect, which is how reverse tunnels work.
-
