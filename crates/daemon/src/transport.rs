@@ -58,14 +58,26 @@ where
     SFut: std::future::Future<Output = Result<(), NodeError>>,
 {
     let mut retry_delay = INITIAL_RETRY_DELAY;
+    let mut drop_delay = reconnect_delay;
+    let mut last_error: Option<String> = None;
+    let mut repeat_count: u32 = 0;
 
     loop {
         match create_and_connect().await {
             Ok(result) => {
                 retry_delay = INITIAL_RETRY_DELAY;
+                last_error = None;
+                repeat_count = 0;
+                let session_start = tokio::time::Instant::now();
                 run_session(result).await?;
-                tracing::warn!("Connection dropped, reconnecting in {reconnect_delay:?}...");
-                tokio::time::sleep(reconnect_delay).await;
+                // Reset backoff if the session was stable (lasted longer than
+                // the current delay), otherwise keep increasing.
+                if session_start.elapsed() > drop_delay {
+                    drop_delay = reconnect_delay;
+                }
+                tracing::warn!("Connection dropped, reconnecting in {drop_delay:?}...");
+                tokio::time::sleep(drop_delay).await;
+                drop_delay = (drop_delay * 2).min(MAX_RETRY_DELAY);
             }
             Err(e) => {
                 let err = NodeError::Transport(Box::new(e));
@@ -73,7 +85,17 @@ where
                     tracing::error!("Connection failed (not retrying): {err}");
                     return Err(err);
                 }
-                tracing::warn!("Connection failed: {err}, retrying in {retry_delay:?}...");
+                let msg = err.to_string();
+                if last_error.as_deref() == Some(&msg) {
+                    repeat_count += 1;
+                    tracing::warn!(
+                        "Connection failed (repeated x{repeat_count}), retrying in {retry_delay:?}..."
+                    );
+                } else {
+                    repeat_count = 1;
+                    last_error = Some(msg);
+                    tracing::warn!("Connection failed: {err}, retrying in {retry_delay:?}...");
+                }
                 tokio::time::sleep(retry_delay).await;
                 retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
             }
