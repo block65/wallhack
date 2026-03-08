@@ -393,6 +393,7 @@ impl WsClient {
                 handshake_tx: Some(handshake_tx), // receive server's Handshake
                 latency_tx: None,
                 control_response_tx: None,
+                role_transition_tx: None,
             };
             match protocol::run_control_stream_initiator(
                 &*transport_ctrl,

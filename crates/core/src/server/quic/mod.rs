@@ -226,6 +226,7 @@ impl Server for QuicServer {
                 handshake_tx: None, // Handshake already read above
                 latency_tx: Some(latency_tx),
                 control_response_tx: None, // server doesn't issue ControlRequests
+                role_transition_tx: None,
             };
             let exit = channels
                 .run(&mut control_stream, Some(&handler), Duration::from_secs(30))

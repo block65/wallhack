@@ -31,8 +31,8 @@ Every entry node includes an interactive command-line interface for direct acces
 
 ```
 wallhack> peers
-NAME   CAPABILITY  ADDR              STATUS     LATENCY
-peer1  Exit        10.0.1.5:52341    Connected  1.2ms
+NAME   ADDR             STATUS     LATENCY  TUN  LISTEN  CONNECT
+peer1  10.0.1.5:52341   connected  1.2ms    no   no      yes
 
 wallhack> route add 10.0.0.0/8 via peer1
 OK

@@ -22,6 +22,8 @@ message ManagementRequest {
     ListenRequest listen = 11;
     DisconnectRequest disconnect = 12;
     ShutdownRequest shutdown = 13;
+    SetHintRequest set_hint = 14;
+    ClearHintsRequest clear_hints = 15;
   }
 }
 
@@ -56,6 +58,7 @@ message DaemonNotification {
     TunnelError tunnel_error = 4;
     MetricsSnapshot metrics_snapshot = 5;
     ShuttingDown shutting_down = 6;
+    RoleChanged role_changed = 7;
   }
 }
 
@@ -97,6 +100,21 @@ message ListenRequest {
 message DisconnectRequest {}
 
 message ShutdownRequest {}
+
+// Hint level for runtime role negotiation.
+enum HintLevel {
+  HINT_LEVEL_UNSPECIFIED = 0;
+  HINT_LEVEL_PREFER = 1;     // Soft — yield if topology makes another node better
+  HINT_LEVEL_EXCLUDE = 2;    // Medium — remove one role from consideration
+  HINT_LEVEL_FIXED = 3;      // Hard — this role and no other
+}
+
+message SetHintRequest {
+  HintLevel level = 1;
+  NodeRole role = 2;
+}
+
+message ClearHintsRequest {}
 
 // ── Response messages ───────────────────────────────────────────────
 
@@ -235,4 +253,9 @@ message MetricsSnapshot {
 
 message ShuttingDown {
   string reason = 1;
+}
+
+message RoleChanged {
+  NodeRole previous_role = 1;
+  NodeRole new_role = 2;
 }

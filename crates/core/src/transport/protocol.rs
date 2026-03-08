@@ -141,6 +141,8 @@ pub struct ControlChannels {
     pub latency_tx: Option<mpsc::Sender<f64>>,
     /// `ControlResponse` forwarding (client side, for correlating requests).
     pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
+    /// `RoleTransition` forwarding to the mode task for re-evaluation.
+    pub role_transition_tx: Option<mpsc::Sender<wallhack_wire::control::RoleTransition>>,
 }
 
 impl ControlChannels {
@@ -286,6 +288,12 @@ impl ControlChannels {
             Some(control_message::Message::Disconnect(dc)) => {
                 tracing::info!("Control: received Disconnect: {}", dc.reason);
                 return Some(ControlLoopExit::Disconnect(dc.reason));
+            }
+            Some(control_message::Message::RoleTransition(rt)) => {
+                tracing::info!("Control: received RoleTransition: {:?}", rt.new_role());
+                if let Some(ref tx) = self.role_transition_tx {
+                    let _ = tx.send(rt).await;
+                }
             }
             None => {
                 tracing::warn!("Control: received empty ControlMessage");
@@ -658,6 +666,7 @@ mod tests {
                 handshake_tx: Some(a_hs_tx),
                 latency_tx: None,
                 control_response_tx: None,
+                role_transition_tx: None,
             };
             channels
                 .run(&mut stream_a, None, std::time::Duration::from_mins(10))
@@ -670,6 +679,7 @@ mod tests {
                 handshake_tx: Some(b_hs_tx),
                 latency_tx: None,
                 control_response_tx: None,
+                role_transition_tx: None,
             };
             channels
                 .run(&mut stream_b, None, std::time::Duration::from_mins(10))
@@ -722,6 +732,7 @@ mod tests {
             handshake_tx: Some(hs_tx),
             latency_tx: None,
             control_response_tx: None,
+            role_transition_tx: None,
         };
 
         let exit = channels
@@ -747,6 +758,7 @@ mod tests {
             handshake_tx: None,
             latency_tx: Some(latency_tx),
             control_response_tx: None,
+            role_transition_tx: None,
         };
 
         // Spawn the control loop on side B (will read from stream_b).
@@ -826,6 +838,7 @@ mod tests {
             handshake_tx: None,
             latency_tx: None,
             control_response_tx: None,
+            role_transition_tx: None,
         };
 
         // Control loop with 1-second ping interval.
@@ -896,6 +909,7 @@ mod tests {
             handshake_tx: None,
             latency_tx: None,
             control_response_tx: None,
+            role_transition_tx: None,
         };
 
         let server_handle = tokio::spawn(async move {
@@ -1024,6 +1038,7 @@ mod tests {
             handshake_tx: None,
             latency_tx: None,
             control_response_tx: None,
+            role_transition_tx: None,
         };
 
         let server_handle = tokio::spawn(async move {

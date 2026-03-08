@@ -3,19 +3,24 @@
 //! Handles incoming [`ControlRequest`] messages and produces
 //! [`ControlResponse`] messages.
 
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
+use arc_swap::ArcSwap;
+use tokio::sync::watch;
 use wallhack_wire::{
     control::{
         ControlRequest, ControlResponse, ErrorResponse, PeerInfo, PingResponse, RouteInfo,
         StatsResponse, control_request, control_response,
     },
-    data::NodeRole as ProtoNodeRole,
+    data::{NodeRole as ProtoNodeRole, RoleHint},
 };
 
 use crate::NodeRole;
 
 use super::{metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable};
+
+/// Shared mutable role state, readable from any thread without locking.
+pub type SharedRole = Arc<ArcSwap<NodeRole>>;
 
 /// Configuration for the control handler.
 #[derive(Debug, Clone)]
@@ -46,6 +51,11 @@ impl HandlerConfig {
 /// on the current state of metrics and configuration.
 pub struct Handler {
     config: HandlerConfig,
+    /// Shared mutable role — updated at runtime by auto-negotiation or REPL.
+    role: SharedRole,
+    /// Sender for hint changes. The mode task watches the receiver and
+    /// re-evaluates when a new hint arrives. `None` means no hint is active.
+    hint_tx: watch::Sender<Option<RoleHint>>,
     metrics: SharedMetrics,
     peers: SharedRegistry,
     routes: SharedRouteTable,
@@ -61,13 +71,29 @@ impl Handler {
         peers: SharedRegistry,
         routes: SharedRouteTable,
     ) -> Self {
+        let role = Arc::new(ArcSwap::new(Arc::new(config.node_role)));
+        let (hint_tx, _) = watch::channel(None);
         Self {
             config,
+            role,
+            hint_tx,
             metrics,
             peers,
             routes,
             start_time: Instant::now(),
         }
+    }
+
+    /// Returns the shared role handle for read access from other components.
+    #[must_use]
+    pub fn shared_role(&self) -> SharedRole {
+        Arc::clone(&self.role)
+    }
+
+    /// Returns a receiver that fires when the runtime hint changes.
+    #[must_use]
+    pub fn hint_rx(&self) -> watch::Receiver<Option<RoleHint>> {
+        self.hint_tx.subscribe()
     }
 
     /// Handles a control request and returns a response.
@@ -92,11 +118,12 @@ impl Handler {
 
     fn handle_ping(&self) -> ControlResponse {
         let uptime = self.start_time.elapsed();
+        let current_role = **self.role.load();
         ControlResponse {
             response: Some(control_response::Response::Ping(PingResponse {
                 uptime_ms: u64::try_from(uptime.as_millis()).unwrap_or(u64::MAX),
                 version: self.config.version.clone(),
-                node_role: ProtoNodeRole::from(self.config.node_role).into(),
+                node_role: ProtoNodeRole::from(current_role).into(),
             })),
         }
     }
@@ -289,7 +316,7 @@ impl crate::node_api::NodeApi for Handler {
 
     fn status(&self) -> crate::node_api::NodeStatus {
         crate::node_api::NodeStatus {
-            role: self.config.node_role,
+            role: **self.role.load(),
             connected: false,
             peer_addr: None,
             capabilities: wallhack_wire::data::Capabilities::default(),
@@ -338,6 +365,20 @@ impl crate::node_api::NodeApi for Handler {
             .unregister(&peer_info.name)
             .map(|_| ())
             .ok_or(crate::node_api::NodeApiError::PeerNotFound(peer))
+    }
+
+    fn current_role(&self) -> NodeRole {
+        **self.role.load()
+    }
+
+    fn set_hint(&self, hint: RoleHint) -> crate::node_api::Result<()> {
+        self.hint_tx.send_replace(Some(hint));
+        Ok(())
+    }
+
+    fn clear_hints(&self) -> crate::node_api::Result<()> {
+        self.hint_tx.send_replace(None);
+        Ok(())
     }
 }
 

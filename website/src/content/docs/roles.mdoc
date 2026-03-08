@@ -14,17 +14,33 @@ Runs on the attacker's machine. Creates a TUN interface — a virtual network de
 
 {% codeblock code="wallhack" /%}
 
+```
+info: Listening on :6565 (QUIC)
+info: Certificate fingerprint: sha256:a1b2c3...
+```
+
 ## Exit
 
 The far end of the chain. Packets are unwrapped and delivered into the target network. No TUN interface required.
 
 {% codeblock code="wallhack --connect HOST:PORT" /%}
 
+```
+info: Connecting to HOST:PORT...
+info: Connected to HOST:PORT
+```
+
 ## Relay *(optional)*
 
 An intermediate host. Connects to a previous hop and listens for the next. Used for multi-hop pivoting through segmented networks where no direct path exists between entry and exit.
 
 {% codeblock code="wallhack --connect HOST:PORT --listen :PORT" /%}
+
+```
+info: Connecting to HOST:PORT...
+info: Connected to HOST:PORT
+info: Listening on :PORT (QUIC)
+```
 
 ---
 

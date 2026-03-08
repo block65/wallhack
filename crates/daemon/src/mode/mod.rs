@@ -11,7 +11,11 @@ pub(crate) mod relay;
 
 use std::sync::Arc;
 
-use wallhack_core::control::{metrics::Metrics, peers::Registry, routes::SharedRouteTable};
+use tokio::sync::watch;
+use wallhack_core::control::{
+    handler::SharedRole, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
+};
+use wallhack_wire::data::RoleHint;
 
 use crate::{
     NodeError,
@@ -23,6 +27,8 @@ pub(crate) struct NodeResources {
     pub metrics: Arc<Metrics>,
     pub peers: Arc<Registry>,
     pub routes: SharedRouteTable,
+    pub shared_role: SharedRole,
+    pub hint_rx: watch::Receiver<Option<RoleHint>>,
 }
 
 /// Dispatch to the appropriate node mode based on the config.
@@ -53,6 +59,8 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.metrics,
                 resources.peers,
                 resources.routes,
+                resources.shared_role,
+                resources.hint_rx,
             )
             .await
         }

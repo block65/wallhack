@@ -342,6 +342,24 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             management_response::Response::Ok(OkResponse {})
         }
 
+        Some(management_request::Request::SetHint(req)) => {
+            let level = wallhack_wire::data::HintLevel::try_from(req.level).unwrap_or_default();
+            let target = wallhack_wire::data::NodeRole::try_from(req.role).unwrap_or_default();
+            let hint = wallhack_wire::data::RoleHint {
+                level: level.into(),
+                target: target.into(),
+            };
+            match api.set_hint(hint) {
+                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Err(e) => error_response(&e),
+            }
+        }
+
+        Some(management_request::Request::ClearHints(_)) => match api.clear_hints() {
+            Ok(()) => management_response::Response::Ok(OkResponse {}),
+            Err(e) => error_response(&e),
+        },
+
         None => management_response::Response::Error(ErrorResponse {
             code: ErrorCode::Internal.into(),
             message: "empty request".to_string(),

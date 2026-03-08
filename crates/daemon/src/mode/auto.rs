@@ -13,17 +13,21 @@
 
 use std::{sync::Arc, time::Duration};
 
+use tokio::sync::watch;
 use wallhack_core::{
     NodeRole,
     client::client::ConnectResult,
-    control::{metrics::Metrics, peers::Registry, routes::SharedRouteTable},
+    control::{handler::SharedRole, metrics::Metrics, peers::Registry, routes::SharedRouteTable},
     entry::manager::ConnectionManager,
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     negotiate::{NegotiationResult, negotiate},
     server::server::{DataChannels, Server, ServerOptions},
     transport::{ErasedTransport, Transport, protocol},
 };
-use wallhack_wire::data::{Capabilities, Handshake};
+use wallhack_wire::{
+    control::{ControlMessage, control_message},
+    data::{Capabilities, Handshake, NodeRole as ProtoNodeRole, RoleHint},
+};
 
 use crate::{
     NodeError,
@@ -47,6 +51,8 @@ pub(crate) async fn run(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    shared_role: SharedRole,
+    hint_rx: watch::Receiver<Option<RoleHint>>,
 ) -> Result<(), NodeError> {
     let tun_capable = detect_tun_capable();
     tracing::info!(
@@ -68,10 +74,31 @@ pub(crate) async fn run(
             super::relay::run(global, &relay_cfg, metrics).await
         }
         (Some(connect), None) => {
-            run_auto_connector(global, cfg, connect, tun_capable, metrics, peers, routes).await
+            run_auto_connector(
+                global,
+                cfg,
+                connect,
+                tun_capable,
+                metrics,
+                peers,
+                routes,
+                shared_role,
+                hint_rx,
+            )
+            .await
         }
         (None, Some(listen)) => {
-            run_auto_listener(global, cfg, listen, tun_capable, metrics, peers, routes).await
+            run_auto_listener(
+                global,
+                cfg,
+                listen,
+                tun_capable,
+                metrics,
+                peers,
+                routes,
+                shared_role,
+            )
+            .await
         }
         (None, None) => Err(NodeError::Config(
             "auto mode requires a connect or listen address".into(),
@@ -105,6 +132,7 @@ fn build_local_handshake(
 // ============================================================================
 
 /// Auto connector: connect to a peer, negotiate role, run the session.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_connector(
     global: &GlobalConfig,
     cfg: &AutoConfig,
@@ -113,6 +141,8 @@ async fn run_auto_connector(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     _routes: SharedRouteTable,
+    shared_role: SharedRole,
+    hint_rx: watch::Receiver<Option<RoleHint>>,
 ) -> Result<(), NodeError> {
     let local_hs = build_local_handshake(cfg, tun_capable, false, true);
 
@@ -152,9 +182,19 @@ async fn run_auto_connector(
                         let peers = Arc::clone(&peers);
                         let pa = peer_addr.clone();
                         let lhs = lhs.clone();
+                        let sr = Arc::clone(&shared_role);
+                        let hr = hint_rx.clone();
                         async move {
-                            run_auto_connect_session(connect_result, &lhs, &pa, metrics, peers)
-                                .await
+                            run_auto_connect_session(
+                                connect_result,
+                                &lhs,
+                                &pa,
+                                metrics,
+                                peers,
+                                sr,
+                                hr,
+                            )
+                            .await
                         }
                     },
                     RECONNECT_DELAY,
@@ -188,9 +228,19 @@ async fn run_auto_connector(
                         let peers = Arc::clone(&peers);
                         let pa = peer_addr.clone();
                         let lhs = lhs.clone();
+                        let sr = Arc::clone(&shared_role);
+                        let hr = hint_rx.clone();
                         async move {
-                            run_auto_connect_session(connect_result, &lhs, &pa, metrics, peers)
-                                .await
+                            run_auto_connect_session(
+                                connect_result,
+                                &lhs,
+                                &pa,
+                                metrics,
+                                peers,
+                                sr,
+                                hr,
+                            )
+                            .await
                         }
                     },
                     RECONNECT_DELAY,
@@ -213,6 +263,8 @@ async fn run_auto_connect_session<T>(
     peer_addr: &str,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
+    shared_role: SharedRole,
+    hint_rx: watch::Receiver<Option<RoleHint>>,
 ) -> Result<(), NodeError>
 where
     T: wallhack_core::transport::Transport + 'static,
@@ -233,6 +285,8 @@ where
         peer_addr,
         metrics,
         peers,
+        shared_role,
+        hint_rx,
     )
     .await
 }
@@ -249,6 +303,8 @@ async fn run_auto_connect_session_dispatch(
     peer_addr: &str,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
+    shared_role: SharedRole,
+    hint_rx: watch::Receiver<Option<RoleHint>>,
 ) -> Result<(), NodeError> {
     let DataChannels {
         instructions_tx,
@@ -276,6 +332,12 @@ async fn run_auto_connect_session_dispatch(
 
     let result = negotiate(local_hs, &peer_hs);
     tracing::info!("Auto-negotiation result: {result}");
+
+    let negotiated_role = match &result {
+        NegotiationResult::Resolved(role) => *role,
+        NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
+    };
+    shared_role.store(Arc::new(negotiated_role));
 
     match result {
         NegotiationResult::Resolved(NodeRole::Entry) => {
@@ -322,28 +384,65 @@ async fn run_auto_connect_session_dispatch(
         }
         NegotiationResult::Resolved(NodeRole::Relay) => {
             tracing::warn!("Unexpected relay negotiation for connector-only mode; holding");
-            hold_until_disconnect(tasks, control_tx).await;
+            hold_until_disconnect(tasks, control_tx, shared_role, hint_rx).await;
             Ok(())
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
         | NegotiationResult::Indeterminate { .. } => {
             tracing::info!("Role is indeterminate: {result}; holding connection");
-            hold_until_disconnect(tasks, control_tx).await;
+            hold_until_disconnect(tasks, control_tx, shared_role, hint_rx).await;
             Ok(())
         }
     }
 }
 
 /// Hold connection tasks open until the peer disconnects (or control dies).
+///
+/// While holding, watches for runtime hint changes. When a hint arrives,
+/// the shared role is updated and a `RoleTransition` is sent to the peer.
+/// The data-plane remains unchanged — actual entry/exit switching requires
+/// a reconnection cycle and is out of scope for this phase.
 async fn hold_until_disconnect(
     mut tasks: wallhack_core::client::client::ConnectionTasks,
-    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    shared_role: SharedRole,
+    mut hint_rx: watch::Receiver<Option<RoleHint>>,
 ) {
-    // Only watch incoming and control — the outgoing task is a no-op for
-    // Indeterminate connections and completes immediately.
-    tokio::select! {
-        _ = &mut tasks.incoming => tracing::debug!("Indeterminate: incoming task completed"),
-        _ = &mut tasks.control  => tracing::debug!("Indeterminate: control task completed"),
+    loop {
+        tokio::select! {
+            _ = &mut tasks.incoming => {
+                tracing::debug!("Indeterminate: incoming task completed");
+                break;
+            }
+            _ = &mut tasks.control => {
+                tracing::debug!("Indeterminate: control task completed");
+                break;
+            }
+            result = hint_rx.changed() => {
+                if result.is_err() {
+                    tracing::debug!("Hint channel closed");
+                    break;
+                }
+                let new_role = if let Some(hint) = *hint_rx.borrow_and_update() {
+                    let role: NodeRole = hint.target().into();
+                    tracing::info!("Hint received: transitioning to {role:?}");
+                    role
+                } else {
+                    tracing::info!("Hints cleared: reverting to indeterminate");
+                    NodeRole::Indeterminate
+                };
+
+                shared_role.store(Arc::new(new_role));
+                let msg = ControlMessage {
+                    message: Some(control_message::Message::RoleTransition(
+                        wallhack_wire::control::RoleTransition {
+                            new_role: ProtoNodeRole::from(new_role).into(),
+                        },
+                    )),
+                };
+                let _ = control_tx.send(msg).await;
+            }
+        }
     }
 }
 
@@ -395,6 +494,7 @@ async fn run_auto_exit_session_inner(
 // ============================================================================
 
 /// Auto listener: accept connections, negotiate role, dispatch.
+#[allow(clippy::too_many_arguments)]
 async fn run_auto_listener(
     global: &GlobalConfig,
     cfg: &AutoConfig,
@@ -403,6 +503,7 @@ async fn run_auto_listener(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    shared_role: SharedRole,
 ) -> Result<(), NodeError> {
     let local_hs = build_local_handshake(cfg, tun_capable, true, false);
 
@@ -428,8 +529,16 @@ async fn run_auto_listener(
                 let server =
                     wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
-                run_auto_accept_loop(server, local_hs, global.psk.clone(), metrics, peers, routes)
-                    .await
+                run_auto_accept_loop(
+                    server,
+                    local_hs,
+                    global.psk.clone(),
+                    metrics,
+                    peers,
+                    routes,
+                    shared_role,
+                )
+                .await
             }
             #[cfg(not(feature = "quic"))]
             Err(NodeError::TransportUnavailable("quic"))
@@ -441,8 +550,16 @@ async fn run_auto_listener(
                     server_config,
                     server_options,
                 )?;
-                run_auto_accept_loop(server, local_hs, global.psk.clone(), metrics, peers, routes)
-                    .await
+                run_auto_accept_loop(
+                    server,
+                    local_hs,
+                    global.psk.clone(),
+                    metrics,
+                    peers,
+                    routes,
+                    shared_role,
+                )
+                .await
             }
             #[cfg(not(feature = "websocket"))]
             Err(NodeError::TransportUnavailable("websocket"))
@@ -451,6 +568,7 @@ async fn run_auto_listener(
 }
 
 /// Accept loop for auto-negotiation listener.
+#[allow(clippy::too_many_arguments)]
 async fn run_auto_accept_loop<S: Server>(
     mut server: S,
     local_hs: Handshake,
@@ -458,6 +576,7 @@ async fn run_auto_accept_loop<S: Server>(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    shared_role: SharedRole,
 ) -> Result<(), NodeError>
 where
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -515,6 +634,7 @@ where
                 let metrics = Arc::clone(&metrics);
                 let peers = Arc::clone(&peers);
                 let routes = Arc::clone(&routes);
+                let sr = Arc::clone(&shared_role);
                 tokio::spawn(async move {
                     if let Err(e) = run_auto_accept_session_inner(
                         transport,
@@ -529,6 +649,7 @@ where
                         peers,
                         routes,
                         peer_addr,
+                        sr,
                     )
                     .await
                     {
@@ -567,6 +688,7 @@ async fn run_auto_accept_session_inner(
     peers: Arc<Registry>,
     _routes: SharedRouteTable,
     peer_addr: String,
+    shared_role: SharedRole,
 ) -> Result<(), NodeError> {
     let Some(peer_hs) = peer_hs else {
         tracing::warn!("No peer handshake from {peer_addr}; cannot negotiate");
@@ -575,6 +697,12 @@ async fn run_auto_accept_session_inner(
 
     let result = negotiate(&local_hs, &peer_hs);
     tracing::info!("Auto listener {peer_addr}: negotiation result: {result}");
+
+    let negotiated_role = match &result {
+        NegotiationResult::Resolved(role) => *role,
+        NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
+    };
+    shared_role.store(Arc::new(negotiated_role));
 
     match result {
         NegotiationResult::Resolved(NodeRole::Entry) => {

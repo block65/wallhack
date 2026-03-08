@@ -6,7 +6,7 @@
 
 use std::net::SocketAddr;
 
-use wallhack_wire::data::Capabilities;
+use wallhack_wire::data::{Capabilities, RoleHint};
 
 use crate::{Cidr, NodeRole};
 
@@ -198,4 +198,16 @@ pub trait NodeApi: Send + Sync {
     ///
     /// Only supported on entry nodes. Returns error for exit/relay nodes.
     fn disconnect_peer(&self, peer: String) -> Result<()>;
+
+    /// Get the current negotiated role.
+    fn current_role(&self) -> NodeRole;
+
+    /// Apply a role hint at runtime.
+    ///
+    /// Triggers re-negotiation if the node is in auto mode.
+    /// `role <target>` in the REPL is shorthand for `set_hint(Fixed, target)`.
+    fn set_hint(&self, hint: RoleHint) -> Result<()>;
+
+    /// Remove all hints (both startup and runtime).
+    fn clear_hints(&self) -> Result<()>;
 }
