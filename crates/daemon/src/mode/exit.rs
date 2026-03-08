@@ -508,13 +508,17 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
                         .write_proto(&status)
                         .await
                         .map_err(|e| NodeError::Stream(Box::new(e)))?;
-                    let _ = tokio::io::copy_bidirectional_with_sizes(
+                    tracing::debug!(target = %target, "TCP relay connected");
+                    let (bytes_in, bytes_out) = tokio::io::copy_bidirectional_with_sizes(
                         &mut *stream,
                         &mut socket,
                         64 * 1024,
                         64 * 1024,
                     )
                     .await?;
+                    tracing::debug!(
+                        target = %target, bytes_in, bytes_out, "TCP relay closed"
+                    );
                 }
                 Err(e) => {
                     let status_code = match e.kind() {

@@ -20,6 +20,37 @@ use crate::{
     daemon_config::{DaemonConfig, ModeConfig},
 };
 
+/// Deduplicates repeated PSK authentication failure logs per source IP.
+///
+/// Keys on IP only (strips port) so reconnects from the same host with
+/// different ephemeral ports are correctly deduplicated.
+/// Logs on the first failure and at power-of-two counts (1, 2, 4, 8, …).
+pub(crate) struct PskFailTracker {
+    counts: std::collections::HashMap<std::net::IpAddr, u32>,
+}
+
+impl PskFailTracker {
+    pub fn new() -> Self {
+        Self {
+            counts: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Record a failure for `addr` (ip:port). Logs with dedup (first + powers of two).
+    pub fn record(&mut self, addr: &str) {
+        let ip = addr
+            .parse::<std::net::SocketAddr>()
+            .map(|sa| sa.ip())
+            .or_else(|_| addr.parse::<std::net::IpAddr>())
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+        let count = self.counts.entry(ip).or_insert(0);
+        *count += 1;
+        if *count == 1 || count.is_power_of_two() {
+            tracing::warn!("PSK authentication failed for {ip} (x{count})");
+        }
+    }
+}
+
 /// Shared resources available to all node modes.
 pub(crate) struct NodeResources {
     pub metrics: Arc<Metrics>,

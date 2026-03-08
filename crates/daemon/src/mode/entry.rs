@@ -246,6 +246,8 @@ where
         tracing::warn!(
             "No authentication configured. Set a pre-shared key (PSK) to require authentication."
         );
+    } else {
+        tracing::info!("PSK authentication configured");
     }
     run_entry_server(
         server,
@@ -462,6 +464,7 @@ struct EntryListenOptions {
 }
 
 /// Generic entry server loop that works with any `Server` implementation.
+#[allow(clippy::too_many_lines)]
 async fn run_entry_server<S: Server>(
     mut server: S,
     res: EntryResources,
@@ -489,6 +492,8 @@ where
     let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(
         max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
     ));
+
+    let mut psk_failures = super::PskFailTracker::new();
 
     // Main loop: handle incoming connections
     loop {
@@ -678,7 +683,6 @@ fn validate_handshake_erased(
             .as_ref()
             .is_some_and(|binding| hs.verify_psk_proof(expected_psk.as_bytes(), binding));
         if !valid {
-            tracing::warn!("Peer {} failed PSK authentication, dropping", hs.name);
             return Err(NodeError::PskAuth(hs.name));
         }
     }
