@@ -110,8 +110,7 @@ impl Client for QuicClient {
         role: NodeRole,
     ) -> Result<ConnectResult<Self::Transport>, Self::Error> {
         tracing::debug!(
-            "{:?} connecting to {} with server name {:?}",
-            role,
+            "Connecting to {} (role={role:?}, server_name={:?})",
             self.addr,
             self.hostname,
         );
