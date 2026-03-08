@@ -33,6 +33,25 @@ record:
     docker compose up -d --build --wait
     vhs demo.tape
 
+# Build, deploy binary to containers, and restart daemons
+deploy *containers='attacker gateway-perimeter':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{ root }}
+    echo "Building musl binary..."
+    CARGO_TARGET_DIR=target/musl cross build -q --release --target x86_64-unknown-linux-musl -p wallhack-cli
+    bin="target/musl/x86_64-unknown-linux-musl/release/wallhack"
+    for c in {{ containers }}; do
+        name="wallhack-range-${c}-1"
+        echo "Deploying to ${name}..."
+        docker cp "$bin" "${name}:/usr/local/bin/wallhack"
+        docker restart "$name"
+    done
+    sleep 2
+    # Fix socket permissions for host access
+    docker exec wallhack-range-attacker-1 chmod 777 /var/run/wallhack/wallhackd.sock 2>/dev/null || true
+    echo "Deployed and restarted."
+
 # Fix socket permissions so host can connect (container runs as root)
 fix-socket:
     docker exec wallhack-range-attacker-1 chmod 777 /var/run/wallhack/wallhackd.sock
@@ -40,6 +59,18 @@ fix-socket:
 # Query the attacker daemon from the host via wallhackctl
 ctl *args:
     {{ root }}/target/debug/wallhack -H {{ justfile_directory() }}/range-ipc/wallhackd.sock {{ args }}
+
+# Show daemon logs from a container (default: attacker)
+logs container='attacker' lines='30':
+    docker exec wallhack-range-{{ container }}-1 cat /tmp/wallhack.log 2>/dev/null | tail -{{ lines }}
+
+# Run nmap through the tunnel from the attacker
+nmap *args:
+    docker exec wallhack-range-attacker-1 nmap {{ args }}
+
+# Run a command inside the attacker container
+exec *args:
+    docker exec wallhack-range-attacker-1 {{ args }}
 
 # Stop and remove all volumes/images
 clean:
