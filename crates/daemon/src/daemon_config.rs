@@ -12,9 +12,6 @@ use crate::address_spec::{AddressSpec, ConnectivitySpec};
 pub struct DaemonConfig {
     pub global: GlobalConfig,
     pub mode: ModeConfig,
-    /// Version of the top-level binary (e.g. wallhack-cli 0.6.2).
-    /// If set, shown in the startup banner instead of the daemon crate version.
-    pub binary_version: Option<String>,
 }
 
 /// Global settings shared across all node modes.
@@ -25,6 +22,9 @@ pub struct GlobalConfig {
     pub dns_server: Option<String>,
     pub timeout: Duration,
     pub psk: Option<zeroize::Zeroizing<String>>,
+    /// Canonical version string, e.g. `0.6.2 (abc1234-dirty)`.
+    /// Computed once at startup, used in banner, IPC, and handshake.
+    pub version: String,
 }
 
 /// TLS certificate/key paths.

@@ -118,6 +118,7 @@ pub(crate) async fn run(
 /// Build a local `Handshake` for capability advertisement.
 fn build_local_handshake(
     cfg: &AutoConfig,
+    version: &str,
     tun_capable: bool,
     listening: bool,
     connecting: bool,
@@ -129,7 +130,7 @@ fn build_local_handshake(
             connecting,
         }),
         name: cfg.name.clone(),
-        version: crate::built_info::PKG_VERSION.to_string(),
+        version: version.to_string(),
         psk_proof: Vec::new(),
         routes: Vec::new(),
         hint: cfg.hint,
@@ -152,7 +153,7 @@ async fn run_auto_connector(
     _routes: SharedRouteTable,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
-    let local_hs = build_local_handshake(cfg, tun_capable, false, true);
+    let local_hs = build_local_handshake(cfg, &global.version, tun_capable, false, true);
 
     tracing::info!("Auto connector: connecting to {}...", spec.addr);
     let endpoint =
@@ -460,14 +461,14 @@ async fn run_auto_listener(
     routes: SharedRouteTable,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
-    let local_hs = build_local_handshake(cfg, tun_capable, true, false);
+    let local_hs = build_local_handshake(cfg, &global.version, tun_capable, true, false);
 
     let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
     let server_options = ServerOptions {
         handler_config: wallhack_core::control::handler::HandlerConfig::new(
             NodeRole::Indeterminate,
-            crate::built_info::PKG_NAME.to_string(),
-            crate::built_info::PKG_VERSION.to_string(),
+            "wallhack".to_string(),
+            global.version.clone(),
         ),
         metrics: Some(Arc::clone(&metrics)),
         peers: Some(Arc::clone(&peers)),

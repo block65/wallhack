@@ -158,8 +158,8 @@ async fn run_entry_listen(
     let server_options = ServerOptions {
         handler_config: HandlerConfig::new(
             NodeRole::Entry,
-            crate::built_info::PKG_NAME.to_string(),
-            crate::built_info::PKG_VERSION.to_string(),
+            "wallhack".to_string(),
+            global.version.clone(),
         ),
         metrics: Some(Arc::clone(&res.metrics)),
         peers: Some(Arc::clone(&res.peers)),
@@ -171,7 +171,7 @@ async fn run_entry_listen(
                 connecting: false,
             }),
             name: cfg.name.clone(),
-            version: crate::built_info::PKG_VERSION.to_string(),
+            version: global.version.clone(),
             psk_proof: Vec::new(),
             routes: Vec::new(),
             hint: None,
@@ -190,6 +190,7 @@ async fn run_entry_listen(
             server_config.tls.clone(),
             api_cfg.user.clone(),
             api_cfg.secret.clone(),
+            &global.version,
         );
     }
 
@@ -288,6 +289,7 @@ pub(crate) async fn run_entry_connect(
             tls,
             api_cfg.user.clone(),
             api_cfg.secret.clone(),
+            &global.version,
         );
     }
 
@@ -299,7 +301,7 @@ pub(crate) async fn run_entry_connect(
     let fast_mode = cfg.fast;
 
     // Advertise the correct capabilities: entry connectors are TUN-capable.
-    let entry_handshake = entry_local_handshake(&cfg.name);
+    let entry_handshake = entry_local_handshake(&cfg.name, &global.version);
 
     match spec.protocol {
         Protocol::Udp => {
@@ -391,7 +393,7 @@ pub(crate) async fn run_entry_connect(
 }
 
 /// Build the local handshake for an entry connector.
-fn entry_local_handshake(name: &str) -> wallhack_wire::data::Handshake {
+fn entry_local_handshake(name: &str, version: &str) -> wallhack_wire::data::Handshake {
     wallhack_wire::data::Handshake {
         capabilities: Some(wallhack_wire::data::Capabilities {
             tun_capable: crate::tun_cap::detect_tun_capable(),
@@ -399,7 +401,7 @@ fn entry_local_handshake(name: &str) -> wallhack_wire::data::Handshake {
             connecting: true,
         }),
         name: name.to_string(),
-        version: crate::built_info::PKG_VERSION.to_string(),
+        version: version.to_string(),
         psk_proof: Vec::new(),
         routes: Vec::new(),
         hint: None,
@@ -897,16 +899,14 @@ fn start_api(
     tls_config: Option<wallhack_core::server::config::TlsConfig>,
     username: String,
     secret: String,
+    version: &str,
 ) {
     use wallhack_api::{Auth, State as ApiState};
     use wallhack_core::control::handler::Handler;
     use wallhack_ipc::client::IpcConnection;
 
-    let handler_config = HandlerConfig::new(
-        NodeRole::Entry,
-        crate::built_info::PKG_NAME.to_string(),
-        crate::built_info::PKG_VERSION.to_string(),
-    );
+    let handler_config =
+        HandlerConfig::new(NodeRole::Entry, "wallhack".to_string(), version.to_string());
     let handler = Handler::new(
         handler_config,
         Arc::clone(metrics),
