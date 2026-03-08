@@ -16,7 +16,8 @@
 #   transport=quic|websocket
 #   loss=N%    (resilience: netem loss,  e.g. "2%")
 #   delay=Nms  (resilience: netem delay, e.g. "25ms")
-#   metric=tcp_upstream|tcp_downstream|udp|latency|parallel10|parallel40  (benchmark only)
+#   metric=tcp_upstream|tcp_downstream|udp|latency|parallel4|parallel8|...  (iperf3 metric)
+#   duration=N (iperf3 test duration in seconds, default 5)
 #   debug=1    (pass --debug to wallhack, keep running after test)
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin
@@ -86,12 +87,14 @@ LOSS=$(_param loss)
 DELAY=$(_param delay)
 RATE=$(_param rate)
 METRIC=$(_param metric)
+DURATION=$(_param duration)
 DEBUG=$(_param debug)
 
 : "${ROLE:=entry}"
 : "${SCENARIO:=smoke}"
 : "${TRANSPORT:=quic}"
 : "${METRIC:=tcp_upstream}"
+: "${DURATION:=5}"
 
 # Expose _ROLE to the exit trap
 _ROLE="${ROLE}"
@@ -221,56 +224,7 @@ _pass() {
 	do_poweroff
 }
 
-# ---------- smoke / resilience transfer test ------------------------------
-_run_transfer_test() {
-	# TCP: 64 KB deterministic payload (all-zero), sha256 round-trip verification
-	dd if=/dev/zero bs=65536 count=1 of=/tmp/payload.bin 2>/dev/null
-	EXPECTED=$(sha256sum /tmp/payload.bin | awk '{print $1}')
-
-	if ! socat -T 30 - TCP4:"${ECHO_PRIV}":"${ECHO_TCP_PORT}",bind="${ENTRY_TUN_IP}",shut-down \
-			< /tmp/payload.bin > /tmp/response.bin 2>/tmp/socat-tcp.log; then
-		_TCP_ERR=$(head -1 /tmp/socat-tcp.log | tr '"' "'")
-		_fail "TCP transfer failed: ${_TCP_ERR}"
-		return
-	fi
-
-	ACTUAL=$(sha256sum /tmp/response.bin | awk '{print $1}')
-	if [ "${EXPECTED}" != "${ACTUAL}" ]; then
-		_TCP_SZ=$(wc -c < /tmp/response.bin)
-		_fail "TCP sha256 mismatch: sent=${EXPECTED} got=${ACTUAL} response_size=${_TCP_SZ}"
-		return
-	fi
-
-	# UDP: 64-byte deterministic payload (0x55 = 'U'), echo verification.
-	# Use nc -u instead of socat to avoid socat's EOF-signalling behaviour
-	# (socat sends a 0-byte UDP datagram when stdin closes, which races
-	# against the real echo response arriving through the tunnel).
-	head -c 64 /dev/zero | tr '\0' 'U' > /tmp/udp-payload.bin
-	EXPECTED_UDP=$(sha256sum /tmp/udp-payload.bin | awk '{print $1}')
-
-	if ! nc -u -w 1 "${ECHO_PRIV}" "${ECHO_UDP_PORT}" \
-		< /tmp/udp-payload.bin > /tmp/udp-response.bin; then
-		_fail "UDP echo failed (nc exit $?)"
-		return
-	fi
-
-	ACTUAL_UDP=$(sha256sum /tmp/udp-response.bin | awk '{print $1}')
-	if [ "${EXPECTED_UDP}" != "${ACTUAL_UDP}" ]; then
-		_UDP_SZ=$(wc -c < /tmp/udp-response.bin)
-		echo "=== udp-response hexdump ==="
-		od -A x -t x1z /tmp/udp-response.bin 2>/dev/null || true
-		if [ "${_UDP_SZ}" -eq 0 ]; then
-			_fail "UDP echo: response was empty (0 bytes) — tunnel may not be forwarding UDP; check wallhack-entry.log above"
-		else
-			_fail "UDP echo mismatch: expected=${EXPECTED_UDP} got=${ACTUAL_UDP} response_size=${_UDP_SZ}"
-		fi
-		return
-	fi
-
-	_pass
-}
-
-# ---------- benchmark test ------------------------------------------------
+# ---------- benchmark / measurement ----------------------------------------
 
 # Parse bits_per_second (→ Mbps, 3 decimal places) from a named section in
 # iperf3 --json output. iperf3 3.20 uses tab after colon so we use match().
@@ -287,10 +241,7 @@ _iperf3_bps_mbps() {
 }
 
 _run_latency_benchmark() {
-	# TCP RTT from iperf3 --json end.streams[].sender.mean_rtt (microseconds).
-	# iperf3 3.20 uses tab after colon ("mean_rtt":\t<value>) so we use
-	# match() to extract the first digit sequence on the matching line.
-	_RAW=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json 2>/dev/null)
+	_RAW=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json 2>/dev/null)
 	_VALUE=$(printf '%s' "${_RAW}" \
 		| awk '/"mean_rtt"/{match($0,/[0-9]+/); v=substr($0,RSTART,RLENGTH)+0; printf "%.3f\n", v/1000; exit}')
 	: "${_VALUE:=0}"
@@ -308,20 +259,15 @@ _run_benchmark() {
 		return
 	fi
 
-	# All throughput scenarios use --json for sub-Mbps precision.
-	# sum_sent = client-side sender stats (tcp_upstream, udp, parallel)
-	# sum_received = client-side receiver stats (tcp_downstream with -R)
-	# 5s is enough for TCP to converge on loopback; even with 200ms RTT
-	# netem, cwnd stabilises within ~2s.
 	case "${METRIC}" in
-		tcp_upstream)    _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json    | _iperf3_bps_mbps "sum_sent") ;;
-		tcp_downstream)  _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -R | _iperf3_bps_mbps "sum_received") ;;
-		udp)             _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -u -b 0 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel4)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 4 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel8)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 8 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel32)      _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 32 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel64)      _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 64 | _iperf3_bps_mbps "sum_sent") ;;
-		parallel128)     _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t 5 --json -P 128 | _iperf3_bps_mbps "sum_sent") ;;
+		tcp_upstream)    _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json    | _iperf3_bps_mbps "sum_sent") ;;
+		tcp_downstream)  _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -R | _iperf3_bps_mbps "sum_received") ;;
+		udp)             _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -u -b 0 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel4)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -P 4 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel8)       _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -P 8 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel32)      _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -P 32 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel64)      _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -P 64 | _iperf3_bps_mbps "sum_sent") ;;
+		parallel128)     _VALUE=$(iperf3 -c "${ECHO_PRIV}" -p "${IPERF3_PORT}" -t "${DURATION}" --json -P 128 | _iperf3_bps_mbps "sum_sent") ;;
 		*)               _fail "unknown benchmark metric: ${METRIC}"; return ;;
 	esac
 
@@ -409,10 +355,8 @@ _run_entry() {
 
 	if [ "${SCENARIO}" = "noop" ]; then
 		_pass
-	elif [ "${SCENARIO}" = "benchmark" ]; then
-		_run_benchmark
 	else
-		_run_transfer_test
+		_run_benchmark
 	fi
 }
 

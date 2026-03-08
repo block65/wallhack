@@ -10,6 +10,8 @@ staging_dir := vm_dir / "staging"
 rootfs_dir := staging_dir / "rootfs"
 tools_dir := staging_dir / "bin"
 vmlinuz := staging_dir / "vmlinuz"
+initrd_base := staging_dir / "initrd-base.gz"
+initrd_overlay := staging_dir / "initrd-overlay.gz"
 initrd := staging_dir / "initrd.gz"
 wallhack_bin := justfile_directory() / musl_target_dir / musl_target / "release" / "wallhack"
 busybox_bin := tools_dir / "busybox"
@@ -111,8 +113,8 @@ cargo-build-musl:
 clean:
     rm -rf "{{ staging_dir }}"
 
-# Build initramfs from musl wallhack + busybox + socat + iperf3 + init.sh
-build-initrd: cargo-build-musl build-kernel build-socat build-tc fetch-busybox fetch-iperf3
+# Build base initramfs: binaries only (slow, but cached until binaries change).
+build-initrd-base: cargo-build-musl build-kernel build-socat build-tc fetch-busybox fetch-iperf3
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -136,29 +138,48 @@ build-initrd: cargo-build-musl build-kernel build-socat build-tc fetch-busybox f
     rm -f "{{ rootfs_dir }}/bin/tc"
     cp "{{ tc_bin }}" "{{ rootfs_dir }}/bin/tc"
     chmod +x "{{ rootfs_dir }}/bin/tc"
-    cp "{{ vm_dir }}/init.sh" "{{ rootfs_dir }}/init"
-    chmod +x "{{ rootfs_dir }}/init"
 
-    echo "creating initrd..."
-    (cd "{{ rootfs_dir }}" && find . | cpio -o -H newc --quiet) | gzip -1 > "{{ initrd }}"
+    # Base initrd: everything except /init (which comes from the overlay)
+    rm -f "{{ rootfs_dir }}/init"
+    echo "creating base initrd..."
+    (cd "{{ rootfs_dir }}" && find . | cpio -o -H newc --quiet) | gzip -1 > "{{ initrd_base }}"
     echo "done"
+
+# Build init overlay: just /init from init.sh (instant).
+build-initrd-overlay:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    _tmp=$(mktemp -d)
+    cp "{{ vm_dir }}/init.sh" "${_tmp}/init"
+    chmod +x "${_tmp}/init"
+    (cd "${_tmp}" && echo init | cpio -o -H newc --quiet) | gzip -1 > "{{ initrd_overlay }}"
+    rm -rf "${_tmp}"
+
+# Assemble final initrd by concatenating base + overlay.
+# The kernel extracts both; overlay's /init overwrites the base.
+build-initrd: build-initrd-base build-initrd-overlay
+    cat "{{ initrd_base }}" "{{ initrd_overlay }}" > "{{ initrd }}"
+
+# Fast rebuild: only regenerate the init.sh overlay (skips cargo/docker entirely).
+rebuild-init: build-initrd-overlay
+    cat "{{ initrd_base }}" "{{ initrd_overlay }}" > "{{ initrd }}"
 
 # VM integration tests: basic tunnel connectivity (QUIC + WebSocket)
 smoke: build-initrd
-    python3 run_tests.py smoke
+    python3 run.py run --tag smoke --duration 2
 
 # VM integration tests: degraded network resilience (QUIC + WebSocket)
 resilience: build-initrd
-    python3 run_tests.py resilience
+    python3 run.py run --tag resilience --duration 2
 
 # VM integration benchmarks: throughput + latency (not in `just check`)
 benchmark: build-initrd
-    python3 run_benchmarks.py
+    python3 run.py run --tag benchmark --runs 3
 
 # Boot both VMs interactively for manual topology inspection
 debug-topology: build-initrd
-    python3 run_tests.py debug-topology
+    python3 run.py debug-topology
 
 # Boot a single interactive busybox shell VM (Ctrl-A X to exit QEMU)
 shell: build-initrd
-    python3 run_tests.py debug-shell
+    python3 run.py debug-shell

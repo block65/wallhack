@@ -64,7 +64,7 @@ def qemu_base(append, extra=None):
     ]
 
 
-def qemu_cmd(port, role, scenario, transport, netem=None, metric=None, debug=False):
+def qemu_cmd(port, role, scenario, transport, netem=None, metric=None, duration=None, debug=False):
     """Build a QEMU command for a wallhack VM.
 
     port   — TCP port for inter-VM L2 socket (entry listens, exit connects)
@@ -92,6 +92,8 @@ def qemu_cmd(port, role, scenario, transport, netem=None, metric=None, debug=Fal
     )
     if metric:
         cmdline += f" wallhack.metric={metric}"
+    if duration:
+        cmdline += f" wallhack.duration={duration}"
     if netem:
         if "loss" in netem:
             cmdline += f" wallhack.loss={netem['loss']}"
