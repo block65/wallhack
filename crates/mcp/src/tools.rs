@@ -58,7 +58,7 @@ async fn ipc_call(request: management_request::Request) -> Result<String, rmcp::
     convert::format_response(&resp).map_err(|msg| rmcp::ErrorData::internal_error(msg, None))
 }
 
-#[rmcp::tool_router]
+#[rmcp::tool_router(vis = "pub")]
 impl WallhackServer {
     #[tool(
         description = "Get node status: role, version, uptime, listen/peer addresses, capabilities"

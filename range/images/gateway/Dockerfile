@@ -9,5 +9,6 @@ RUN apk add --no-cache openssh socat netcat-openbsd curl iptables && \
 
 COPY target/musl/x86_64-unknown-linux-musl/release/wallhack /usr/bin/wallhack
 COPY range/assets/ssh_keys/etc/ssh/ssh_host_* /etc/ssh/
+RUN chmod 600 /etc/ssh/ssh_host_*_key
 
 CMD ["/usr/sbin/sshd", "-D"]
