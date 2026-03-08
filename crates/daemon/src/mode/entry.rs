@@ -863,6 +863,7 @@ fn start_api(
 ) {
     use wallhack_api::{Auth, State as ApiState};
     use wallhack_core::control::handler::Handler;
+    use wallhack_ipc::client::IpcConnection;
 
     let handler_config = HandlerConfig::new(
         NodeRole::Entry,
@@ -879,8 +880,18 @@ fn start_api(
     tracing::info!("  API username: {username}");
     tracing::info!("  API secret:   {secret}");
 
+    // In-process IPC connection over DuplexStream — same pattern as REPL.
+    let (api_client, api_server) = tokio::io::duplex(4096);
+    let api: Arc<dyn wallhack_core::node_api::NodeApi> = Arc::new(handler);
+    tokio::spawn(async move {
+        if let Err(e) = wallhack_core::ipc::handle_connection(api_server, api, None).await {
+            tracing::debug!("REST API IPC connection ended: {e}");
+        }
+    });
+
+    let ipc_conn = IpcConnection::new(api_client);
     let auth = Auth::new(username, secret);
-    let state = ApiState::new(Arc::new(handler), auth);
+    let state = ApiState::new(ipc_conn, auth);
 
     tokio::spawn(async move {
         if let Err(e) = wallhack_api::serve(api_addr, state, tls_config).await {

@@ -1,7 +1,7 @@
 //! IPC client for communicating with the wallhack daemon.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -24,43 +24,68 @@ const MANAGEMENT_MTU: usize = 4096;
 /// Default socket filename within the runtime directory.
 const SOCKET_NAME: &str = "wallhackd.sock";
 
+/// Environment variable for overriding the socket path (like `DOCKER_HOST`).
+const HOST_ENV: &str = "WALLHACK_HOST";
+
 /// Monotonically increasing request ID.
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Parse a host string, stripping `unix://` prefix if present.
+///
+/// Accepts `unix:///var/run/wallhack/wallhackd.sock` (Docker-style) or
+/// a bare path `/var/run/wallhack/wallhackd.sock`.
+#[must_use]
+pub fn resolve_host(host: &str) -> PathBuf {
+    PathBuf::from(host.strip_prefix("unix://").unwrap_or(host))
+}
+
 /// Resolve the IPC socket path.
 ///
-/// Uses `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock` when available,
-/// falling back to `/tmp/wallhack-<uid>/wallhackd.sock`.
+/// Checks (in order):
+/// 1. `WALLHACK_HOST` environment variable
+/// 2. `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock`
+/// 3. `/tmp/wallhack-<user>/wallhackd.sock`
+/// 4. `$HOME/.wallhack/wallhackd.sock`
+/// 5. `/tmp/wallhack-shared/wallhackd.sock`
 #[must_use]
 pub fn socket_path() -> PathBuf {
+    if let Ok(host) = std::env::var(HOST_ENV) {
+        return resolve_host(&host);
+    }
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        std::path::Path::new(&runtime_dir)
-            .join("wallhack")
-            .join(SOCKET_NAME)
+        Path::new(&runtime_dir).join("wallhack").join(SOCKET_NAME)
     } else if let Ok(user) = std::env::var("USER") {
         PathBuf::from(format!("/tmp/wallhack-{user}")).join(SOCKET_NAME)
     } else if let Ok(home) = std::env::var("HOME") {
-        std::path::Path::new(&home)
-            .join(".wallhack")
-            .join(SOCKET_NAME)
+        Path::new(&home).join(".wallhack").join(SOCKET_NAME)
     } else {
         PathBuf::from("/tmp/wallhack-shared").join(SOCKET_NAME)
     }
 }
 
-/// Connect to the daemon's IPC socket.
+/// Connect to the daemon's IPC socket at a specific path.
 ///
 /// # Errors
 ///
 /// Returns an error if the socket doesn't exist or connection is refused.
-pub async fn connect() -> std::io::Result<UnixStream> {
-    let path = socket_path();
-    UnixStream::connect(&path).await.map_err(|e| {
+pub async fn connect_to(path: &Path) -> std::io::Result<UnixStream> {
+    UnixStream::connect(path).await.map_err(|e| {
         std::io::Error::new(
             e.kind(),
             format!("cannot connect to daemon at {}: {e}", path.display()),
         )
     })
+}
+
+/// Connect to the daemon's IPC socket at the default path.
+///
+/// Uses [`socket_path`] to resolve the socket location.
+///
+/// # Errors
+///
+/// Returns an error if the socket doesn't exist or connection is refused.
+pub async fn connect() -> std::io::Result<UnixStream> {
+    connect_to(&socket_path()).await
 }
 
 /// Send a management request and read the response.
@@ -233,4 +258,22 @@ pub enum IpcError {
     TooManyNotifications,
     #[error("connection closed")]
     ConnectionClosed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_host_strips_unix_scheme() {
+        assert_eq!(
+            resolve_host("unix:///var/run/wallhack/wallhackd.sock"),
+            PathBuf::from("/var/run/wallhack/wallhackd.sock")
+        );
+    }
+
+    #[test]
+    fn resolve_host_bare_path() {
+        assert_eq!(resolve_host("/tmp/my.sock"), PathBuf::from("/tmp/my.sock"));
+    }
 }

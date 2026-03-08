@@ -42,13 +42,19 @@ use wallhack_core::{
 
 /// Run the daemon engine with a structured configuration.
 ///
+/// `socket_path_override` takes precedence over `WALLHACK_HOST` env var and
+/// the default socket path (mirrors Docker's `-H` / `DOCKER_HOST`).
+///
 /// Starts the appropriate node, launches the IPC listener, and blocks
 /// until shutdown.
 ///
 /// # Errors
 ///
 /// Returns [`NodeError`] for node failures.
-pub async fn run_daemon_engine(config: DaemonConfig) -> Result<(), NodeError> {
+pub async fn run_daemon_engine(
+    config: DaemonConfig,
+    socket_path_override: Option<std::path::PathBuf>,
+) -> Result<(), NodeError> {
     tracing::info!(
         "{} {}  {}",
         built_info::PKG_NAME,
@@ -61,7 +67,7 @@ pub async fn run_daemon_engine(config: DaemonConfig) -> Result<(), NodeError> {
     let handle = start_node(&config)?;
 
     // Start IPC listener for the management protocol.
-    let socket_path = wallhack_core::ipc::socket_path();
+    let socket_path = socket_path_override.unwrap_or_else(wallhack_core::ipc::socket_path);
     let api = handle.api_arc();
     let peer_events = handle.peer_events_sender();
     let shutdown_rx = handle.shutdown_rx();

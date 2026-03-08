@@ -1,16 +1,15 @@
 //! HTTP handlers for the REST API.
 
-use std::{convert::Infallible, time::Duration};
-
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
-    response::sse::{Event, KeepAlive, Sse},
 };
 use serde::{Deserialize, Serialize};
-use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
-use wallhack_core::node_api;
+use wallhack_wire::management::{
+    AddRouteRequest, DisconnectPeerRequest, PeersRequest, RemoveRouteRequest, RoutesRequest,
+    StatsRequest, StatusRequest, management_request, management_response,
+};
 
 use super::{state::State as ApiState, validation};
 
@@ -83,49 +82,84 @@ pub async fn health() -> &'static str {
     "ok"
 }
 
-pub async fn ping(State(state): State<ApiState>) -> Json<PingResponse> {
-    let status = state.node_api.status();
+pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponse>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Status(StatusRequest {}))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Json(PingResponse {
-        uptime_ms: status.uptime_ms,
-        version: status.version,
-        node_role: format!("{:?}", status.role),
-    })
+    match resp.response {
+        Some(management_response::Response::Status(s)) => {
+            let role = format!("{:?}", s.role());
+            Ok(Json(PingResponse {
+                uptime_ms: s.uptime_ms,
+                version: s.version,
+                node_role: role,
+            }))
+        }
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
-pub async fn stats(State(state): State<ApiState>) -> Json<StatsResponse> {
-    let metrics = state.node_api.metrics();
+pub async fn stats(State(state): State<ApiState>) -> Result<Json<StatsResponse>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Stats(StatsRequest {}))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Json(StatsResponse {
-        bytes_in: metrics.bytes_in,
-        bytes_out: metrics.bytes_out,
-        packets_in: metrics.packets_in,
-        packets_out: metrics.packets_out,
-        active_connections: metrics.active_connections,
-        active_flows: metrics.active_flows,
-    })
+    match resp.response {
+        Some(management_response::Response::Stats(s)) => Ok(Json(StatsResponse {
+            bytes_in: s.bytes_in,
+            bytes_out: s.bytes_out,
+            packets_in: s.packets_in,
+            packets_out: s.packets_out,
+            active_connections: s.active_connections,
+            active_flows: s.active_flows,
+        })),
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
-pub async fn peers(State(state): State<ApiState>) -> Json<PeersResponse> {
-    let peers = state.node_api.peers();
+pub async fn peers(State(state): State<ApiState>) -> Result<Json<PeersResponse>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Peers(PeersRequest {}))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Json(PeersResponse {
-        peers: peers
-            .into_iter()
-            .map(|peer| PeerResponse {
-                name: peer.name,
-                addr: peer.addr,
-                role: if peer.capabilities.listening && peer.capabilities.connecting {
-                    "relay".to_string()
-                } else {
-                    "exit".to_string()
-                },
-                connected_at: peer.connected_at_secs,
-                bytes_transferred: peer.bytes_transferred,
-                latency_ms: peer.latency_ms,
-            })
-            .collect(),
-    })
+    match resp.response {
+        Some(management_response::Response::Peers(p)) => Ok(Json(PeersResponse {
+            peers: p
+                .peers
+                .into_iter()
+                .map(|peer| PeerResponse {
+                    name: peer.name,
+                    addr: peer.addr,
+                    role: if peer.listening && peer.connecting {
+                        "relay".to_string()
+                    } else {
+                        "exit".to_string()
+                    },
+                    connected_at: peer.connected_at_secs,
+                    bytes_transferred: peer.bytes_transferred,
+                    latency_ms: if peer.latency_ms > 0.0 {
+                        Some(peer.latency_ms)
+                    } else {
+                        None
+                    },
+                })
+                .collect(),
+        })),
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 pub async fn disconnect_peer(
@@ -143,21 +177,47 @@ pub async fn disconnect_peer(
         );
     }
 
-    match state.node_api.disconnect_peer(name) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(SuccessResponse {
-                success: true,
-                message: None,
-            }),
-        ),
-        Err(node_api::NodeApiError::PeerNotFound(_)) => (
-            StatusCode::NOT_FOUND,
-            Json(SuccessResponse {
-                success: false,
-                message: None,
-            }),
-        ),
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::DisconnectPeer(
+            DisconnectPeerRequest { peer: name },
+        ))
+        .await;
+
+    match resp {
+        Ok(r) => match r.response {
+            Some(management_response::Response::Ok(_)) => (
+                StatusCode::OK,
+                Json(SuccessResponse {
+                    success: true,
+                    message: None,
+                }),
+            ),
+            Some(management_response::Response::Error(e)) => {
+                let code: i32 = wallhack_wire::management::ErrorCode::PeerNotFound.into();
+                let status = if e.code == code {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                (
+                    status,
+                    Json(SuccessResponse {
+                        success: false,
+                        message: Some(e.message),
+                    }),
+                )
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(SuccessResponse {
+                    success: false,
+                    message: None,
+                }),
+            ),
+        },
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(SuccessResponse {
@@ -194,29 +254,42 @@ pub async fn add_route(
         );
     }
 
-    let cidr = match req.cidr.parse() {
-        Ok(c) => c,
-        Err(e) => {
-            return (
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::AddRoute(AddRouteRequest {
+            cidr: req.cidr,
+            peer: req.peer,
+        }))
+        .await;
+
+    match resp {
+        Ok(r) => match r.response {
+            Some(management_response::Response::Ok(_)) => (
+                StatusCode::CREATED,
+                Json(SuccessResponse {
+                    success: true,
+                    message: None,
+                }),
+            ),
+            Some(management_response::Response::Error(e)) => (
                 StatusCode::BAD_REQUEST,
                 Json(SuccessResponse {
                     success: false,
-                    message: Some(format!("Invalid CIDR: {e}")),
+                    message: Some(e.message),
                 }),
-            );
-        }
-    };
-
-    match state.node_api.add_route(cidr, req.peer) {
-        Ok(()) => (
-            StatusCode::CREATED,
-            Json(SuccessResponse {
-                success: true,
-                message: None,
-            }),
-        ),
+            ),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(SuccessResponse {
+                    success: false,
+                    message: None,
+                }),
+            ),
+        },
         Err(e) => (
-            StatusCode::BAD_REQUEST,
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(SuccessResponse {
                 success: false,
                 message: Some(e.to_string()),
@@ -244,34 +317,47 @@ pub async fn delete_route(
         );
     }
 
-    let cidr = match cidr_str.parse() {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::RemoveRoute(
+            RemoveRouteRequest { cidr: cidr_str },
+        ))
+        .await;
+
+    match resp {
+        Ok(r) => match r.response {
+            Some(management_response::Response::Ok(_)) => (
+                StatusCode::OK,
+                Json(SuccessResponse {
+                    success: true,
+                    message: None,
+                }),
+            ),
+            Some(management_response::Response::Error(e)) => {
+                let code: i32 = wallhack_wire::management::ErrorCode::RouteNotFound.into();
+                let status = if e.code == code {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                (
+                    status,
+                    Json(SuccessResponse {
+                        success: false,
+                        message: Some(e.message),
+                    }),
+                )
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(SuccessResponse {
                     success: false,
-                    message: Some(format!("Invalid CIDR: {e}")),
+                    message: None,
                 }),
-            );
-        }
-    };
-
-    match state.node_api.remove_route(&cidr) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(SuccessResponse {
-                success: true,
-                message: None,
-            }),
-        ),
-        Err(node_api::NodeApiError::RouteNotFound(_)) => (
-            StatusCode::NOT_FOUND,
-            Json(SuccessResponse {
-                success: false,
-                message: Some("Route not found".to_string()),
-            }),
-        ),
+            ),
+        },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(SuccessResponse {
@@ -282,37 +368,29 @@ pub async fn delete_route(
     }
 }
 
-pub async fn list_routes(State(state): State<ApiState>) -> Json<RoutesResponse> {
-    let routes = state.node_api.routes().unwrap_or_default();
-
-    Json(RoutesResponse {
-        routes: routes
-            .into_iter()
-            .map(|route| RouteResponse {
-                cidr: route.cidr.to_string(),
-                peer: route.peer,
-                added_at_secs: route.added_at.elapsed().as_secs(),
-            })
-            .collect(),
-    })
-}
-
-/// SSE endpoint for real-time events.
-pub async fn events(
+pub async fn list_routes(
     State(state): State<ApiState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let rx = state.events_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(event) => {
-            let json = serde_json::to_string(&event).ok()?;
-            Some(Ok(Event::default().data(json)))
-        }
-        Err(_) => None,
-    });
+) -> Result<Json<RoutesResponse>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Routes(RoutesRequest {}))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("ping"),
-    )
+    match resp.response {
+        Some(management_response::Response::Routes(r)) => Ok(Json(RoutesResponse {
+            routes: r
+                .routes
+                .into_iter()
+                .map(|route| RouteResponse {
+                    cidr: route.cidr,
+                    peer: route.peer,
+                    added_at_secs: route.added_at_secs,
+                })
+                .collect(),
+        })),
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
