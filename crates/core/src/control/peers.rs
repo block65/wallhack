@@ -276,7 +276,7 @@ impl Registry {
         match (matches.next(), matches.next()) {
             (None, _) => Err(NodeApiError::PeerNotFound(addr.to_string())),
             (Some(p), None) => Ok(p.clone()),
-            (Some(p), Some(_)) => Err(NodeApiError::PeerAmbiguous(
+            (Some(_p), Some(_)) => Err(NodeApiError::PeerAmbiguous(
                 addr.to_string(),
                 peers
                     .values()
