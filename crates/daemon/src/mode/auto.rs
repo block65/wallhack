@@ -15,6 +15,7 @@ use std::{sync::Arc, time::Duration};
 
 use wallhack_core::{
     NodeRole,
+    client::client::ConnectResult,
     control::{
         handler::SharedNodeState, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
     },
@@ -42,12 +43,15 @@ const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// # Errors
 ///
 /// Returns error if the connection setup fails non-retryably.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     global: &GlobalConfig,
     cfg: &AutoConfig,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     let tun_capable = detect_tun_capable();
@@ -92,6 +96,7 @@ pub(crate) async fn run(
                 metrics,
                 peers,
                 routes,
+                route_updates,
                 node_state,
             )
             .await
@@ -105,6 +110,8 @@ pub(crate) async fn run(
                 metrics,
                 peers,
                 routes,
+                route_updates,
+                route_updates_tx,
                 node_state,
             )
             .await
@@ -116,6 +123,9 @@ pub(crate) async fn run(
 }
 
 /// Build a local `Handshake` for capability advertisement.
+///
+/// Always populates `routes` with locally-routable CIDRs so that a peer
+/// resolving to Entry can install OS routes automatically.
 fn build_local_handshake(
     cfg: &AutoConfig,
     version: &str,
@@ -132,8 +142,54 @@ fn build_local_handshake(
         name: cfg.name.clone(),
         version: version.to_string(),
         psk_proof: Vec::new(),
-        routes: Vec::new(),
+        routes: crate::netlink::enumerate_local_cidrs(),
         hint: cfg.hint,
+    }
+}
+
+/// Returns `true` if a CIDR is safe to install as a forwarding route.
+///
+/// Rejects default routes (prefix_len == 0), loopback, link-local,
+/// unspecified, and multicast destinations.
+fn is_routable_cidr(cidr: &wallhack_core::Cidr) -> bool {
+    use std::net::IpAddr;
+    let addr = cidr.addr();
+    cidr.prefix_len() > 0
+        && !addr.is_loopback()
+        && !match addr {
+            IpAddr::V4(a) => a.is_link_local(),
+            IpAddr::V6(a) => {
+                let o = a.octets();
+                o[0] == 0xfe && (o[1] & 0xc0) == 0x80
+            }
+        }
+        && !addr.is_unspecified()
+        && !addr.is_multicast()
+}
+
+/// Add routes advertised in a peer's handshake to the route table.
+///
+/// Invalid or non-routable CIDRs are skipped with a log message. Callers are
+/// responsible for removing auto-managed routes (via `remove_auto_by_peer`)
+/// when the peer disconnects.
+fn install_advertised_routes(
+    routes: &wallhack_core::control::routes::SharedRouteTable,
+    peer_name: &str,
+    advertised: &[String],
+) {
+    let mut installed = 0usize;
+    for cidr_str in advertised {
+        match cidr_str.parse::<wallhack_core::Cidr>() {
+            Ok(cidr) if is_routable_cidr(&cidr) => {
+                routes.add_auto(cidr, peer_name.to_string());
+                installed += 1;
+            }
+            Ok(_) => tracing::debug!("Skipping non-routable advertised CIDR: {cidr_str}"),
+            Err(e) => tracing::warn!("Ignoring invalid advertised CIDR {cidr_str:?}: {e}"),
+        }
+    }
+    if installed > 0 {
+        tracing::info!("Installed {installed} auto route(s) advertised by {peer_name}");
     }
 }
 
@@ -142,7 +198,7 @@ fn build_local_handshake(
 // ============================================================================
 
 /// Auto connector: connect to a peer, negotiate role, run the session.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 async fn run_auto_connector(
     global: &GlobalConfig,
     cfg: &AutoConfig,
@@ -150,7 +206,8 @@ async fn run_auto_connector(
     tun_capable: bool,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
-    _routes: SharedRouteTable,
+    routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     let local_hs = build_local_handshake(cfg, &global.version, tun_capable, false, true);
@@ -165,6 +222,8 @@ async fn run_auto_connector(
         accept_fingerprint: cfg.accept_fingerprint.clone(),
     };
 
+    // route_updates is a Receiver. We need to pass fresh receivers to the loop.
+
     match spec.protocol {
         Protocol::Udp => {
             #[cfg(feature = "quic")]
@@ -177,6 +236,7 @@ async fn run_auto_connector(
                     Some(local_hs.clone()),
                 );
                 let lhs = local_hs;
+                let ru = route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -186,25 +246,24 @@ async fn run_auto_connector(
                             client.connect(NodeRole::Indeterminate).await
                         }
                     },
-                    |connect_result| {
-                        let e = connect_result.erase();
+                    move |connect_result| {
                         let metrics = Arc::clone(&metrics);
                         let peers = Arc::clone(&peers);
                         let pa = peer_addr.clone();
                         let lhs = lhs.clone();
                         let ns = node_state.clone();
+                        let r = Arc::clone(&routes);
+                        let ru = ru.resubscribe();
                         async move {
-                            run_auto_connect_session_dispatch(
-                                e.peer_handshake_rx,
-                                e.transport,
-                                e.channels,
-                                e.tasks,
-                                e.control_tx,
+                            run_auto_connect_session(
+                                connect_result,
                                 &lhs,
                                 &pa,
                                 metrics,
                                 peers,
                                 ns,
+                                Some(r),
+                                Some(ru),
                             )
                             .await
                         }
@@ -227,6 +286,7 @@ async fn run_auto_connector(
                     Some(local_hs.clone()),
                 );
                 let lhs = local_hs;
+                let ru = route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -235,25 +295,24 @@ async fn run_auto_connector(
                             client.connect(NodeRole::Indeterminate).await
                         }
                     },
-                    |connect_result| {
-                        let e = connect_result.erase();
+                    move |connect_result| {
                         let metrics = Arc::clone(&metrics);
                         let peers = Arc::clone(&peers);
                         let pa = peer_addr.clone();
                         let lhs = lhs.clone();
                         let ns = node_state.clone();
+                        let r = Arc::clone(&routes);
+                        let ru = ru.resubscribe();
                         async move {
-                            run_auto_connect_session_dispatch(
-                                e.peer_handshake_rx,
-                                e.transport,
-                                e.channels,
-                                e.tasks,
-                                e.control_tx,
+                            run_auto_connect_session(
+                                connect_result,
                                 &lhs,
                                 &pa,
                                 metrics,
                                 peers,
                                 ns,
+                                Some(r),
+                                Some(ru),
                             )
                             .await
                         }
@@ -266,6 +325,49 @@ async fn run_auto_connector(
             Err(NodeError::TransportUnavailable("websocket"))
         }
     }
+}
+
+/// Drive one auto-connector session: await peer handshake, negotiate, dispatch.
+///
+/// Thin generic wrapper: extracts all non-generic parts from `ConnectResult<T>`
+/// and delegates to `run_auto_connect_session_inner`.
+#[allow(clippy::too_many_arguments)]
+async fn run_auto_connect_session<T>(
+    mut connect_result: ConnectResult<T>,
+    local_hs: &Handshake,
+    peer_addr: &str,
+    metrics: Arc<Metrics>,
+    peers: Arc<Registry>,
+    node_state: SharedNodeState,
+    routes: Option<SharedRouteTable>,
+    route_updates: Option<
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    >,
+) -> Result<(), NodeError>
+where
+    T: wallhack_core::transport::Transport + 'static,
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: 'static,
+{
+    let peer_handshake_rx = connect_result.take_peer_handshake_rx();
+    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
+    let (channels, tasks, control_tx) = connect_result.into_parts();
+    run_auto_connect_session_dispatch(
+        peer_handshake_rx,
+        transport,
+        channels,
+        tasks,
+        control_tx,
+        local_hs,
+        peer_addr,
+        metrics,
+        peers,
+        node_state,
+        routes,
+        route_updates,
+    )
+    .await
 }
 
 /// Non-generic auto-connector dispatch: negotiates role and runs the session.
@@ -281,6 +383,10 @@ async fn run_auto_connect_session_dispatch(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     node_state: SharedNodeState,
+    routes: Option<SharedRouteTable>,
+    route_updates: Option<
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    >,
 ) -> Result<(), NodeError> {
     let DataChannels {
         instructions_tx,
@@ -321,18 +427,54 @@ async fn run_auto_connect_session_dispatch(
                 peer_hs.name,
             );
             node_state.update_role(NodeRole::Entry);
+
+            // Install routes advertised by the exit peer. The inner function
+            // applies routes from the table when it creates the TUN, so they
+            // must be in the table before we call it.
+            let peer_name = peer_hs.name.as_str();
+            let routes_for_cleanup = routes.as_ref().map(Arc::clone);
+            let tun_name_for_cleanup = if peer_name.is_empty() {
+                None
+            } else {
+                Some(super::entry::peer_name_to_iface(peer_name))
+            };
+            if let Some(ref r) = routes {
+                if !peer_name.is_empty() {
+                    install_advertised_routes(r, peer_name, &peer_hs.routes);
+                }
+            }
+
             drop(tasks);
             drop(control_tx);
-            super::entry::run_entry_connected_inner(
+            let result = super::entry::run_entry_connected_inner(
                 transport,
                 instructions_tx,
                 instructions_rx,
                 responses_rx,
                 &metrics,
-                false,
                 peer_addr,
+                Some(peer_name),
+                routes,
+                route_updates,
             )
-            .await
+            .await;
+
+            // Remove auto-managed routes and their OS entries now that the
+            // session has ended.
+            if let (Some(r), Some(tun)) = (routes_for_cleanup, tun_name_for_cleanup) {
+                let removed = r.remove_auto_by_peer(peer_name);
+                if !removed.is_empty() {
+                    tracing::info!(
+                        "Removing {} auto route(s) for disconnected exit {peer_name}",
+                        removed.len()
+                    );
+                    for entry in &removed {
+                        let _ = crate::netlink::remove_os_route(&entry.cidr.to_string(), &tun);
+                    }
+                }
+            }
+
+            result
         }
         NegotiationResult::Resolved(NodeRole::Exit) => {
             tracing::info!(
@@ -459,6 +601,8 @@ async fn run_auto_listener(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     let local_hs = build_local_handshake(cfg, &global.version, tun_capable, true, false);
@@ -473,10 +617,13 @@ async fn run_auto_listener(
         metrics: Some(Arc::clone(&metrics)),
         peers: Some(Arc::clone(&peers)),
         routes: Some(Arc::clone(&routes)),
+        route_updates: Some(route_updates_tx),
         local_handshake: Some(local_hs.clone()),
     };
     let server_config =
         crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
+
+    // route_updates is a Receiver.
 
     match spec.protocol {
         Protocol::Udp => {
@@ -487,13 +634,16 @@ async fn run_auto_listener(
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
                 let bound = server.local_addr()?;
                 node_state.set_listen_addr(bound);
+                let ru = route_updates.resubscribe();
+                let r = Arc::clone(&routes);
                 run_auto_accept_loop(
                     server,
                     local_hs,
                     global.psk.clone(),
                     metrics,
                     peers,
-                    routes,
+                    r,
+                    ru,
                     node_state,
                 )
                 .await
@@ -510,13 +660,16 @@ async fn run_auto_listener(
                 )?;
                 let bound = server.local_addr()?;
                 node_state.set_listen_addr(bound);
+                let ru = route_updates.resubscribe();
+                let r = Arc::clone(&routes);
                 run_auto_accept_loop(
                     server,
                     local_hs,
                     global.psk.clone(),
                     metrics,
                     peers,
-                    routes,
+                    r,
+                    ru,
                     node_state,
                 )
                 .await
@@ -536,6 +689,7 @@ async fn run_auto_accept_loop<S: Server>(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError>
 where
@@ -562,19 +716,61 @@ where
 
     loop {
         match server.accept(NodeRole::Indeterminate).await {
-            Ok(Some(accept_result)) => {
-                let erased = accept_result.erase();
-                let server_psk = server_psk.clone();
+            Ok(Some(mut accept_result)) => {
+                let peer_addr = accept_result.peer_addr().to_string();
+
+                // PSK validation — must happen before spawning.
+                if let Some(ref psk) = server_psk
+                    && let Some(hs) = accept_result.peer_handshake()
+                {
+                    use wallhack_core::psk::HandshakeExt as _;
+                    let channel_binding = accept_result.channel_binding().copied();
+                    let valid = channel_binding
+                        .as_ref()
+                        .is_some_and(|b| hs.verify_psk_proof(psk.as_bytes(), b));
+                    if !valid {
+                        psk_failures.record(&peer_addr);
+                        continue;
+                    }
+                }
+
+                // Extract everything from the generic AcceptResult before spawning
+                // so the spawned future is non-generic.
+                let peer_hs = accept_result.take_peer_handshake();
+                let transport: Arc<dyn ErasedTransport> = accept_result.transport();
+                let (
+                    DataChannels {
+                        instructions_tx,
+                        instructions_rx,
+                        responses_tx,
+                        responses_rx,
+                    },
+                    control_tx,
+                ) = accept_result.into_channels();
+
                 let local_hs = local_hs.clone();
                 let metrics = Arc::clone(&metrics);
                 let peers = Arc::clone(&peers);
                 let routes = Arc::clone(&routes);
+                let ru = route_updates.resubscribe();
                 let ns = node_state.clone();
 
                 tokio::spawn(async move {
-                    let psk_ref = server_psk.as_ref().map(|s| s.as_str());
-                    if let Err(e) = run_auto_accept_session_erased(
-                        erased, psk_ref, local_hs, metrics, peers, routes, ns,
+                    if let Err(e) = run_auto_accept_session_inner(
+                        transport,
+                        instructions_tx,
+                        instructions_rx,
+                        responses_tx,
+                        responses_rx,
+                        control_tx,
+                        peer_hs,
+                        local_hs,
+                        metrics,
+                        peers,
+                        Some(routes),
+                        Some(ru),
+                        peer_addr,
+                        ns,
                     )
                     .await
                     {
@@ -666,7 +862,10 @@ async fn run_auto_accept_session_inner(
     local_hs: Handshake,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
-    _routes: SharedRouteTable,
+    routes: Option<SharedRouteTable>,
+    route_updates: Option<
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    >,
     peer_addr: String,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
@@ -699,7 +898,11 @@ async fn run_auto_accept_session_inner(
                 instructions_rx,
             );
 
-            let tun_name = super::entry::SessionManager::create_anonymous();
+            let tun_name = if peer_hs.name.is_empty() {
+                super::entry::SessionManager::create_anonymous()
+            } else {
+                super::entry::peer_name_to_iface(&peer_hs.name)
+            };
             let actor = super::entry::create_tun_with_retry(tun_name.clone()).await?;
 
             tracing::info!(
@@ -707,11 +910,84 @@ async fn run_auto_accept_session_inner(
                 peer_hs.name,
             );
 
+            // Install routes advertised by the exit peer before applying them
+            // to the TUN so the apply block below picks them up in one pass.
+            if let Some(ref r) = routes {
+                if !peer_hs.name.is_empty() {
+                    install_advertised_routes(r, &peer_hs.name, &peer_hs.routes);
+                }
+            }
+
+            // Apply all routes (user-configured and newly-advertised) to the TUN.
+            #[allow(clippy::collapsible_if)]
+            if let Some(r) = &routes {
+                if !peer_hs.name.is_empty() {
+                    for entry in r.list() {
+                        if entry.peer == peer_hs.name {
+                            let _ =
+                                crate::netlink::add_os_route(&entry.cidr.to_string(), &tun_name);
+                        }
+                    }
+                }
+            }
+
+            // Spawn route update listener
+            if let Some(mut updates) = route_updates {
+                let tun = tun_name.clone();
+                let peer = if peer_hs.name.is_empty() {
+                    None
+                } else {
+                    Some(peer_hs.name.clone())
+                };
+                tokio::spawn(async move {
+                    tracing::info!(
+                        "Route update listener started for peer {:?} on tun {}",
+                        peer,
+                        tun
+                    );
+                    loop {
+                        match updates.recv().await {
+                            Ok(wallhack_core::control::routes::RouteUpdate::Add(entry)) => {
+                                #[allow(clippy::collapsible_if)]
+                                if Some(entry.peer.as_str()) == peer.as_deref() {
+                                    if let Err(e) =
+                                        crate::netlink::add_os_route(&entry.cidr.to_string(), &tun)
+                                    {
+                                        tracing::error!("Failed to add OS route: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(wallhack_core::control::routes::RouteUpdate::Remove(entry)) =>
+                            {
+                                #[allow(clippy::collapsible_if)]
+                                if Some(entry.peer.as_str()) == peer.as_deref() {
+                                    if let Err(e) = crate::netlink::remove_os_route(
+                                        &entry.cidr.to_string(),
+                                        &tun,
+                                    ) {
+                                        tracing::error!("Failed to remove OS route: {}", e);
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::info!("Route updates channel closed");
+                                break;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::warn!(
+                                    "Route updates lagged, skipped {} messages",
+                                    skipped
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+
             let (manager, _) = ConnectionManager::new(
                 actor,
                 Arc::clone(&transport),
                 Arc::clone(&metrics),
-                false,
                 instructions_tx,
                 responses_rx,
             );
@@ -730,6 +1006,21 @@ async fn run_auto_accept_session_inner(
                 Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
             }
             peers.unregister(&peer_name);
+
+            // Remove auto-managed routes and their OS entries now that the
+            // session has ended.
+            if let Some(ref r) = routes {
+                let removed = r.remove_auto_by_peer(&peer_name);
+                if !removed.is_empty() {
+                    tracing::info!(
+                        "Removing {} auto route(s) for disconnected exit {peer_name}",
+                        removed.len()
+                    );
+                    for entry in &removed {
+                        let _ = crate::netlink::remove_os_route(&entry.cidr.to_string(), &tun_name);
+                    }
+                }
+            }
         }
         NegotiationResult::Resolved(NodeRole::Exit) => {
             tracing::info!(

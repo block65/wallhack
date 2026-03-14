@@ -13,6 +13,7 @@ pub mod error;
 mod config;
 mod mode;
 mod net;
+mod netlink;
 mod sys;
 mod transport;
 mod tun_cap;

@@ -15,6 +15,12 @@ pub struct RouteEntry {
     pub peer: String,
     /// When this route was added.
     pub added_at: Instant,
+    /// Whether this route was auto-installed from a peer's `Handshake.routes`
+    /// advertisement rather than explicitly configured by the user.
+    ///
+    /// Auto-managed routes are removed when the advertising peer disconnects.
+    /// User-configured routes persist across reconnections.
+    pub auto_managed: bool,
 }
 
 /// Shared route table.
@@ -49,20 +55,40 @@ impl RouteTable {
         Arc::new(Self::new())
     }
 
-    /// Add a route. Returns the previous entry if one existed for this CIDR.
-    pub fn add(&self, cidr: Cidr, peer: String) -> Option<RouteEntry> {
+    /// Add a user-configured route.
+    ///
+    /// Returns the previous entry if one existed for this CIDR, and the new entry.
+    pub fn add(&self, cidr: Cidr, peer: String) -> (Option<RouteEntry>, RouteEntry) {
+        self.add_impl(cidr, peer, false)
+    }
+
+    /// Add an auto-managed route (installed from a peer's handshake advertisement).
+    ///
+    /// Returns the previous entry if one existed for this CIDR, and the new entry.
+    pub fn add_auto(&self, cidr: Cidr, peer: String) -> (Option<RouteEntry>, RouteEntry) {
+        self.add_impl(cidr, peer, true)
+    }
+
+    fn add_impl(
+        &self,
+        cidr: Cidr,
+        peer: String,
+        auto_managed: bool,
+    ) -> (Option<RouteEntry>, RouteEntry) {
         let entry = RouteEntry {
             cidr,
             peer,
             added_at: Instant::now(),
+            auto_managed,
         };
+        let new_entry = entry.clone();
         let mut old_entry = None;
         self.routes.rcu(|old| {
             let mut new = (**old).clone();
             old_entry = new.insert(cidr, entry.clone());
             new
         });
-        old_entry
+        (old_entry, new_entry)
     }
 
     /// Remove a route by CIDR. Returns the removed entry if it existed.
@@ -95,6 +121,29 @@ impl RouteTable {
         removed
     }
 
+    /// Remove all auto-managed routes for a peer. Returns removed entries.
+    ///
+    /// Leaves user-configured routes for the peer untouched. Called when a
+    /// peer disconnects to clean up routes that were auto-installed from its
+    /// handshake advertisement.
+    pub fn remove_auto_by_peer(&self, peer: &str) -> Vec<RouteEntry> {
+        let mut removed = Vec::new();
+        self.routes.rcu(|old| {
+            let mut new = (**old).clone();
+            let to_remove: Vec<Cidr> = new
+                .iter()
+                .filter(|(_, entry)| entry.peer == peer && entry.auto_managed)
+                .map(|(cidr, _)| *cidr)
+                .collect();
+            removed = to_remove
+                .into_iter()
+                .filter_map(|cidr| new.remove(&cidr))
+                .collect();
+            new
+        });
+        removed
+    }
+
     /// Look up a route by CIDR.
     #[must_use]
     pub fn get(&self, cidr: &Cidr) -> Option<RouteEntry> {
@@ -114,6 +163,15 @@ impl RouteTable {
     }
 }
 
+/// A route update event.
+#[derive(Debug, Clone)]
+pub enum RouteUpdate {
+    /// A route was added (or updated).
+    Add(RouteEntry),
+    /// A route was removed.
+    Remove(RouteEntry),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,7 +180,7 @@ mod tests {
     fn test_add_and_get() {
         let table = RouteTable::new();
         let cidr: Cidr = "10.0.0.0/8".parse().unwrap();
-        assert!(table.add(cidr, "peer-1".into()).is_none());
+        assert!(table.add(cidr, "peer-1".into()).0.is_none());
 
         let entry = table.get(&cidr).unwrap();
         assert_eq!(entry.peer, "peer-1");
@@ -134,8 +192,9 @@ mod tests {
         let table = RouteTable::new();
         let cidr: Cidr = "10.0.0.0/8".parse().unwrap();
 
-        assert!(table.add(cidr, "peer-1".into()).is_none());
-        let old = table.add(cidr, "peer-2".into()).unwrap();
+        assert!(table.add(cidr, "peer-1".into()).0.is_none());
+        let (old, _) = table.add(cidr, "peer-2".into());
+        let old = old.unwrap();
         assert_eq!(old.peer, "peer-1");
         assert_eq!(table.get(&cidr).unwrap().peer, "peer-2");
     }
