@@ -91,6 +91,24 @@ async fn run_exit_connector(
         crate::transport::resolve_endpoint(&spec.addr, global.dns_server.as_deref()).await?;
     let peer_addr = endpoint.to_string();
 
+    // Build handshake advertising local CIDRs so the entry peer can
+    // auto-install OS routes on connect.
+    let local_handshake = wallhack_wire::data::Handshake {
+        capabilities: Some(wallhack_wire::data::Capabilities {
+            tun_capable: false,
+            listening: false,
+            connecting: true,
+        }),
+        name: name.to_string(),
+        version: global.version.clone(),
+        psk_proof: Vec::new(),
+        routes: crate::netlink::enumerate_local_cidrs(),
+        hint: Some(wallhack_wire::data::RoleHint {
+            level: wallhack_wire::data::HintLevel::Fixed as i32,
+            target: wallhack_wire::data::NodeRole::RoleExit as i32,
+        }),
+    };
+
     match spec.protocol {
         Protocol::Udp => {
             #[cfg(feature = "quic")]
@@ -100,7 +118,7 @@ async fn run_exit_connector(
                     endpoint,
                     Some(name.to_string()),
                     security,
-                    None,
+                    Some(local_handshake.clone()),
                 );
                 let ctx = Arc::clone(ctx);
                 let pa = peer_addr.clone();
@@ -149,7 +167,7 @@ async fn run_exit_connector(
                     endpoint,
                     Some(name.to_string()),
                     security,
-                    None,
+                    Some(local_handshake),
                 );
                 let ctx = Arc::clone(ctx);
                 let pa = peer_addr.clone();
