@@ -404,6 +404,7 @@ impl crate::node_api::NodeApi for Handler {
                 cidr: r.cidr,
                 peer: r.peer,
                 added_at: r.added_at,
+                auto_managed: r.auto_managed,
             })
             .collect())
     }

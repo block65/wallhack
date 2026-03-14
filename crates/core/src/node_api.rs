@@ -58,6 +58,8 @@ pub struct RouteEntry {
     pub peer: String,
     /// When the route was added.
     pub added_at: std::time::Instant,
+    /// True if auto-installed from a peer's handshake advertisement.
+    pub auto_managed: bool,
 }
 
 /// Traffic and connection metrics.
