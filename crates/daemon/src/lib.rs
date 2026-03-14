@@ -53,7 +53,7 @@ use wallhack_core::{
 /// Returns [`NodeError`] for node failures.
 /// Build the canonical version string used everywhere: startup, IPC, handshake.
 ///
-/// Format: `0.6.2 (abc1234-dirty)` or `0.6.2 (dev)` when no git info.
+/// Format: `0.6.2 (abc1234-dirty, 2026-03-14T14:00:00Z)` or `0.6.2 (dev, ...)`.
 #[must_use]
 pub fn version_string(binary_version: Option<&str>) -> String {
     let ver = binary_version.unwrap_or(built_info::PKG_VERSION);
@@ -62,12 +62,16 @@ pub fn version_string(binary_version: Option<&str>) -> String {
     } else {
         ""
     };
+    let ts = built_info::BUILT_TIME_UTC;
     match built_info::GIT_COMMIT_HASH_SHORT {
-        Some(hash) => format!("{ver} ({hash}{dirty})"),
-        None => format!("{ver} (dev{dirty})"),
+        Some(hash) => format!("{ver} ({hash}{dirty}, {ts})"),
+        None => format!("{ver} (dev{dirty}, {ts})"),
     }
 }
 
+/// # Errors
+///
+/// Returns [`NodeError`] if the node fails to start or the IPC listener errors.
 pub async fn run_daemon_engine(
     config: DaemonConfig,
     socket_path_override: Option<std::path::PathBuf>,
@@ -91,6 +95,25 @@ pub async fn run_daemon_engine(
             tracing::error!("IPC listener error: {e}");
         }
     });
+
+    #[cfg(feature = "vsock")]
+    {
+        let ipc_api_vsock = handle.api_arc();
+        let peer_events_vsock = handle.peer_events_sender();
+        let shutdown_rx_vsock = handle.shutdown_rx();
+        tokio::spawn(async move {
+            if let Err(e) = wallhack_core::ipc::run_vsock_listener(
+                ipc_api_vsock,
+                peer_events_vsock,
+                wallhack_core::ipc::VSOCK_IPC_PORT,
+                shutdown_rx_vsock,
+            )
+            .await
+            {
+                tracing::warn!("vsock IPC listener unavailable: {e}");
+            }
+        });
+    }
 
     tokio::select! {
         result = handle.wait() => result.map_err(|e| NodeError::Config(e.to_string())),
@@ -121,12 +144,14 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
     let metrics = Arc::new(Metrics::default());
     let peers = Arc::new(Registry::new());
     let routes = RouteTable::shared();
+    let (route_update_tx, route_update_rx) = tokio::sync::broadcast::channel(16);
 
     let handler = Handler::new(
         HandlerConfig::new(role, "wallhack".to_string(), config.global.version.clone()),
         Arc::clone(&metrics),
         Arc::clone(&peers),
         Arc::clone(&routes),
+        route_update_tx.clone(),
     );
     let node_state = handler.node_state();
     let node_api: Arc<dyn NodeApi> = Arc::new(handler);
@@ -139,6 +164,8 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
         metrics,
         peers,
         routes,
+        route_updates: route_update_rx,
+        route_updates_tx: route_update_tx,
         node_state,
     };
     let task = tokio::spawn(async move { mode::run(&config, resources).await.map_err(Into::into) });
