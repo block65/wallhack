@@ -1,5 +1,10 @@
 //! MCP tool definitions — one per management protocol operation.
 
+mod built_info {
+    #![allow(clippy::needless_raw_string_hashes, clippy::doc_markdown)]
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool};
 use wallhack_wire::management::{
     AddRouteRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest, ListenRequest,
@@ -63,12 +68,12 @@ impl WallhackServer {
     #[tool(
         description = "Get node status: role, version, uptime, listen/peer addresses, capabilities"
     )]
-    async fn wallhack_status(&self) -> Result<String, rmcp::ErrorData> {
+    async fn status(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Status(StatusRequest {})).await
     }
 
     #[tool(description = "Ping the daemon (or a specific peer by name prefix)")]
-    async fn wallhack_ping(
+    async fn ping(
         &self,
         Parameters(params): Parameters<PingParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -81,24 +86,24 @@ impl WallhackServer {
     #[tool(
         description = "Get traffic statistics: bytes/packets in/out, active connections and flows"
     )]
-    async fn wallhack_stats(&self) -> Result<String, rmcp::ErrorData> {
+    async fn stats(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Stats(StatsRequest {})).await
     }
 
     #[tool(
         description = "List all connected peers with their name, address, status, latency, and capabilities"
     )]
-    async fn wallhack_peers(&self) -> Result<String, rmcp::ErrorData> {
+    async fn peers(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Peers(PeersRequest {})).await
     }
 
     #[tool(description = "List all configured routes (CIDR to peer mappings)")]
-    async fn wallhack_routes(&self) -> Result<String, rmcp::ErrorData> {
+    async fn routes(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Routes(RoutesRequest {})).await
     }
 
     #[tool(description = "Add a route: forward traffic for a CIDR range to a peer")]
-    async fn wallhack_add_route(
+    async fn add_route(
         &self,
         Parameters(params): Parameters<AddRouteParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -110,7 +115,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Remove a route by CIDR")]
-    async fn wallhack_remove_route(
+    async fn remove_route(
         &self,
         Parameters(params): Parameters<RemoveRouteParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -121,7 +126,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Disconnect a peer by name")]
-    async fn wallhack_disconnect_peer(
+    async fn disconnect_peer(
         &self,
         Parameters(params): Parameters<PeerParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -132,7 +137,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Connect to a remote peer by address")]
-    async fn wallhack_connect(
+    async fn connect(
         &self,
         Parameters(params): Parameters<AddrParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -143,7 +148,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Start listening for incoming peer connections on an address")]
-    async fn wallhack_listen(
+    async fn listen(
         &self,
         Parameters(params): Parameters<AddrParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -154,7 +159,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Disconnect from the current transport (stop connecting/listening)")]
-    async fn wallhack_disconnect(&self) -> Result<String, rmcp::ErrorData> {
+    async fn disconnect(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Disconnect(
             DisconnectRequest {},
         ))
@@ -162,18 +167,36 @@ impl WallhackServer {
     }
 
     #[tool(description = "Gracefully shut down the wallhack daemon")]
-    async fn wallhack_shutdown(&self) -> Result<String, rmcp::ErrorData> {
+    async fn shutdown(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Shutdown(ShutdownRequest {})).await
     }
 }
 
 impl rmcp::ServerHandler for WallhackServer {
     fn get_info(&self) -> rmcp::model::ServerInfo {
+        let dirty = if built_info::GIT_DIRTY == Some(true) {
+            "-dirty"
+        } else {
+            ""
+        };
+        let version = match built_info::GIT_COMMIT_HASH_SHORT {
+            Some(hash) => format!(
+                "{} ({hash}{dirty}, built {})",
+                built_info::PKG_VERSION,
+                built_info::BUILT_TIME_UTC
+            ),
+            None => format!(
+                "{} (dev{dirty}, built {})",
+                built_info::PKG_VERSION,
+                built_info::BUILT_TIME_UTC
+            ),
+        };
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
         )
+        .with_server_info(rmcp::model::Implementation::new("wallhack-mcp", version))
         .with_instructions(
             "Use these tools to manage a running wallhack daemon. \
              The daemon must be running and reachable via its Unix socket.",

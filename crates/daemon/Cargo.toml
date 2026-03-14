@@ -12,6 +12,7 @@ dns-resolver = ["dep:hickory-resolver"]
 # Transport features (forwarded to wallhack-core)
 quic = ["wallhack-core/quic"]
 websocket = ["wallhack-core/websocket"]
+vsock = ["wallhack-core/vsock"]
 
 # REST API feature
 http-api = ["dep:wallhack-api", "dep:wallhack-ipc"]
@@ -35,9 +36,10 @@ wallhack-ipc = { path = "../ipc", optional = true }
 console-subscriber = { workspace = true, optional = true }
 parking_lot = "0.12.5"
 zeroize = "1"
+neli = "0.6"
 
 [build-dependencies]
-built = { version = "0.7", features = ["git2"] }
+built.workspace = true
 
 [lints]
 workspace = true
