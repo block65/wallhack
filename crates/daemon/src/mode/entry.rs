@@ -4,20 +4,7 @@
 //! relay nodes. It can either listen for incoming connections (default) or
 //! connect to a remote peer. The daemon is headless — no REPL, no TTY.
 
-use std::{collections::HashMap, str::FromStr, sync::Arc};
-
-use neli::{
-    consts::{
-        nl::{NlmF, NlmFFlags},
-        rtnl::{RtAddrFamily, RtScope, RtTable, Rta, Rtm, RtmFFlags, Rtn, Rtprot},
-        socket::NlFamily,
-    },
-    err::Nlmsgerr,
-    nl::{NlPayload, Nlmsghdr},
-    rtnl::{Rtattr, Rtmsg},
-    socket::NlSocketHandle,
-    types::RtBuffer,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use parking_lot::Mutex;
 use wallhack_core::psk::HandshakeExt;
@@ -43,6 +30,7 @@ use crate::{
     address_spec::{AddressSpec, ConnectivitySpec, Protocol},
     config::SecurityParams,
     daemon_config::{EntryConfig, GlobalConfig},
+    netlink::{add_os_route, remove_os_route},
 };
 
 /// Derive a stable, unique TUN interface name from a peer name.
@@ -730,181 +718,6 @@ where
     }
 
     Ok(())
-}
-
-fn get_if_index(name: &str) -> std::io::Result<u32> {
-    let path = format!("/sys/class/net/{name}/ifindex");
-    let content = std::fs::read_to_string(path)?;
-    content
-        .trim()
-        .parse()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-}
-
-/// Remove an OS-level route via Netlink.
-pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
-    let cidr = wallhack_core::Cidr::from_str(cidr).map_err(|e| e.to_string())?;
-    let if_index =
-        get_if_index(dev).map_err(|e| format!("Failed to resolve interface {dev}: {e}"))?;
-
-    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, &[])
-        .map_err(|e| format!("Netlink connect failed: {e}"))?;
-
-    let (rt_family, _dst_len, dst_bytes) = match cidr.addr() {
-        std::net::IpAddr::V4(addr) => (RtAddrFamily::Inet, 4, addr.octets().to_vec()),
-        std::net::IpAddr::V6(addr) => (RtAddrFamily::Inet6, 16, addr.octets().to_vec()),
-    };
-
-    let mut rtattrs = RtBuffer::new();
-    rtattrs.push(Rtattr::new(None, Rta::Dst, dst_bytes).unwrap());
-    #[allow(clippy::cast_possible_wrap)]
-    rtattrs.push(Rtattr::new(None, Rta::Oif, if_index as i32).unwrap());
-
-    let rtmsg = Rtmsg {
-        rtm_family: rt_family,
-        rtm_dst_len: cidr.prefix_len(),
-        rtm_src_len: 0,
-        rtm_tos: 0,
-        rtm_table: RtTable::Main,
-        rtm_protocol: Rtprot::Boot,
-        rtm_scope: RtScope::Universe,
-        rtm_type: Rtn::Unicast,
-        rtm_flags: RtmFFlags::empty(),
-        rtattrs,
-    };
-
-    let nlmsg = Nlmsghdr::new(
-        None,
-        Rtm::Delroute,
-        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
-        None,
-        None,
-        NlPayload::Payload(rtmsg),
-    );
-
-    match socket.send(nlmsg) {
-        Ok(()) => {
-            // Read ACK
-            match socket.recv::<u16, Nlmsgerr<Rtm, Rtmsg>>() {
-                Ok(Some(msg)) => {
-                    // Standard ACK is NLMSG_ERROR (2) with error=0
-                    if msg.nl_type == 2 {
-                        if let NlPayload::Payload(e) = msg.nl_payload {
-                            if e.error == 0 || e.error == -3 {
-                                // Success or ESRCH (not found)
-                                Ok(())
-                            } else {
-                                let err_msg = format!("Netlink error: {}", e.error);
-                                tracing::warn!("Failed to remove OS route: {}", err_msg);
-                                Err(err_msg)
-                            }
-                        } else {
-                            tracing::warn!("Unexpected payload type in ACK");
-                            Err("Unexpected payload".into())
-                        }
-                    } else {
-                        tracing::warn!("Unexpected message type: {}", msg.nl_type);
-                        Err("Unexpected message".into())
-                    }
-                }
-                Ok(None) => {
-                    tracing::warn!("Netlink socket closed unexpectedly");
-                    Err("Socket closed".into())
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to receive Netlink ACK: {}", e);
-                    Err(e.to_string())
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Failed to send OS route request: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Add an OS-level route via Netlink.
-pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
-    let cidr = wallhack_core::Cidr::from_str(cidr).map_err(|e| e.to_string())?;
-    let if_index =
-        get_if_index(dev).map_err(|e| format!("Failed to resolve interface {dev}: {e}"))?;
-
-    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, &[])
-        .map_err(|e| format!("Netlink connect failed: {e}"))?;
-
-    let (rt_family, _dst_len, dst_bytes) = match cidr.addr() {
-        std::net::IpAddr::V4(addr) => (RtAddrFamily::Inet, 4, addr.octets().to_vec()),
-        std::net::IpAddr::V6(addr) => (RtAddrFamily::Inet6, 16, addr.octets().to_vec()),
-    };
-
-    let mut rtattrs = RtBuffer::new();
-    rtattrs.push(Rtattr::new(None, Rta::Dst, dst_bytes).unwrap());
-    #[allow(clippy::cast_possible_wrap)]
-    rtattrs.push(Rtattr::new(None, Rta::Oif, if_index as i32).unwrap());
-
-    let rtmsg = Rtmsg {
-        rtm_family: rt_family,
-        rtm_dst_len: cidr.prefix_len(),
-        rtm_src_len: 0,
-        rtm_tos: 0,
-        rtm_table: RtTable::Main,
-        rtm_protocol: Rtprot::Boot,
-        rtm_scope: RtScope::Universe,
-        rtm_type: Rtn::Unicast,
-        rtm_flags: RtmFFlags::empty(),
-        rtattrs,
-    };
-
-    let nlmsg = Nlmsghdr::new(
-        None,
-        Rtm::Newroute,
-        NlmFFlags::new(&[NlmF::Request, NlmF::Create, NlmF::Excl, NlmF::Ack]),
-        None,
-        None,
-        NlPayload::Payload(rtmsg),
-    );
-
-    match socket.send(nlmsg) {
-        Ok(()) => {
-            // Read ACK
-            match socket.recv::<u16, Nlmsgerr<Rtm, Rtmsg>>() {
-                Ok(Some(msg)) => {
-                    // Standard ACK is NLMSG_ERROR (2) with error=0
-                    if msg.nl_type == 2 {
-                        if let NlPayload::Payload(e) = msg.nl_payload {
-                            if e.error == 0 || e.error == -17 {
-                                // Success or EEXIST (already exists)
-                                Ok(())
-                            } else {
-                                let err_msg = format!("Netlink error: {}", e.error);
-                                tracing::warn!("Failed to add OS route: {}", err_msg);
-                                Err(err_msg)
-                            }
-                        } else {
-                            tracing::warn!("Unexpected payload type in ACK");
-                            Err("Unexpected payload".into())
-                        }
-                    } else {
-                        tracing::warn!("Unexpected message type: {}", msg.nl_type);
-                        Err("Unexpected message".into())
-                    }
-                }
-                Ok(None) => {
-                    tracing::warn!("Netlink socket closed unexpectedly");
-                    Err("Socket closed".into())
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to receive Netlink ACK: {}", e);
-                    Err(e.to_string())
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Failed to send OS route request: {}", e);
-            Err(e.to_string())
-        }
-    }
 }
 
 /// Arguments for the non-generic connection handler.

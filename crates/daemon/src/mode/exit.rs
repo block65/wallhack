@@ -212,6 +212,7 @@ async fn run_exit_listener(
         metrics: Some(Arc::clone(&ctx.metrics)),
         peers: Some(Arc::clone(&ctx.peers)),
         routes: None,
+        route_updates: None,
         local_handshake: Some(wallhack_wire::data::Handshake {
             capabilities: Some(wallhack_wire::data::Capabilities {
                 tun_capable: false,
@@ -221,8 +222,11 @@ async fn run_exit_listener(
             name: node_name.to_string(),
             version: global.version.clone(),
             psk_proof: Vec::new(),
-            routes: Vec::new(),
-            hint: None,
+            routes: crate::netlink::enumerate_local_cidrs(),
+            hint: Some(wallhack_wire::data::RoleHint {
+                level: wallhack_wire::data::HintLevel::Fixed as i32,
+                target: wallhack_wire::data::NodeRole::RoleExit as i32,
+            }),
         }),
     };
 
@@ -483,6 +487,37 @@ pub(crate) async fn run_stream_listener(
     }
 }
 
+/// Connect to a target with retry for transient errors (EHOSTUNREACH).
+///
+/// Under concurrent load (e.g. nmap scans), ARP resolution can fail transiently
+/// when many connections target different IPs simultaneously. A short retry
+/// gives the neighbor table time to populate.
+async fn tcp_connect_with_retry(
+    target: std::net::SocketAddr,
+) -> Result<tokio::net::TcpStream, std::io::Error> {
+    const MAX_RETRIES: u32 = 2;
+    const RETRY_DELAY: Duration = Duration::from_millis(100);
+
+    let mut last_err = None;
+    for attempt in 0..=MAX_RETRIES {
+        match tokio::net::TcpStream::connect(target).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                // EHOSTUNREACH=113, ENETUNREACH=101 on Linux.
+                let retryable = matches!(e.raw_os_error(), Some(113 | 101));
+                if retryable && attempt < MAX_RETRIES {
+                    tracing::trace!(target = %target, attempt, "Transient connect error, retrying");
+                    tokio::time::sleep(RETRY_DELAY).await;
+                    last_err = Some(e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("retry exhausted")))
+}
+
 #[allow(clippy::too_many_lines)]
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
     let header: wallhack_wire::data::TcpStreamHeader = stream
@@ -498,7 +533,7 @@ async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
     };
     match header.protocol {
         val if val == wallhack_wire::data::SessionProtocol::Tcp as i32 => {
-            match tokio::net::TcpStream::connect(target).await {
+            match tcp_connect_with_retry(target).await {
                 Ok(mut socket) => {
                     let status = wallhack_wire::data::TcpStreamStatus {
                         status: wallhack_wire::data::ResponseStatus::Success.into(),
