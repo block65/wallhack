@@ -140,6 +140,7 @@ pub struct Handler {
     metrics: SharedMetrics,
     peers: SharedRegistry,
     routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Sender<super::routes::RouteUpdate>,
     state: SharedNodeState,
     start_time: Instant,
 }
@@ -152,6 +153,7 @@ impl Handler {
         metrics: SharedMetrics,
         peers: SharedRegistry,
         routes: SharedRouteTable,
+        route_updates: tokio::sync::broadcast::Sender<super::routes::RouteUpdate>,
     ) -> Self {
         let state = SharedNodeState::new(config.node_role);
         let (hint_tx, _) = watch::channel(None);
@@ -161,6 +163,7 @@ impl Handler {
             metrics,
             peers,
             routes,
+            route_updates,
             state,
             start_time: Instant::now(),
         }
@@ -292,7 +295,10 @@ impl Handler {
             };
         }
 
-        self.routes.add(cidr, req.peer);
+        let (_, new_entry) = self.routes.add(cidr, req.peer);
+        let _ = self
+            .route_updates
+            .send(super::routes::RouteUpdate::Add(new_entry));
 
         ControlResponse {
             response: Some(control_response::Response::RouteAdd(
@@ -324,6 +330,11 @@ impl Handler {
 
         let removed = self.routes.remove(&cidr);
         let success = removed.is_some();
+        if let Some(entry) = removed {
+            let _ = self
+                .route_updates
+                .send(super::routes::RouteUpdate::Remove(entry));
+        }
         ControlResponse {
             response: Some(control_response::Response::RouteRemove(
                 wallhack_wire::control::RouteRemoveResponse {
@@ -441,20 +452,33 @@ impl crate::node_api::NodeApi for Handler {
         // Resolve peer name by prefix (will error if not found or ambiguous)
         let peer_info = self.peers.find_by_prefix(&peer)?;
 
-        self.routes.add(cidr, peer_info.name);
+        let (_, new_entry) = self.routes.add(cidr, peer_info.name);
+        let _ = self
+            .route_updates
+            .send(super::routes::RouteUpdate::Add(new_entry));
         Ok(())
     }
 
     fn remove_route(&self, cidr: &crate::Cidr) -> crate::node_api::Result<()> {
-        self.routes
-            .remove(cidr)
-            .map(|_| ())
-            .ok_or(crate::node_api::NodeApiError::RouteNotFound(*cidr))
+        if let Some(entry) = self.routes.remove(cidr) {
+            let _ = self
+                .route_updates
+                .send(super::routes::RouteUpdate::Remove(entry));
+            Ok(())
+        } else {
+            Err(crate::node_api::NodeApiError::RouteNotFound(*cidr))
+        }
     }
 
     fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
-        // Resolve peer name by prefix (will error if not found or ambiguous)
-        let peer_info = self.peers.find_by_prefix(&peer)?;
+        // Try name prefix first, then fall back to exact address match.
+        let peer_info = self.peers.find_by_prefix(&peer).or_else(|e| {
+            if matches!(e, crate::node_api::NodeApiError::PeerNotFound(_)) {
+                self.peers.find_by_addr(&peer)
+            } else {
+                Err(e)
+            }
+        })?;
 
         self.peers
             .unregister(&peer_info.name)
@@ -497,6 +521,7 @@ mod tests {
             metrics,
             peers,
             routes,
+            tokio::sync::broadcast::channel(16).0,
         )
     }
 
@@ -536,6 +561,7 @@ mod tests {
             metrics,
             peers,
             routes,
+            tokio::sync::broadcast::channel(16).0,
         );
         let request = ControlRequest {
             request: Some(control_request::Request::Stats(
@@ -698,6 +724,7 @@ mod tests {
             metrics,
             peers,
             routes,
+            tokio::sync::broadcast::channel(16).0,
         );
 
         let request = ControlRequest {
@@ -733,6 +760,7 @@ mod tests {
             metrics,
             peers,
             routes,
+            tokio::sync::broadcast::channel(16).0,
         );
 
         let status = crate::node_api::NodeApi::status(&handler);
@@ -786,6 +814,7 @@ mod tests {
             Arc::new(Metrics::default()),
             Arc::new(Registry::new()),
             RouteTable::shared(),
+            tokio::sync::broadcast::channel(16).0,
         );
 
         // Initially indeterminate with no capabilities.

@@ -125,7 +125,7 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Disconnect a peer by name")]
+    #[tool(description = "Disconnect a peer by name (or unambiguous prefix) or by remote address")]
     async fn disconnect_peer(
         &self,
         Parameters(params): Parameters<PeerParams>,
