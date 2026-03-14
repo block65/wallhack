@@ -133,23 +133,23 @@ impl Client for QuicClient {
 
         // Send Handshake via the control stream
         {
-            let capabilities = self
-                .local_handshake
-                .as_ref()
-                .and_then(|h| h.capabilities)
-                .unwrap_or(wallhack_wire::data::Capabilities {
+            let mut handshake = self.local_handshake.clone().unwrap_or_else(|| Handshake {
+                capabilities: Some(wallhack_wire::data::Capabilities {
                     tun_capable: false,
                     listening: false,
                     connecting: true,
-                });
-            let mut handshake = Handshake {
-                capabilities: Some(capabilities),
+                }),
                 name: self.name.clone().unwrap_or_default(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 psk_proof: Vec::new(),
                 routes: Vec::new(),
                 hint: None,
-            };
+            });
+            // Name from config takes precedence (the handshake name is set before
+            // the PSK proof so that `name` is consistent with what the server sees).
+            if let Some(ref n) = self.name {
+                handshake.name = n.clone();
+            }
 
             if let Some(ref psk) = self.psk {
                 if let Some(binding) = crate::psk::channel_binding_quic(transport.connection()) {
