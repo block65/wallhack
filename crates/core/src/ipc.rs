@@ -31,6 +31,9 @@ use crate::{
 /// Default socket filename within the runtime directory.
 const SOCKET_NAME: &str = "wallhackd.sock";
 
+/// vsock port for the IPC listener (guest-side, host connects to this).
+pub const VSOCK_IPC_PORT: u32 = 4434;
+
 /// Environment variable for overriding the socket path (like `DOCKER_HOST`).
 const HOST_ENV: &str = "WALLHACK_HOST";
 
@@ -115,6 +118,57 @@ pub async fn run_ipc_listener(
     // Clean up socket file.
     // TODO: use platform-agnostic named pipe on Windows (UnixListener is Unix-only)
     let _ = std::fs::remove_file(path);
+
+    Ok(())
+}
+
+/// Run a vsock IPC listener on the given port.
+///
+/// Binds on `VMADDR_CID_ANY` so any host CID can connect. Accepts connections
+/// in a loop, spawning `handle_connection` per client. Runs until `shutdown_rx`
+/// fires.
+///
+/// # Errors
+///
+/// Returns an error if the vsock port cannot be bound.
+#[cfg(feature = "vsock")]
+pub async fn run_vsock_listener(
+    node_api: Arc<dyn NodeApi>,
+    peer_events: broadcast::Sender<PeerEvent>,
+    port: u32,
+    mut shutdown_rx: watch::Receiver<()>,
+) -> Result<()> {
+    use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
+
+    let listener = VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, port))
+        .with_context(|| format!("binding vsock port {port}"))?;
+
+    tracing::info!(port, "vsock IPC listener started");
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown_rx.changed() => {
+                tracing::info!("vsock IPC listener shutting down");
+                break;
+            }
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, addr)) => {
+                        tracing::debug!(cid = addr.cid(), port = addr.port(), "vsock IPC connection");
+                        let api = Arc::clone(&node_api);
+                        let events_rx = peer_events.subscribe();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_connection(stream, api, Some(events_rx)).await {
+                                tracing::debug!(error = %e, "vsock IPC connection ended");
+                            }
+                        });
+                    }
+                    Err(e) => tracing::warn!(error = %e, "vsock accept error"),
+                }
+            }
+        }
+    }
 
     Ok(())
 }
@@ -490,6 +544,7 @@ impl From<crate::node_api::RouteEntry> for management::RouteEntry {
             cidr: r.cidr.to_string(),
             peer: r.peer,
             added_at_secs,
+            auto_managed: r.auto_managed,
         }
     }
 }

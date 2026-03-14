@@ -186,6 +186,7 @@ message RouteEntry {
   string cidr = 1;
   string peer = 2;
   uint64 added_at_secs = 3;
+  bool auto_managed = 4; // installed from peer's Handshake.routes advertisement
 }
 
 message RoutesResponse {
