@@ -265,6 +265,28 @@ impl Registry {
         })
     }
 
+    /// Find a peer by exact address match.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerNotFound` if no peers have that address.
+    pub fn find_by_addr(&self, addr: &str) -> Result<PeerInfo, NodeApiError> {
+        let peers = self.peers.load();
+        let mut matches = peers.values().filter(|p| p.addr == addr);
+        match (matches.next(), matches.next()) {
+            (None, _) => Err(NodeApiError::PeerNotFound(addr.to_string())),
+            (Some(p), None) => Ok(p.clone()),
+            (Some(p), Some(_)) => Err(NodeApiError::PeerAmbiguous(
+                addr.to_string(),
+                peers
+                    .values()
+                    .filter(|q| q.addr == addr)
+                    .map(|q| q.name.clone())
+                    .collect(),
+            )),
+        }
+    }
+
     /// Find a peer by name prefix.
     ///
     /// Returns the peer if exactly one peer name starts with the prefix.
