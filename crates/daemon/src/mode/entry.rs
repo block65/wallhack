@@ -4,7 +4,20 @@
 //! relay nodes. It can either listen for incoming connections (default) or
 //! connect to a remote peer. The daemon is headless — no REPL, no TTY.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
+
+use neli::{
+    consts::{
+        nl::{NlmF, NlmFFlags},
+        rtnl::{RtAddrFamily, RtScope, RtTable, Rta, Rtm, RtmFFlags, Rtn, Rtprot},
+        socket::NlFamily,
+    },
+    err::Nlmsgerr,
+    nl::{NlPayload, Nlmsghdr},
+    rtnl::{Rtattr, Rtmsg},
+    socket::NlSocketHandle,
+    types::RtBuffer,
+};
 
 use parking_lot::Mutex;
 use wallhack_core::psk::HandshakeExt;
@@ -15,7 +28,7 @@ use wallhack_core::{
         handler::{HandlerConfig, SharedNodeState},
         metrics::Metrics,
         peers::Registry,
-        routes::SharedRouteTable,
+        routes::{RouteUpdate, SharedRouteTable},
     },
     entry::{actor::TunActor, manager::ConnectionManager},
     server::server::{Server, ServerOptions},
@@ -32,13 +45,29 @@ use crate::{
     daemon_config::{EntryConfig, GlobalConfig},
 };
 
+/// Derive a stable, unique TUN interface name from a peer name.
+///
+/// Uses FNV-1a (inline, no crate) to hash the peer name into an 8-char hex
+/// suffix. Result is always 10 chars — well within Linux's IFNAMSIZ limit.
+pub(crate) fn peer_name_to_iface(peer_name: &str) -> String {
+    let mut h: u32 = 2_166_136_261;
+    for b in peer_name.bytes() {
+        h = h.wrapping_mul(16_777_619) ^ u32::from(b);
+    }
+    format!("wh{h:08x}")
+}
+
 /// Shared node resources passed through the entry server call stack.
-struct EntryResources {
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    node_state: SharedNodeState,
-    sessions: SessionManager,
+pub(crate) struct EntryResources {
+    pub metrics: Arc<Metrics>,
+    pub peers: Arc<Registry>,
+    pub routes: SharedRouteTable,
+    pub route_updates:
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    pub route_updates_tx:
+        tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
+    pub node_state: SharedNodeState,
+    pub sessions: SessionManager,
 }
 
 /// Manages TUN sessions for connected exit nodes.
@@ -54,17 +83,17 @@ impl SessionManager {
     /// Gets or creates a TUN adapter for the given exit node.
     ///
     /// If the exit node has connected before, returns a clone of their existing
-    /// TUN. Otherwise creates a new TUN with stable naming (`tun-{name}`).
+    /// TUN. Otherwise creates a new TUN with a stable name derived from the
+    /// peer name via FNV-1a hash (fits IFNAMSIZ, unique per peer).
     fn get_or_create(&self, name: &str) -> String {
         let mut sessions = self.sessions.lock();
 
-        if let Some(name) = sessions.get(name) {
-            tracing::info!("Reusing existing TUN for exit node {}", name);
-            return name.clone();
+        if let Some(existing) = sessions.get(name) {
+            tracing::info!("Reusing existing TUN for exit node {}", existing);
+            return existing.clone();
         }
 
-        // Create new TUN with stable name
-        let tun_name = format!("tun-{name}");
+        let tun_name = peer_name_to_iface(name);
         tracing::info!("Creating new TUN {} for exit node {}", tun_name, name);
         sessions.insert(name.to_string(), tun_name.clone());
         tun_name
@@ -110,12 +139,15 @@ const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(50
 /// # Errors
 ///
 /// Returns error if server or connection setup fails.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     global: &GlobalConfig,
     cfg: &EntryConfig,
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     // Set capabilities that are known at startup (TUN detection).
@@ -130,6 +162,8 @@ pub async fn run(
         metrics,
         peers,
         routes,
+        route_updates,
+        route_updates_tx,
         node_state,
     };
 
@@ -141,7 +175,7 @@ pub async fn run(
         ConnectivitySpec::Connect(spec) => {
             let node_state = res.node_state.clone();
             node_state.set_connected(&spec.addr);
-            run_entry_connect(global, cfg, spec, res.metrics).await
+            run_entry_connect(global, cfg, spec, res).await
         }
     }
 }
@@ -164,6 +198,7 @@ async fn run_entry_listen(
         metrics: Some(Arc::clone(&res.metrics)),
         peers: Some(Arc::clone(&res.peers)),
         routes: Some(Arc::clone(&res.routes)),
+        route_updates: Some(res.route_updates_tx.clone()),
         local_handshake: Some(wallhack_wire::data::Handshake {
             capabilities: Some(wallhack_wire::data::Capabilities {
                 tun_capable: crate::tun_cap::detect_tun_capable(),
@@ -255,7 +290,6 @@ where
         res,
         EntryListenOptions {
             max_peers: cfg.max_peers,
-            fast_mode: cfg.fast,
         },
     )
     .await
@@ -264,12 +298,12 @@ where
 /// Run entry node in connect mode.
 ///
 /// DNS resolve once, then retry loop with exponential backoff.
-#[allow(clippy::too_many_lines)] // verbose due to #[cfg] feature-gate branches per protocol
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn run_entry_connect(
     global: &GlobalConfig,
     cfg: &EntryConfig,
     spec: &AddressSpec,
-    metrics: Arc<Metrics>,
+    res: EntryResources,
 ) -> Result<(), NodeError> {
     tracing::info!("Connecting to {}...", spec.addr);
     let endpoint =
@@ -283,7 +317,7 @@ pub(crate) async fn run_entry_connect(
         let routes = RouteTable::shared();
         start_api(
             api_cfg.addr,
-            &metrics,
+            &res.metrics,
             &peers,
             &routes,
             tls,
@@ -298,10 +332,13 @@ pub(crate) async fn run_entry_connect(
         psk: global.psk.clone(),
         accept_fingerprint: None,
     };
-    let fast_mode = cfg.fast;
-
     // Advertise the correct capabilities: entry connectors are TUN-capable.
     let entry_handshake = entry_local_handshake(&cfg.name, &global.version);
+
+    let metrics = Arc::clone(&res.metrics);
+    let routes = Arc::clone(&res.routes);
+    // Note: We need to resubscribe for each connection attempt if we want a fresh stream.
+    // route_updates is a Receiver, so we use resubscribe().
 
     match spec.protocol {
         Protocol::Udp => {
@@ -314,6 +351,7 @@ pub(crate) async fn run_entry_connect(
                     &security,
                     Some(entry_handshake),
                 );
+                let r_updates = res.route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -323,21 +361,13 @@ pub(crate) async fn run_entry_connect(
                             client.connect(NodeRole::Entry).await
                         }
                     },
-                    |connect_result| {
-                        let e = connect_result.erase();
+                    move |connect_result| {
                         let m = Arc::clone(&metrics);
+                        let r = Arc::clone(&routes);
+                        let ru = r_updates.resubscribe();
                         let pa = peer_addr.clone();
                         async move {
-                            run_entry_connected_inner(
-                                e.transport,
-                                e.channels.instructions_tx,
-                                e.channels.instructions_rx,
-                                e.channels.responses_rx,
-                                &m,
-                                fast_mode,
-                                &pa,
-                            )
-                            .await
+                            run_entry_connected(connect_result, &m, &pa, Some(r), Some(ru)).await
                         }
                     },
                     RECONNECT_DELAY,
@@ -357,6 +387,7 @@ pub(crate) async fn run_entry_connect(
                     &security,
                     Some(entry_handshake),
                 );
+                let r_updates = res.route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -365,21 +396,13 @@ pub(crate) async fn run_entry_connect(
                             client.connect(NodeRole::Entry).await
                         }
                     },
-                    |connect_result| {
-                        let e = connect_result.erase();
+                    move |connect_result| {
                         let m = Arc::clone(&metrics);
+                        let r = Arc::clone(&routes);
+                        let ru = r_updates.resubscribe();
                         let pa = peer_addr.clone();
                         async move {
-                            run_entry_connected_inner(
-                                e.transport,
-                                e.channels.instructions_tx,
-                                e.channels.instructions_rx,
-                                e.channels.responses_rx,
-                                &m,
-                                fast_mode,
-                                &pa,
-                            )
-                            .await
+                            run_entry_connected(connect_result, &m, &pa, Some(r), Some(ru)).await
                         }
                     },
                     RECONNECT_DELAY,
@@ -408,15 +431,81 @@ fn entry_local_handshake(name: &str, version: &str) -> wallhack_wire::data::Hand
     }
 }
 
+/// Run the entry node session once connected.
+///
+/// Thin generic wrapper: extracts transport and channels from the generic
+/// `ConnectResult<T>`, then delegates to the non-generic inner function.
+pub(crate) async fn run_entry_connected<T>(
+    mut connect_result: wallhack_core::client::client::ConnectResult<T>,
+    metrics: &Arc<Metrics>,
+    peer_addr: &str,
+    routes: Option<SharedRouteTable>,
+    route_updates: Option<
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    >,
+) -> Result<(), NodeError>
+where
+    T: wallhack_core::transport::Transport + 'static,
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: 'static,
+{
+    use wallhack_core::server::server::DataChannels;
+
+    // Wait for the server's handshake to get the peer name
+    let peer_name = if let Some(rx) = connect_result.take_peer_handshake_rx() {
+        #[allow(clippy::single_match_else)]
+        match rx.await {
+            Ok(h) => Some(h.name),
+            Err(_) => {
+                tracing::warn!("Failed to receive peer handshake from {peer_addr}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(ref name) = peer_name {
+        tracing::info!("Authenticated peer: {name} at {peer_addr}");
+    }
+
+    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
+    let (channels, _tasks, _control_tx) = connect_result.into_parts();
+    let DataChannels {
+        instructions_tx,
+        instructions_rx,
+        responses_tx: _responses_tx,
+        responses_rx,
+    } = channels;
+    run_entry_connected_inner(
+        transport,
+        instructions_tx,
+        instructions_rx,
+        responses_rx,
+        metrics,
+        peer_addr,
+        peer_name.as_deref(),
+        routes,
+        route_updates,
+    )
+    .await
+}
+
 /// Non-generic inner: monomorphized once regardless of transport type.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_entry_connected_inner(
     transport: Arc<dyn ErasedTransport>,
     instructions_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
     responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
     metrics: &Arc<Metrics>,
-    fast_mode: bool,
     peer_addr: &str,
+    peer_name: Option<&str>,
+    routes: Option<SharedRouteTable>,
+    route_updates: Option<
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    >,
 ) -> Result<(), NodeError> {
     tracing::info!("Connected to {peer_addr}");
 
@@ -438,13 +527,51 @@ pub(crate) async fn run_entry_connected_inner(
         }
     });
 
-    let name = SessionManager::create_anonymous();
-    let actor = create_tun_with_retry(name).await?;
-    let (manager, _syn_proxy_state) = ConnectionManager::new(
+    let name = peer_name
+        .filter(|n| !n.is_empty())
+        .map_or_else(SessionManager::create_anonymous, peer_name_to_iface);
+    let actor = create_tun_with_retry(name.clone()).await?;
+
+    // Apply existing routes
+    #[allow(clippy::collapsible_if)]
+    if let Some(r) = &routes {
+        if let Some(pn) = peer_name {
+            for entry in r.list() {
+                if Some(entry.peer.as_str()) == Some(pn) {
+                    let _ = add_os_route(&entry.cidr.to_string(), &name);
+                }
+            }
+        }
+    }
+
+    // Spawn route update listener
+    if let Some(mut updates) = route_updates {
+        let tun = name.clone();
+        let peer = peer_name.map(std::string::ToString::to_string);
+        tokio::spawn(async move {
+            loop {
+                match updates.recv().await {
+                    Ok(wallhack_core::control::routes::RouteUpdate::Add(entry)) => {
+                        if Some(entry.peer.as_str()) == peer.as_deref() {
+                            let _ = add_os_route(&entry.cidr.to_string(), &tun);
+                        }
+                    }
+                    Ok(wallhack_core::control::routes::RouteUpdate::Remove(entry)) => {
+                        if Some(entry.peer.as_str()) == peer.as_deref() {
+                            let _ = remove_os_route(&entry.cidr.to_string(), &tun);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                }
+            }
+        });
+    }
+
+    let (manager, _probe_cache) = ConnectionManager::new(
         actor,
         transport,
         Arc::clone(metrics),
-        fast_mode,
         instructions_tx,
         responses_rx,
     );
@@ -462,7 +589,6 @@ pub(crate) async fn run_entry_connected_inner(
 
 struct EntryListenOptions {
     max_peers: Option<usize>,
-    fast_mode: bool,
 }
 
 /// Generic entry server loop that works with any `Server` implementation.
@@ -483,13 +609,12 @@ where
         metrics: _,
         peers,
         routes,
+        route_updates,
+        route_updates_tx: _,
         node_state: _,
         sessions,
     } = res;
-    let EntryListenOptions {
-        max_peers,
-        fast_mode,
-    } = options;
+    let EntryListenOptions { max_peers } = options;
     let server_psk = server.psk().map(|s| zeroize::Zeroizing::new(s.to_string()));
     let peer_semaphore = Arc::new(tokio::sync::Semaphore::new(
         max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
@@ -510,23 +635,87 @@ where
                     continue;
                 };
 
-                let erased = accept_result.erase();
-                let server_psk = server_psk.clone();
-                let peers = Arc::clone(&peers);
-                let routes = Arc::clone(&routes);
-                let sessions = sessions.clone();
+                let conn_metrics = accept_result.metrics();
+                let conn_sessions = sessions.clone();
+                let conn_peers = Arc::clone(&peers);
+                let conn_routes = Arc::clone(&routes);
+                let peer_route_updates = route_updates.resubscribe();
+                let peer_addr = accept_result.peer_addr().to_string();
+
+                // Validate handshake before spawning (keeps generic code minimal).
+                let identity = match validate_handshake(
+                    &mut accept_result,
+                    server_psk.as_ref().map(|s| s.as_str()),
+                ) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        if matches!(&e, NodeError::PskAuth(_)) {
+                            psk_failures.record(&peer_addr);
+                        } else {
+                            tracing::warn!("Handshake validation failed for {peer_addr}: {e}");
+                        }
+                        continue;
+                    }
+                };
+
+                let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
+
+                // Register peer in the registry and apply handshake capabilities.
+                conn_peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
+                conn_peers.update_capabilities(&peer_name, &identity.capabilities);
+
+                // Create ping channel for this peer
+                #[allow(deprecated)] // TODO: replace with peer events
+                let mut ping_rx = conn_peers.register_ping_channel(&peer_name);
+
+                // Extract transport and channels from the generic AcceptResult before
+                // spawning so the spawned future is non-generic.
+                let transport: Arc<dyn ErasedTransport> = accept_result.transport();
+                let latency_rx = accept_result
+                    .take_latency_rx()
+                    .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+                let (channels, control_tx) = accept_result.into_channels();
 
                 // Spawn non-generic handler
                 tokio::spawn(async move {
                     // Hold the permit for the lifetime of this connection
                     let _permit = permit;
-                    let psk_ref = server_psk.as_ref().map(|s| s.as_str());
-                    if let Err(e) = handle_connection_erased(
-                        erased, psk_ref, peers, routes, sessions, fast_mode,
-                    )
-                    .await
-                    {
-                        tracing::debug!("Connection finished with error: {e}");
+                    let params = ConnectionParams {
+                        metrics: conn_metrics,
+                        transport,
+                        channels,
+                        control_tx,
+                        sessions: conn_sessions.clone(),
+                        peers: Arc::clone(&conn_peers),
+                        routes: Arc::clone(&conn_routes),
+                        route_updates: peer_route_updates,
+                        peer: identity.name,
+                        peer_addr: peer_addr.clone(),
+                    };
+                    let result = params.run(&mut ping_rx, latency_rx).await;
+                    // Unregister peer when connection closes
+                    conn_peers.unregister(&peer_name);
+                    // Clean up routes for this peer
+                    let removed_routes = conn_routes.remove_by_peer(&peer_name);
+                    for entry in &removed_routes {
+                        if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_name) {
+                            let _ = remove_os_route(&entry.cidr.to_string(), &tun);
+                        }
+                    }
+                    if !removed_routes.is_empty() {
+                        tracing::info!(
+                            "Removed {} route(s) for disconnected peer {peer_name}",
+                            removed_routes.len()
+                        );
+                    }
+                    match result {
+                        Ok(_tun_name) => {
+                            tracing::info!("Peer disconnected: {peer_name}");
+                        }
+                        Err(e) => {
+                            tracing::debug!("Connection error for {}: {}", peer_name, e);
+                            tracing::warn!("Peer {peer_name} disconnected with error: {e}");
+                        }
                     }
                 });
             }
@@ -543,105 +732,176 @@ where
     Ok(())
 }
 
-/// Non-generic handler for erased connection results.
-async fn handle_connection_erased(
-    mut erased: wallhack_core::server::server::ErasedAcceptResult,
-    server_psk: Option<&str>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    sessions: SessionManager,
-    fast_mode: bool,
-) -> Result<(), NodeError> {
-    let peer_addr = erased.peer_addr.clone();
+fn get_if_index(name: &str) -> std::io::Result<u32> {
+    let path = format!("/sys/class/net/{name}/ifindex");
+    let content = std::fs::read_to_string(path)?;
+    content
+        .trim()
+        .parse()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
 
-    // Validate handshake before spawning (keeps generic code minimal).
-    let identity = match validate_handshake_erased(&mut erased, server_psk) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!("Handshake validation failed for {peer_addr}: {e}");
-            return Err(e);
-        }
+/// Remove an OS-level route via Netlink.
+pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
+    let cidr = wallhack_core::Cidr::from_str(cidr).map_err(|e| e.to_string())?;
+    let if_index =
+        get_if_index(dev).map_err(|e| format!("Failed to resolve interface {dev}: {e}"))?;
+
+    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, &[])
+        .map_err(|e| format!("Netlink connect failed: {e}"))?;
+
+    let (rt_family, _dst_len, dst_bytes) = match cidr.addr() {
+        std::net::IpAddr::V4(addr) => (RtAddrFamily::Inet, 4, addr.octets().to_vec()),
+        std::net::IpAddr::V6(addr) => (RtAddrFamily::Inet6, 16, addr.octets().to_vec()),
     };
 
-    let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
+    let mut rtattrs = RtBuffer::new();
+    rtattrs.push(Rtattr::new(None, Rta::Dst, dst_bytes).unwrap());
+    #[allow(clippy::cast_possible_wrap)]
+    rtattrs.push(Rtattr::new(None, Rta::Oif, if_index as i32).unwrap());
 
-    // Register peer in the registry and apply handshake capabilities.
-    peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
-    peers.update_capabilities(&peer_name, &identity.capabilities);
-
-    // Create ping channel for this peer
-    #[allow(deprecated)] // TODO: replace with peer events
-    let mut ping_rx = peers.register_ping_channel(&peer_name);
-
-    let transport = erased.transport;
-    let latency_rx = erased
-        .latency_rx
-        .take()
-        .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
-    let channels = erased.channels;
-    let control_tx = erased.control_tx;
-
-    let params = ConnectionParams {
-        metrics: erased.metrics,
-        transport,
-        channels,
-        control_tx,
-        sessions: sessions.clone(),
-        peers: Arc::clone(&peers),
-        peer: identity.name,
-        fast_mode,
-        peer_addr: peer_addr.clone(),
+    let rtmsg = Rtmsg {
+        rtm_family: rt_family,
+        rtm_dst_len: cidr.prefix_len(),
+        rtm_src_len: 0,
+        rtm_tos: 0,
+        rtm_table: RtTable::Main,
+        rtm_protocol: Rtprot::Boot,
+        rtm_scope: RtScope::Universe,
+        rtm_type: Rtn::Unicast,
+        rtm_flags: RtmFFlags::empty(),
+        rtattrs,
     };
 
-    let result = params.run(&mut ping_rx, latency_rx).await;
+    let nlmsg = Nlmsghdr::new(
+        None,
+        Rtm::Delroute,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
+        None,
+        None,
+        NlPayload::Payload(rtmsg),
+    );
 
-    // Unregister peer when connection closes
-    peers.unregister(&peer_name);
-
-    // Clean up routes for this peer
-    let removed_routes = routes.remove_by_peer(&peer_name);
-    for entry in &removed_routes {
-        if let Some(tun) = sessions.get_tun_for_peer(&peer_name) {
-            let _ = remove_os_route(&entry.cidr.to_string(), &tun);
-        }
-    }
-    if !removed_routes.is_empty() {
-        tracing::info!(
-            "Removed {} route(s) for disconnected peer {peer_name}",
-            removed_routes.len()
-        );
-    }
-
-    match result {
-        Ok(_tun_name) => {
-            tracing::info!("Peer disconnected: {peer_name}");
-            Ok(())
+    match socket.send(nlmsg) {
+        Ok(()) => {
+            // Read ACK
+            match socket.recv::<u16, Nlmsgerr<Rtm, Rtmsg>>() {
+                Ok(Some(msg)) => {
+                    // Standard ACK is NLMSG_ERROR (2) with error=0
+                    if msg.nl_type == 2 {
+                        if let NlPayload::Payload(e) = msg.nl_payload {
+                            if e.error == 0 || e.error == -3 {
+                                // Success or ESRCH (not found)
+                                Ok(())
+                            } else {
+                                let err_msg = format!("Netlink error: {}", e.error);
+                                tracing::warn!("Failed to remove OS route: {}", err_msg);
+                                Err(err_msg)
+                            }
+                        } else {
+                            tracing::warn!("Unexpected payload type in ACK");
+                            Err("Unexpected payload".into())
+                        }
+                    } else {
+                        tracing::warn!("Unexpected message type: {}", msg.nl_type);
+                        Err("Unexpected message".into())
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!("Netlink socket closed unexpectedly");
+                    Err("Socket closed".into())
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to receive Netlink ACK: {}", e);
+                    Err(e.to_string())
+                }
+            }
         }
         Err(e) => {
-            tracing::warn!("Peer {peer_name} disconnected with error: {e}");
-            Err(e)
+            tracing::warn!("Failed to send OS route request: {}", e);
+            Err(e.to_string())
         }
     }
 }
 
-/// Remove an OS-level route via `ip route del`.
-pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
-    match std::process::Command::new("ip")
-        .args(["route", "del", cidr, "dev", dev])
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                tracing::info!("OS route removed: {cidr} dev {dev}");
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                tracing::debug!("Failed to remove OS route: {stderr}");
-                Err(stderr)
+/// Add an OS-level route via Netlink.
+pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
+    let cidr = wallhack_core::Cidr::from_str(cidr).map_err(|e| e.to_string())?;
+    let if_index =
+        get_if_index(dev).map_err(|e| format!("Failed to resolve interface {dev}: {e}"))?;
+
+    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, &[])
+        .map_err(|e| format!("Netlink connect failed: {e}"))?;
+
+    let (rt_family, _dst_len, dst_bytes) = match cidr.addr() {
+        std::net::IpAddr::V4(addr) => (RtAddrFamily::Inet, 4, addr.octets().to_vec()),
+        std::net::IpAddr::V6(addr) => (RtAddrFamily::Inet6, 16, addr.octets().to_vec()),
+    };
+
+    let mut rtattrs = RtBuffer::new();
+    rtattrs.push(Rtattr::new(None, Rta::Dst, dst_bytes).unwrap());
+    #[allow(clippy::cast_possible_wrap)]
+    rtattrs.push(Rtattr::new(None, Rta::Oif, if_index as i32).unwrap());
+
+    let rtmsg = Rtmsg {
+        rtm_family: rt_family,
+        rtm_dst_len: cidr.prefix_len(),
+        rtm_src_len: 0,
+        rtm_tos: 0,
+        rtm_table: RtTable::Main,
+        rtm_protocol: Rtprot::Boot,
+        rtm_scope: RtScope::Universe,
+        rtm_type: Rtn::Unicast,
+        rtm_flags: RtmFFlags::empty(),
+        rtattrs,
+    };
+
+    let nlmsg = Nlmsghdr::new(
+        None,
+        Rtm::Newroute,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Create, NlmF::Excl, NlmF::Ack]),
+        None,
+        None,
+        NlPayload::Payload(rtmsg),
+    );
+
+    match socket.send(nlmsg) {
+        Ok(()) => {
+            // Read ACK
+            match socket.recv::<u16, Nlmsgerr<Rtm, Rtmsg>>() {
+                Ok(Some(msg)) => {
+                    // Standard ACK is NLMSG_ERROR (2) with error=0
+                    if msg.nl_type == 2 {
+                        if let NlPayload::Payload(e) = msg.nl_payload {
+                            if e.error == 0 || e.error == -17 {
+                                // Success or EEXIST (already exists)
+                                Ok(())
+                            } else {
+                                let err_msg = format!("Netlink error: {}", e.error);
+                                tracing::warn!("Failed to add OS route: {}", err_msg);
+                                Err(err_msg)
+                            }
+                        } else {
+                            tracing::warn!("Unexpected payload type in ACK");
+                            Err("Unexpected payload".into())
+                        }
+                    } else {
+                        tracing::warn!("Unexpected message type: {}", msg.nl_type);
+                        Err("Unexpected message".into())
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!("Netlink socket closed unexpectedly");
+                    Err("Socket closed".into())
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to receive Netlink ACK: {}", e);
+                    Err(e.to_string())
+                }
             }
         }
         Err(e) => {
-            tracing::debug!("Failed to run ip route del: {e}");
+            tracing::warn!("Failed to send OS route request: {}", e);
             Err(e.to_string())
         }
     }
@@ -655,8 +915,9 @@ struct ConnectionParams {
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     sessions: SessionManager,
     peers: Arc<wallhack_core::control::peers::Registry>,
+    routes: SharedRouteTable,
+    route_updates: tokio::sync::broadcast::Receiver<RouteUpdate>,
     peer: Option<String>,
-    fast_mode: bool,
     peer_addr: String,
 }
 
@@ -664,6 +925,46 @@ struct ConnectionParams {
 struct PeerIdentity {
     name: Option<String>,
     capabilities: wallhack_wire::data::Capabilities,
+}
+
+/// Validate the peer's handshake (PSK proof + identity) for generic AcceptResult.
+fn validate_handshake<T: wallhack_core::transport::Transport>(
+    accept_result: &mut wallhack_core::server::server::AcceptResult<T>,
+    server_psk: Option<&str>,
+) -> Result<PeerIdentity, NodeError> {
+    let channel_binding = accept_result.channel_binding().copied();
+    let Some(hs) = accept_result.take_peer_handshake() else {
+        tracing::debug!("No Handshake received, peer unidentified");
+        return Ok(PeerIdentity {
+            name: None,
+            capabilities: wallhack_wire::data::Capabilities::default(),
+        });
+    };
+
+    if let Some(expected_psk) = server_psk {
+        let valid = channel_binding
+            .as_ref()
+            .is_some_and(|binding| hs.verify_psk_proof(expected_psk.as_bytes(), binding));
+        if !valid {
+            return Err(NodeError::PskAuth(hs.name));
+        }
+    }
+
+    let capabilities = hs.capabilities.unwrap_or_default();
+
+    if hs.name.is_empty() {
+        tracing::debug!("Peer identified with empty name (v{})", hs.version);
+        Ok(PeerIdentity {
+            name: None,
+            capabilities,
+        })
+    } else {
+        tracing::debug!("Peer {} identified (v{})", hs.name, hs.version);
+        Ok(PeerIdentity {
+            name: Some(hs.name),
+            capabilities,
+        })
+    }
 }
 
 /// Validate the peer's handshake (PSK proof + identity).
@@ -758,15 +1059,28 @@ pub(crate) fn spawn_data_tasks(
 }
 
 /// Run the connection manager alongside ping/latency handling.
+#[allow(clippy::too_many_arguments)]
 async fn run_connection_loop(
     mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     mut latency_rx: tokio::sync::mpsc::Receiver<f64>,
     ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
+    mut route_updates: tokio::sync::broadcast::Receiver<RouteUpdate>,
     peer: Option<&str>,
     peers: &Arc<Registry>,
+    tun_name: &str,
 ) -> Result<(), NodeError> {
     let mut pending_ping: Option<tokio::sync::oneshot::Sender<f64>> = None;
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Fire an initial ping so latency is populated immediately after connect.
+    if let Err(e) = send_ping(&control_tx).await {
+        tracing::debug!("Initial ping failed: {e}");
+    }
+    // Consume the first tick (fires immediately) so the heartbeat starts
+    // 30s after the initial ping, not immediately.
+    heartbeat.tick().await;
 
     loop {
         tokio::select! {
@@ -797,6 +1111,32 @@ async fn run_connection_loop(
                     }
                 }
             }
+            _ = heartbeat.tick() => {
+                if let Err(e) = send_ping(&control_tx).await {
+                    tracing::debug!("Heartbeat ping failed: {e}");
+                }
+            }
+            update = route_updates.recv() => {
+                match update {
+                    Ok(RouteUpdate::Add(entry)) => {
+                        if Some(entry.peer.as_str()) == peer {
+                             let _ = add_os_route(&entry.cidr.to_string(), tun_name);
+                        }
+                    }
+                    Ok(RouteUpdate::Remove(entry)) => {
+                        if Some(entry.peer.as_str()) == peer {
+                             let _ = remove_os_route(&entry.cidr.to_string(), tun_name);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!("Skipped {skipped} route updates");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                         tracing::debug!("Route update channel closed");
+                         break;
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -824,8 +1164,9 @@ impl ConnectionParams {
             control_tx,
             sessions,
             peers,
+            routes,
+            route_updates,
             peer,
-            fast_mode,
             peer_addr,
         } = self;
 
@@ -839,14 +1180,23 @@ impl ConnectionParams {
         };
         let actor = create_tun_with_retry(name.clone()).await?;
 
+        // Apply existing routes now that we have the TUN interface
+        if let Some(peer_name) = &peer {
+            let existing = routes.list();
+            for entry in existing {
+                if &entry.peer == peer_name {
+                    let _ = add_os_route(&entry.cidr.to_string(), &name);
+                }
+            }
+        }
+
         let peer_display = peer.as_deref().unwrap_or(&peer_addr);
         tracing::info!("Peer connected: name={peer_display} addr={peer_addr} tun={name}");
 
-        let (manager, _syn_proxy_state) = ConnectionManager::new(
+        let (manager, _probe_cache) = ConnectionManager::new(
             actor,
             Arc::clone(&transport),
             Arc::clone(&metrics),
-            fast_mode,
             instructions_tx.clone(),
             responses_rx,
         );
@@ -857,8 +1207,10 @@ impl ConnectionParams {
             control_tx,
             latency_rx,
             ping_rx,
+            route_updates,
             peer.as_deref(),
             &peers,
+            &name,
         )
         .await?;
 
@@ -891,6 +1243,7 @@ async fn send_ping(
 }
 
 #[cfg(feature = "http-api")]
+#[allow(clippy::too_many_arguments)]
 fn start_api(
     api_addr: std::net::SocketAddr,
     metrics: &Arc<Metrics>,
@@ -907,11 +1260,13 @@ fn start_api(
 
     let handler_config =
         HandlerConfig::new(NodeRole::Entry, "wallhack".to_string(), version.to_string());
+    let (route_updates, _) = tokio::sync::broadcast::channel(16);
     let handler = Handler::new(
         handler_config,
         Arc::clone(metrics),
         Arc::clone(peers),
         Arc::clone(routes),
+        route_updates,
     );
     tracing::info!("REST API listening on {api_addr}");
     tracing::info!("  API username: {username}");
