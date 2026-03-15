@@ -1,12 +1,15 @@
 //! IPC client for communicating with the wallhack daemon.
 
 use std::{
+    io,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::atomic::{AtomicU64, Ordering},
+    task::{Context, Poll},
 };
 
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     net::UnixStream,
     sync::{broadcast, mpsc},
     task::JoinHandle,
@@ -30,27 +33,78 @@ const HOST_ENV: &str = "WALLHACK_HOST";
 /// Monotonically increasing request ID.
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A concrete stream type covering all supported IPC transports.
+pub enum IpcStream {
+    Unix(UnixStream),
+    #[cfg(feature = "vsock")]
+    Vsock(tokio_vsock::VsockStream),
+}
+
+impl AsyncRead for IpcStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Unix(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(feature = "vsock")]
+            Self::Vsock(s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for IpcStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::Unix(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(feature = "vsock")]
+            Self::Vsock(s) => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Unix(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(feature = "vsock")]
+            Self::Vsock(s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Unix(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(feature = "vsock")]
+            Self::Vsock(s) => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
 /// Parse a host string, stripping `unix://` prefix if present.
-///
-/// Accepts `unix:///var/run/wallhack/wallhackd.sock` (Docker-style) or
-/// a bare path `/var/run/wallhack/wallhackd.sock`.
 #[must_use]
 pub fn resolve_host(host: &str) -> PathBuf {
     PathBuf::from(host.strip_prefix("unix://").unwrap_or(host))
 }
 
-/// Resolve the IPC socket path.
+/// Resolve the default IPC socket path (ignores `vsock://` `WALLHACK_HOST` values).
 ///
 /// Checks (in order):
-/// 1. `WALLHACK_HOST` environment variable
+/// 1. `WALLHACK_HOST` environment variable (unix paths only)
 /// 2. `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock`
 /// 3. `/tmp/wallhack-<user>/wallhackd.sock`
 /// 4. `$HOME/.wallhack/wallhackd.sock`
 /// 5. `/tmp/wallhack-shared/wallhackd.sock`
 #[must_use]
 pub fn socket_path() -> PathBuf {
+    #[allow(clippy::collapsible_if)]
     if let Ok(host) = std::env::var(HOST_ENV) {
-        return resolve_host(&host);
+        if !host.starts_with("vsock://") {
+            return PathBuf::from(host.strip_prefix("unix://").unwrap_or(&host));
+        }
     }
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         Path::new(&runtime_dir).join("wallhack").join(SOCKET_NAME)
@@ -63,35 +117,75 @@ pub fn socket_path() -> PathBuf {
     }
 }
 
-/// Connect to the daemon's IPC socket at a specific path.
+/// Connect to the daemon's IPC socket at a specific Unix path.
 ///
 /// # Errors
 ///
 /// Returns an error if the socket doesn't exist or connection is refused.
-pub async fn connect_to(path: &Path) -> std::io::Result<UnixStream> {
-    UnixStream::connect(path).await.map_err(|e| {
-        std::io::Error::new(
-            e.kind(),
-            format!("cannot connect to daemon at {}: {e}", path.display()),
-        )
-    })
+pub async fn connect_to(path: &Path) -> io::Result<IpcStream> {
+    UnixStream::connect(path)
+        .await
+        .map(IpcStream::Unix)
+        .map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot connect to daemon at {}: {e}", path.display()),
+            )
+        })
 }
 
-/// Connect to the daemon's IPC socket at the default path.
+/// Connect to the daemon, dispatching on `WALLHACK_HOST`.
 ///
-/// Uses [`socket_path`] to resolve the socket location.
+/// Supports:
+/// - `vsock://CID:PORT` — virtio-vsock (requires `vsock` feature)
+/// - `unix:///path` or bare path — Unix socket
 ///
 /// # Errors
 ///
-/// Returns an error if the socket doesn't exist or connection is refused.
-pub async fn connect() -> std::io::Result<UnixStream> {
+/// Returns an error if the connection fails.
+pub async fn connect() -> io::Result<IpcStream> {
+    #[cfg(feature = "vsock")]
+    #[allow(clippy::collapsible_if)]
+    if let Ok(host) = std::env::var(HOST_ENV) {
+        if let Some(addr) = host.strip_prefix("vsock://") {
+            return connect_vsock_str(addr).await;
+        }
+    }
     connect_to(&socket_path()).await
 }
 
+#[cfg(feature = "vsock")]
+async fn connect_vsock_str(addr: &str) -> io::Result<IpcStream> {
+    let (cid_str, port_str) = addr.split_once(':').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid vsock address '{addr}': expected CID:PORT"),
+        )
+    })?;
+    let cid: u32 = cid_str.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid vsock CID '{cid_str}'"),
+        )
+    })?;
+    let port: u32 = port_str.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid vsock port '{port_str}'"),
+        )
+    })?;
+    tokio_vsock::VsockStream::connect(tokio_vsock::VsockAddr::new(cid, port))
+        .await
+        .map(IpcStream::Vsock)
+        .map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot connect to daemon via vsock {cid}:{port}: {e}"),
+            )
+        })
+}
+
 /// Send a management request and read the response.
-///
-/// Skips any interleaved notifications (discards them). For long-lived
-/// connections that need notifications, use [`IpcConnection`] instead.
 ///
 /// # Errors
 ///
@@ -108,7 +202,6 @@ pub async fn send_request(
 
     write_length_delimited(stream, &msg).await?;
 
-    // Loop until we get a response, skipping up to 128 interleaved notifications.
     for _ in 0..128 {
         let daemon_msg: DaemonMessage = read_length_delimited(stream, MANAGEMENT_MTU).await?;
         match daemon_msg.message {
@@ -120,12 +213,9 @@ pub async fn send_request(
     Err(IpcError::TooManyNotifications)
 }
 
-// ── Long-lived connection with notification support ─────────────────
+// ── Long-lived connection with notification support ──────────────────
 
 /// A long-lived IPC connection that demuxes responses and notifications.
-///
-/// The reader task runs in the background, dispatching responses to callers
-/// and broadcasting notifications to subscribers.
 pub struct IpcConnection {
     write_tx: mpsc::Sender<ManagementRequest>,
     response_rx: mpsc::Receiver<ManagementResponse>,
@@ -136,8 +226,6 @@ pub struct IpcConnection {
 
 impl IpcConnection {
     /// Create a new `IpcConnection` over the given stream.
-    ///
-    /// Spawns background reader and writer tasks.
     pub fn new(stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static) -> Self {
         let (reader, writer) = tokio::io::split(stream);
 
@@ -146,7 +234,6 @@ impl IpcConnection {
         let (notifications_tx, _) = broadcast::channel::<DaemonNotification>(64);
 
         let writer_task = tokio::spawn(Self::writer_task(writer, write_rx));
-
         let reader_notifications_tx = notifications_tx.clone();
         let reader_task = tokio::spawn(Self::reader_task(
             reader,
@@ -177,12 +264,10 @@ impl IpcConnection {
             request_id,
             request: Some(request),
         };
-
         self.write_tx
             .send(msg)
             .await
             .map_err(|_| IpcError::ConnectionClosed)?;
-
         self.response_rx
             .recv()
             .await
@@ -221,8 +306,6 @@ impl IpcConnection {
                         break;
                     }
                 };
-
-            // Guard form would require cloning resp (moved into send)
             #[allow(clippy::collapsible_match)]
             match daemon_msg.message {
                 Some(daemon_message::Message::Response(resp)) => {
@@ -231,7 +314,6 @@ impl IpcConnection {
                     }
                 }
                 Some(daemon_message::Message::Notification(notif)) => {
-                    // Best-effort: if no subscribers, the send fails silently.
                     let _ = notifications_tx.send(notif);
                 }
                 None => {}
