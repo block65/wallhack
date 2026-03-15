@@ -11,9 +11,9 @@ use std::{sync::Arc, time::Duration};
 
 use wallhack_core::{
     NodeRole,
-    client::client::ConnectResult,
     control::{handler::HandlerConfig, metrics::Metrics},
     server::server::{Server, ServerOptions},
+    transport::Transport,
 };
 
 use crate::{
@@ -114,12 +114,16 @@ pub async fn run(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let global = global.clone();
                         let listen_spec = listen_spec.clone();
                         let server_options = server_options.clone();
                         async move {
-                            run_relay_loop(
-                                connect_result,
+                            run_relay_loop_inner(
+                                e.peer_addr,
+                                e.transport,
+                                e.channels,
+                                e.tasks,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -158,12 +162,16 @@ pub async fn run(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let global = global.clone();
                         let listen_spec = listen_spec.clone();
                         let server_options = server_options.clone();
                         async move {
-                            run_relay_loop(
-                                connect_result,
+                            run_relay_loop_inner(
+                                e.peer_addr,
+                                e.transport,
+                                e.channels,
+                                e.tasks,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -188,23 +196,22 @@ pub async fn run(
 ///
 /// Starts the listener, bridges channels, and returns `Ok(())` when the
 /// source peer disconnects so `connect_loop` reconnects.
-async fn run_relay_loop<T: wallhack_core::transport::Transport + 'static>(
-    connect_result: ConnectResult<T>,
+/// Non-generic relay loop: monomorphized once regardless of transport type.
+#[allow(clippy::too_many_arguments)]
+async fn run_relay_loop_inner(
+    peer_addr: String,
+    transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
+    channels: wallhack_core::server::server::DataChannels,
+    mut tasks: wallhack_core::client::client::ConnectionTasks,
     global: &GlobalConfig,
     listen_spec: &AddressSpec,
     addr: std::net::SocketAddr,
     server_options: ServerOptions,
 ) -> Result<(), NodeError> {
-    use wallhack_core::{
-        server::server::DataChannels,
-        transport::{ErasedTransport, protocol::run_send_instructions},
-    };
+    use wallhack_core::{server::server::DataChannels, transport::protocol::run_send_instructions};
 
-    let peer_addr = connect_result.peer_addr().to_string();
     tracing::info!("Connected to {peer_addr}");
 
-    let transport: std::sync::Arc<dyn ErasedTransport> = connect_result.transport();
-    let (channels, mut tasks, _control_tx) = connect_result.into_parts();
     let DataChannels {
         instructions_tx: source_instr_tx,
         instructions_rx: source_instr_rx,
@@ -243,9 +250,9 @@ async fn run_relay_loop<T: wallhack_core::transport::Transport + 'static>(
         source_instr_tx,
         fanout_register_tx,
     );
-    let disconnect_fut = tasks.wait_for_disconnect();
 
     tokio::pin!(listener_fut);
+    let disconnect_fut = tasks.wait_for_disconnect();
     tokio::pin!(disconnect_fut);
 
     tokio::select! {
@@ -323,81 +330,11 @@ async fn run_quic_listener(
 ) -> Result<(), NodeError> {
     let server_config =
         crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
-    let mut server =
-        wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
-            .map_err(|e| NodeError::Transport(Box::new(e)))?;
+    let server = wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
+        .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (QUIC)", server.local_addr()?);
 
-    loop {
-        match server.accept(NodeRole::Relay).await {
-            Ok(Some(accept_result)) => {
-                use wallhack_core::{
-                    server::server::DataChannels,
-                    transport::{
-                        ErasedTransport,
-                        protocol::{run_data_in, run_send_responses},
-                    },
-                };
-
-                let peer_addr = accept_result.peer_addr().to_string();
-                let transport: std::sync::Arc<dyn ErasedTransport> = accept_result.transport();
-                let (channels, control_tx) = accept_result.into_channels();
-                let DataChannels {
-                    instructions_tx,
-                    instructions_rx,
-                    responses_tx,
-                    responses_rx,
-                } = channels;
-
-                // Incoming: accept uni stream from peer, dispatch data messages.
-                let transport_in = std::sync::Arc::clone(&transport);
-                let instr_tx = instructions_tx.clone();
-                let resp_tx = responses_tx.clone();
-                tokio::spawn(async move {
-                    match transport_in.accept_uni_erased().await {
-                        Ok(Some(mut recv)) => {
-                            if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
-                                tracing::debug!("Relay peer data-in finished: {e}");
-                            }
-                        }
-                        Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
-                        Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
-                    }
-                });
-
-                // Outgoing: open uni stream to peer, send responses.
-                let transport_out = transport;
-                tokio::spawn(async move {
-                    match transport_out.open_uni_erased().await {
-                        Ok(mut send) => {
-                            if let Err(e) = run_send_responses(&mut send, responses_rx).await {
-                                tracing::debug!("Relay peer send-responses finished: {e}");
-                            }
-                        }
-                        Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
-                    }
-                });
-
-                crate::transport::bridge_channels(
-                    &peer_addr,
-                    instructions_rx,
-                    responses_tx,
-                    control_tx,
-                    source_instr_tx.clone(),
-                    &fanout_register_tx,
-                );
-            }
-            Ok(None) => {
-                tracing::info!("Server closed");
-                break;
-            }
-            Err(e) => {
-                tracing::warn!("Accept error: {}", e);
-            }
-        }
-    }
-
-    Ok(())
+    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx).await
 }
 
 #[cfg(feature = "websocket")]
@@ -414,67 +351,36 @@ async fn run_ws_listener(
 
     let server_config =
         crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
-    let mut server = WebSocketServer::try_new(server_config, server_options)
+    let server = WebSocketServer::try_new(server_config, server_options)
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
+    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx).await
+}
+
+/// Generic relay accept loop that works with any `Server` implementation.
+async fn run_relay_accept_loop<S: Server>(
+    mut server: S,
+    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
+        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+    >,
+) -> Result<(), NodeError>
+where
+    S::Error: std::error::Error + Send + Sync + 'static,
+    S::Transport: Send + Sync + 'static,
+    <S::Transport as Transport>::SendStream: 'static,
+    <S::Transport as Transport>::RecvStream: 'static,
+    <S::Transport as Transport>::BiStream: Send + 'static,
+{
     loop {
         match server.accept(NodeRole::Relay).await {
             Ok(Some(accept_result)) => {
-                use wallhack_core::{
-                    server::server::DataChannels,
-                    transport::{
-                        ErasedTransport,
-                        protocol::{run_data_in, run_send_responses},
-                    },
-                };
-
-                let peer_addr = accept_result.peer_addr().to_string();
-                let transport: std::sync::Arc<dyn ErasedTransport> = accept_result.transport();
-                let (channels, control_tx) = accept_result.into_channels();
-                let DataChannels {
-                    instructions_tx,
-                    instructions_rx,
-                    responses_tx,
-                    responses_rx,
-                } = channels;
-
-                // Incoming: accept uni stream from peer, dispatch data messages.
-                let transport_in = std::sync::Arc::clone(&transport);
-                let instr_tx = instructions_tx.clone();
-                let resp_tx = responses_tx.clone();
-                tokio::spawn(async move {
-                    match transport_in.accept_uni_erased().await {
-                        Ok(Some(mut recv)) => {
-                            if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
-                                tracing::debug!("Relay peer data-in finished: {e}");
-                            }
-                        }
-                        Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
-                        Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
-                    }
-                });
-
-                // Outgoing: open uni stream to peer, send responses.
-                let transport_out = transport;
-                tokio::spawn(async move {
-                    match transport_out.open_uni_erased().await {
-                        Ok(mut send) => {
-                            if let Err(e) = run_send_responses(&mut send, responses_rx).await {
-                                tracing::debug!("Relay peer send-responses finished: {e}");
-                            }
-                        }
-                        Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
-                    }
-                });
-
-                crate::transport::bridge_channels(
-                    &peer_addr,
-                    instructions_rx,
-                    responses_tx,
-                    control_tx,
+                let erased = accept_result.erase();
+                handle_relay_connection(
+                    erased,
                     source_instr_tx.clone(),
-                    &fanout_register_tx,
+                    fanout_register_tx.clone(),
                 );
             }
             Ok(None) => {
@@ -488,4 +394,66 @@ async fn run_ws_listener(
     }
 
     Ok(())
+}
+
+/// Non-generic handler for erased relay connection results.
+fn handle_relay_connection(
+    erased: wallhack_core::server::server::ErasedAcceptResult,
+    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
+        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+    >,
+) {
+    use wallhack_core::{
+        server::server::DataChannels,
+        transport::protocol::{run_data_in, run_send_responses},
+    };
+
+    let peer_addr = erased.peer_addr;
+    let transport = erased.transport;
+    let (channels, control_tx) = (erased.channels, erased.control_tx);
+    let DataChannels {
+        instructions_tx,
+        instructions_rx,
+        responses_tx,
+        responses_rx,
+    } = channels;
+
+    // Incoming: accept uni stream from peer, dispatch data messages.
+    let transport_in = std::sync::Arc::clone(&transport);
+    let instr_tx = instructions_tx.clone();
+    let resp_tx = responses_tx.clone();
+    tokio::spawn(async move {
+        match transport_in.accept_uni_erased().await {
+            Ok(Some(mut recv)) => {
+                if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
+                    tracing::debug!("Relay peer data-in finished: {e}");
+                }
+            }
+            Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
+            Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
+        }
+    });
+
+    // Outgoing: open uni stream to peer, send responses.
+    let transport_out = transport;
+    tokio::spawn(async move {
+        match transport_out.open_uni_erased().await {
+            Ok(mut send) => {
+                if let Err(e) = run_send_responses(&mut send, responses_rx).await {
+                    tracing::debug!("Relay peer send-responses finished: {e}");
+                }
+            }
+            Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
+        }
+    });
+
+    crate::transport::bridge_channels(
+        &peer_addr,
+        instructions_rx,
+        responses_tx,
+        control_tx,
+        source_instr_tx,
+        &fanout_register_tx,
+    );
 }

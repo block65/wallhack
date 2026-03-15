@@ -15,7 +15,7 @@ use wallhack_wire::{
 };
 
 use crate::control::handler::Handler;
-use wallhack_transport::{BiStream, Transport, TransportError};
+use wallhack_transport::{Transport, TransportError, erased::BoxBiStream};
 
 /// Maximum size for `TcpStreamHeader` and `TcpStreamStatus` messages (1KB).
 pub const TCP_STREAM_HEADER_MTU: usize = 1024;
@@ -155,9 +155,9 @@ impl ControlChannels {
     ///
     /// The `handler` is `Some` on the server side (to process incoming
     /// `ControlRequest`s) and `None` on the client side.
-    pub async fn run<S: BiStream>(
+    pub async fn run(
         &mut self,
-        stream: &mut S,
+        stream: &mut BoxBiStream,
         handler: Option<&Handler>,
         ping_interval: std::time::Duration,
     ) -> ControlLoopExit {
@@ -222,9 +222,9 @@ impl ControlChannels {
     /// Process a single incoming `ControlMessage`.
     ///
     /// Returns `Some(exit_reason)` if the loop should terminate.
-    async fn handle_message<S: BiStream>(
+    async fn handle_message(
         &mut self,
-        stream: &mut S,
+        stream: &mut BoxBiStream,
         msg: ControlMessage,
         handler: Option<&Handler>,
         write_buf: &mut Vec<u8>,
@@ -313,8 +313,12 @@ pub async fn run_control_stream_initiator<T: Transport>(
     channels: &mut ControlChannels,
     handler: Option<&Handler>,
     ping_interval: std::time::Duration,
-) -> Result<ControlLoopExit, TransportError> {
-    let mut stream = transport.open_bi().await?;
+) -> Result<ControlLoopExit, TransportError>
+where
+    T::BiStream: Send + 'static,
+{
+    let stream = transport.open_bi().await?;
+    let mut stream = BoxBiStream::new(stream);
     Ok(channels.run(&mut stream, handler, ping_interval).await)
 }
 
@@ -328,10 +332,14 @@ pub async fn run_control_stream_acceptor<T: Transport>(
     channels: &mut ControlChannels,
     handler: Option<&Handler>,
     ping_interval: std::time::Duration,
-) -> Result<ControlLoopExit, TransportError> {
-    let Some(mut stream) = transport.accept_bi().await? else {
+) -> Result<ControlLoopExit, TransportError>
+where
+    T::BiStream: Send + 'static,
+{
+    let Some(stream) = transport.accept_bi().await? else {
         return Ok(ControlLoopExit::StreamClosed);
     };
+    let mut stream = BoxBiStream::new(stream);
     Ok(channels.run(&mut stream, handler, ping_interval).await)
 }
 
@@ -668,6 +676,7 @@ mod tests {
                 control_response_tx: None,
                 role_transition_tx: None,
             };
+            let mut stream_a = BoxBiStream::new(stream_a);
             channels
                 .run(&mut stream_a, None, std::time::Duration::from_mins(10))
                 .await
@@ -681,6 +690,7 @@ mod tests {
                 control_response_tx: None,
                 role_transition_tx: None,
             };
+            let mut stream_b = BoxBiStream::new(stream_b);
             channels
                 .run(&mut stream_b, None, std::time::Duration::from_mins(10))
                 .await
@@ -735,6 +745,7 @@ mod tests {
             role_transition_tx: None,
         };
 
+        let mut stream_b = BoxBiStream::new(stream_b);
         let exit = channels
             .run(&mut stream_b, None, std::time::Duration::from_mins(10))
             .await;
@@ -763,6 +774,7 @@ mod tests {
 
         // Spawn the control loop on side B (will read from stream_b).
         let b_handle = tokio::spawn(async move {
+            let mut stream_b = BoxBiStream::new(stream_b);
             channels
                 .run(&mut stream_b, None, std::time::Duration::from_mins(10))
                 .await
@@ -843,6 +855,7 @@ mod tests {
 
         // Control loop with 1-second ping interval.
         let b_handle = tokio::spawn(async move {
+            let mut stream_b = BoxBiStream::new(stream_b);
             channels
                 .run(&mut stream_b, None, std::time::Duration::from_secs(1))
                 .await
@@ -913,6 +926,7 @@ mod tests {
         };
 
         let server_handle = tokio::spawn(async move {
+            let mut server_stream = BoxBiStream::new(server_stream);
             channels
                 .run(
                     &mut server_stream,
@@ -1042,6 +1056,7 @@ mod tests {
         };
 
         let server_handle = tokio::spawn(async move {
+            let mut server_stream = BoxBiStream::new(server_stream);
             channels
                 .run(
                     &mut server_stream,

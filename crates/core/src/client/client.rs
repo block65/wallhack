@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 
+use wallhack_transport::ErasedTransport;
 use wallhack_wire::{control::ControlMessage, data::Handshake};
 
 use crate::{NodeRole, server::server::DataChannels};
@@ -88,6 +91,44 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
     /// Returns `None` if already taken or not provided.
     pub fn take_peer_handshake_rx(&mut self) -> Option<oneshot::Receiver<Handshake>> {
         self.peer_handshake_rx.take()
+    }
+}
+
+/// Type-erased result of a successful connection.
+///
+/// Produced by [`ConnectResult::erase()`]. All transport-specific types have
+/// been erased to `Arc<dyn ErasedTransport>`, so downstream code is
+/// monomorphized only once regardless of the concrete transport.
+pub struct ErasedConnectResult {
+    pub transport: Arc<dyn ErasedTransport>,
+    pub channels: DataChannels,
+    pub tasks: ConnectionTasks,
+    pub control_tx: mpsc::Sender<ControlMessage>,
+    pub peer_handshake_rx: Option<oneshot::Receiver<Handshake>>,
+    pub peer_addr: String,
+}
+
+impl<T> ConnectResult<T>
+where
+    T: wallhack_transport::Transport + 'static,
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: 'static,
+{
+    /// Erase the concrete transport type.
+    ///
+    /// This is a **sync** operation — no async state machine is created —
+    /// so calling it inside a closure before an `async move` block avoids
+    /// capturing the generic `ConnectResult<T>` in the future's state machine.
+    pub fn erase(mut self) -> ErasedConnectResult {
+        ErasedConnectResult {
+            peer_handshake_rx: self.peer_handshake_rx.take(),
+            transport: self.transport as Arc<dyn ErasedTransport>,
+            peer_addr: self.peer_addr,
+            channels: self.channels,
+            tasks: self.tasks,
+            control_tx: self.control_tx,
+        }
     }
 }
 

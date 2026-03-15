@@ -309,6 +309,7 @@ impl Server for WebSocketServer {
                 control_response_tx: None, // server doesn't issue ControlRequests
                 role_transition_tx: None,
             };
+            let mut control_stream = wallhack_transport::erased::BoxBiStream::new(control_stream);
             let exit = channels
                 .run(&mut control_stream, Some(&handler), Duration::from_secs(30))
                 .await;

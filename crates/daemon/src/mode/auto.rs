@@ -16,7 +16,6 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 use wallhack_core::{
     NodeRole,
-    client::client::ConnectResult,
     control::{handler::SharedRole, metrics::Metrics, peers::Registry, routes::SharedRouteTable},
     entry::manager::ConnectionManager,
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
@@ -178,6 +177,7 @@ async fn run_auto_connector(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let metrics = Arc::clone(&metrics);
                         let peers = Arc::clone(&peers);
                         let pa = peer_addr.clone();
@@ -185,8 +185,12 @@ async fn run_auto_connector(
                         let sr = Arc::clone(&shared_role);
                         let hr = hint_rx.clone();
                         async move {
-                            run_auto_connect_session(
-                                connect_result,
+                            run_auto_connect_session_dispatch(
+                                e.peer_handshake_rx,
+                                e.transport,
+                                e.channels,
+                                e.tasks,
+                                e.control_tx,
                                 &lhs,
                                 &pa,
                                 metrics,
@@ -224,6 +228,7 @@ async fn run_auto_connector(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let metrics = Arc::clone(&metrics);
                         let peers = Arc::clone(&peers);
                         let pa = peer_addr.clone();
@@ -231,8 +236,12 @@ async fn run_auto_connector(
                         let sr = Arc::clone(&shared_role);
                         let hr = hint_rx.clone();
                         async move {
-                            run_auto_connect_session(
-                                connect_result,
+                            run_auto_connect_session_dispatch(
+                                e.peer_handshake_rx,
+                                e.transport,
+                                e.channels,
+                                e.tasks,
+                                e.control_tx,
                                 &lhs,
                                 &pa,
                                 metrics,
@@ -251,44 +260,6 @@ async fn run_auto_connector(
             Err(NodeError::TransportUnavailable("websocket"))
         }
     }
-}
-
-/// Drive one auto-connector session: await peer handshake, negotiate, dispatch.
-///
-/// Thin generic wrapper: extracts all non-generic parts from `ConnectResult<T>`
-/// and delegates to `run_auto_connect_session_inner`.
-async fn run_auto_connect_session<T>(
-    mut connect_result: ConnectResult<T>,
-    local_hs: &Handshake,
-    peer_addr: &str,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    shared_role: SharedRole,
-    hint_rx: watch::Receiver<Option<RoleHint>>,
-) -> Result<(), NodeError>
-where
-    T: wallhack_core::transport::Transport + 'static,
-    T::SendStream: 'static,
-    T::RecvStream: 'static,
-    T::BiStream: 'static,
-{
-    let peer_handshake_rx = connect_result.take_peer_handshake_rx();
-    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
-    let (channels, tasks, control_tx) = connect_result.into_parts();
-    run_auto_connect_session_dispatch(
-        peer_handshake_rx,
-        transport,
-        channels,
-        tasks,
-        control_tx,
-        local_hs,
-        peer_addr,
-        metrics,
-        peers,
-        shared_role,
-        hint_rx,
-    )
-    .await
 }
 
 /// Non-generic auto-connector dispatch: negotiates role and runs the session.
@@ -583,7 +554,7 @@ where
     S::Transport: Send + Sync + 'static,
     <S::Transport as Transport>::SendStream: 'static,
     <S::Transport as Transport>::RecvStream: 'static,
-    <S::Transport as Transport>::BiStream: 'static,
+    <S::Transport as Transport>::BiStream: Send + 'static,
 {
     let local_addr = server.local_addr()?;
     tracing::info!(
@@ -598,58 +569,19 @@ where
 
     loop {
         match server.accept(NodeRole::Indeterminate).await {
-            Ok(Some(mut accept_result)) => {
-                let peer_addr = accept_result.peer_addr().to_string();
-
-                // PSK validation — must happen before spawning.
-                if let Some(ref psk) = server_psk
-                    && let Some(hs) = accept_result.peer_handshake()
-                {
-                    use wallhack_core::psk::HandshakeExt as _;
-                    let channel_binding = accept_result.channel_binding().copied();
-                    let valid = channel_binding
-                        .as_ref()
-                        .is_some_and(|b| hs.verify_psk_proof(psk.as_bytes(), b));
-                    if !valid {
-                        tracing::warn!("Peer {peer_addr} failed PSK authentication, dropping");
-                        continue;
-                    }
-                }
-
-                // Extract everything from the generic AcceptResult before spawning
-                // so the spawned future is non-generic.
-                let peer_hs = accept_result.take_peer_handshake();
-                let transport: Arc<dyn ErasedTransport> = accept_result.transport();
-                let (
-                    DataChannels {
-                        instructions_tx,
-                        instructions_rx,
-                        responses_tx,
-                        responses_rx,
-                    },
-                    control_tx,
-                ) = accept_result.into_channels();
-
+            Ok(Some(accept_result)) => {
+                let erased = accept_result.erase();
+                let server_psk = server_psk.clone();
                 let local_hs = local_hs.clone();
                 let metrics = Arc::clone(&metrics);
                 let peers = Arc::clone(&peers);
                 let routes = Arc::clone(&routes);
                 let sr = Arc::clone(&shared_role);
+
                 tokio::spawn(async move {
-                    if let Err(e) = run_auto_accept_session_inner(
-                        transport,
-                        instructions_tx,
-                        instructions_rx,
-                        responses_tx,
-                        responses_rx,
-                        control_tx,
-                        peer_hs,
-                        local_hs,
-                        metrics,
-                        peers,
-                        routes,
-                        peer_addr,
-                        sr,
+                    let psk_ref = server_psk.as_ref().map(|s| s.as_str());
+                    if let Err(e) = run_auto_accept_session_erased(
+                        erased, psk_ref, local_hs, metrics, peers, routes, sr,
                     )
                     .await
                     {
@@ -668,6 +600,61 @@ where
     }
 
     Ok(())
+}
+
+/// Non-generic handler for erased auto-listener sessions.
+async fn run_auto_accept_session_erased(
+    mut erased: wallhack_core::server::server::ErasedAcceptResult,
+    server_psk: Option<&str>,
+    local_hs: Handshake,
+    metrics: Arc<Metrics>,
+    peers: Arc<Registry>,
+    routes: SharedRouteTable,
+    shared_role: SharedRole,
+) -> Result<(), NodeError> {
+    let peer_addr = erased.peer_addr.clone();
+
+    // PSK validation — must happen before spawning.
+    if let Some(psk) = server_psk
+        && let Some(hs) = erased.peer_handshake.as_ref()
+    {
+        use wallhack_core::psk::HandshakeExt as _;
+        let channel_binding = erased.channel_binding.as_ref();
+        let valid = channel_binding.is_some_and(|b| hs.verify_psk_proof(psk.as_bytes(), b));
+        if !valid {
+            tracing::warn!("Peer {peer_addr} failed PSK authentication, dropping");
+            return Err(NodeError::PskAuth(hs.name.clone()));
+        }
+    }
+
+    // Extract everything from the generic AcceptResult before spawning
+    // so the spawned future is non-generic.
+    let peer_hs = erased.peer_handshake.take();
+    let transport: Arc<dyn ErasedTransport> = erased.transport;
+    let DataChannels {
+        instructions_tx,
+        instructions_rx,
+        responses_tx,
+        responses_rx,
+    } = erased.channels;
+    let control_tx = erased.control_tx;
+
+    run_auto_accept_session_inner(
+        transport,
+        instructions_tx,
+        instructions_rx,
+        responses_tx,
+        responses_rx,
+        control_tx,
+        peer_hs,
+        local_hs,
+        metrics,
+        peers,
+        routes,
+        peer_addr,
+        shared_role,
+    )
+    .await
 }
 
 /// Non-generic inner implementation for accepted auto-listener sessions.
