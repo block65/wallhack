@@ -259,7 +259,11 @@
 
 - [ ] AWS-LC: Timing side-channel in AES-CCM tag verification (high) — `aws-lc-fips-sys`, `aws-lc-sys`
 - [ ] AWS-LC: `PKCS7_verify` certificate chain validation bypass (high) — `aws-lc-sys` GHSA-vw5v-4f2q-w9xf
+- [ ] Quinn: unauthenticated remote DoS via panic in QUIC transport parameter parsing (high) — `quinn-proto` < 0.11.14, patched in 0.11.14
 
+
+## CLI
+- [ ] `wallhack peers --json` — machine-readable output matching REST API shape, with `tun_name` field in `PeerInfo`. Non-slim feature (watch bloat). Needed by bench init.sh to discover TUN name dynamically instead of hardcoding FNV-1a hash.
 
 ## Website
 - [ ] `website.just` file is in the wrong place?
