@@ -10,7 +10,7 @@ Each wallhack node operates as one of three roles. Roles are assigned automatica
 
 ## Entry
 
-Runs on the attacker's machine. Creates a TUN interface — a virtual network device — that routes traffic into the tunnel chain. Any traffic sent to a routed subnet arrives here and is forwarded onward.
+Runs on the attacker's machine. Creates a TUN interface — a virtual network device — that routes traffic into the tunnel chain. Any traffic sent to a routed subnet arrives here and is forwarded onward. ICMP echo requests are forwarded through the tunnel, so `ping` works to addresses on the target network.
 
 {% codeblock code="wallhack" /%}
 
