@@ -1,6 +1,42 @@
 
 # Changelog
 
+## [0.7.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.3...wallhack-cli-v0.7.0) (2026-03-15)
+
+### Features
+
+* **entry:** forward ICMP echo requests through tunnel ([9599dc2](https://github.com/block65/wallhack/commit/9599dc2674eb663eada0895e37ebed6d7b67908a))
+
+### Bug Fixes
+
+* **cli:** deduplicate consecutive identical log lines with repeat summary ([c95ff38](https://github.com/block65/wallhack/commit/c95ff3840fe4f9346066f0b88701745a956a2959))
+* **cli:** wire vsock IPC listener into daemon REPL, refactor ctl stream connect ([f2ef974](https://github.com/block65/wallhack/commit/f2ef974487b2c477240d7d319c06b7726e3df29a))
+* **core:** suppress unused variable warning in find_by_addr ([48aec0a](https://github.com/block65/wallhack/commit/48aec0aa321fb28cd0f1d5506d05895d8053913c))
+* **core:** client handshake must carry routes and hint from local_handshake ([ca7de2c](https://github.com/block65/wallhack/commit/ca7de2c7e434c1a80e0b8821cead82ca71694949))
+* **core:** wire route_updates broadcast channel into server handlers ([a3d3c72](https://github.com/block65/wallhack/commit/a3d3c72e01e971c4d281e7f9a4bedad7a3a62982))
+* **daemon:** exponential backoff on reconnect and log dedup ([d89e532](https://github.com/block65/wallhack/commit/d89e532617038a0acbcc2eb91fbccfd607c8c4b6))
+* **daemon:** peer names, role in peers, status capabilities, log quality ([1ed1c82](https://github.com/block65/wallhack/commit/1ed1c82d219cc41c1e04ffc020f33a4a30039a20))
+* **daemon:** consistent log format, reconnect attempt counter, backoff naming ([b65080d](https://github.com/block65/wallhack/commit/b65080df2d1bb4dbc92045f60a44d54f79ec68d2))
+* **daemon:** TCP relay logging, PSK dedup, version display with build ID ([5c78ab1](https://github.com/block65/wallhack/commit/5c78ab1a64cd33697230fbc2a11c9a5997d55d0f))
+* **daemon:** consolidate version display into single canonical format ([5be96b4](https://github.com/block65/wallhack/commit/5be96b4b0e0665f84f70831eaedf89a6cd870fc6))
+* **daemon:** single version source — global.version used everywhere ([991c74b](https://github.com/block65/wallhack/commit/991c74b3cea92e3caf47edad662282b1fde42ffb))
+* **daemon:** initial ping + 30s heartbeat in entry connection loop ([51d9e46](https://github.com/block65/wallhack/commit/51d9e4621fab254cd77d760d1809ee880426d7a6))
+* **daemon:** include build timestamp in version string ([1734d77](https://github.com/block65/wallhack/commit/1734d771dc5e65da6ef4af07208dd5f8f034a57d))
+* **daemon:** 13e route announcement — exit advertises local CIDRs, entry auto-installs ([d363d90](https://github.com/block65/wallhack/commit/d363d900d2026107ecc70d69c69a65d190e8b6c2))
+* **deps:** update website/package.json version ranges to match pnpm-lock.yaml ([cef8469](https://github.com/block65/wallhack/commit/cef84696259338554ae574d33e807f885664f87a))
+* **entry-stack:** prune stale JIT listen sockets, ProbeResult enum for SYN probe ([c80e363](https://github.com/block65/wallhack/commit/c80e363ce1094cc66bad6fb5ec2699fa0cf12d30))
+* **exit:** bind TCP to unspecified instead of hardcoded IP ([eca1c5d](https://github.com/block65/wallhack/commit/eca1c5d360fdf3326f1cc9937f13d16c12cb3d12))
+* **ipc:** vsock IPC client support — IpcStream enum, feature-gated vsock variant ([b4bfff7](https://github.com/block65/wallhack/commit/b4bfff7cfb8c2348e25cda123dd8f9aeda7d6af4))
+* **logging:** demote per-flow probe log to debug, fix Some() leak in route listener ([66c496c](https://github.com/block65/wallhack/commit/66c496c2eb90c582d56e43584bf16a20bb2b1835))
+* **mcp:** wire tool router, fix range setup for MCP control ([f53e5e9](https://github.com/block65/wallhack/commit/f53e5e99a15f46ebfcc1fc199e80d849f1407214))
+* **mcp:** consistent lowercase in status/peer display, clearer connect logs ([c90e35a](https://github.com/block65/wallhack/commit/c90e35ae587109788edfd5160ad52a4e92d7bad7))
+* **mcp:** rename tools to drop wallhack_ prefix, add version to ServerInfo, unify built dep ([947706b](https://github.com/block65/wallhack/commit/947706b724eb4aa40b47b34bad74697874233a7a))
+* **mcp:** disconnect_peer accepts name prefix or remote address ([018d813](https://github.com/block65/wallhack/commit/018d81331abf8e49943919b64078df926417733e))
+* **mcp:** show auto-managed routes with (auto) tag in routes output ([8694a99](https://github.com/block65/wallhack/commit/8694a99c057195f281f0892debea0740c8ebb91c))
+
+13 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.3...wallhack-cli-v0.7.0)
+
+
 ## [0.6.3](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.2...wallhack-cli-v0.6.3) (2026-03-15)
 
 ### Bug Fixes
