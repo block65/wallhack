@@ -1,5 +1,6 @@
 # Agent Guidelines for wallhack
 
+**Always:** `cat standards/workflow/communication.md` and follow it.
 **Before writing or modifying Rust code:** STOP. `cat standards/lang/rust.md` and follow it.
 **Before staging, committing, or creating a PR:** STOP. `cat standards/workflow/git.md` and follow it.
 **Before opening or merging a PR:** STOP. `cat standards/workflow/triple.md` and follow it.
