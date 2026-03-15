@@ -62,3 +62,9 @@ do-merge:
     git checkout main
     git merge --ff-only upstream/main
     git push origin main
+
+update-agents:
+    git submodule update --remote
+    cp AGENTS.md CLAUDE.md
+    cp AGENTS.md GEMINI.md
+    cp AGENTS.md .github/copilot-instructions.md
