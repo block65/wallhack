@@ -168,41 +168,6 @@ jobs:
       - name: Check default binary size (musl — primary)
         run: ./bench/check_bloat.sh --no-build --only=default-musl
 
-  build-musl-zigbuild:
-    needs: [test-musl]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        run: |
-          rustup show
-          rustup target add x86_64-unknown-linux-musl
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2.2.1
-        with:
-          version: 0.14.0
-
-      - name: Cache cargo (musl-zigbuild)
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-musl-zigbuild-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-musl-zigbuild-cargo-
-
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild
-
-      - name: Build slim (musl — zigbuild)
-        run: cargo zigbuild --release --target x86_64-unknown-linux-musl -p wallhack-cli --no-default-features --features slim
-
-      - name: Build default (musl — zigbuild)
-        run: cargo zigbuild --release --target x86_64-unknown-linux-musl -p wallhack-cli
 
   test-glibc:
     needs: [lint]
