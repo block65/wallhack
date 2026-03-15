@@ -1,9 +1,8 @@
-//! SYN proxy: probe exit node before committing to a TCP handshake.
+//! SYN probe: check exit-node reachability before committing to a TCP handshake.
 //!
-//! When a SYN arrives for an unknown port, the poll loop holds it and sends
-//! it here for probing. We open a bi-stream to the exit node, send a
-//! `TcpStreamHeader`, and read the `TcpStreamStatus`. If success → mark Open;
-//! if refused → mark Closed.
+//! When a SYN arrives for an unknown (host, port), the poll loop holds it and
+//! sends it here for probing. We open a bi-stream to the exit node, send a
+//! `TcpStreamHeader`, and read the `TcpStreamStatus` to determine reachability.
 
 use std::sync::Arc;
 
@@ -15,17 +14,39 @@ use crate::transport::protocol::{
     AsyncProtoRead as _, AsyncProtoWrite as _, TCP_STREAM_HEADER_MTU,
 };
 
+/// Result of probing a TCP target via the exit node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeResult {
+    /// Exit connected successfully — port is listening.
+    Open,
+    /// Exit got `ECONNREFUSED` — host alive, port not listening.
+    Closed,
+    /// Exit got `EHOSTUNREACH` / `ENETUNREACH` — host doesn't exist.
+    Unreachable,
+    /// Transport error or timeout — tunnel issue, don't cache.
+    TransportError,
+}
+
 /// Probe the exit node to check if a TCP target is reachable.
 ///
 /// Opens a bi-stream, sends `TcpStreamHeader`, reads `TcpStreamStatus`, then closes.
-/// Returns `true` if the exit confirmed the connection (open port).
-pub async fn probe_tcp_target(transport: &Arc<dyn ErasedTransport>, target_addr: &str) -> bool {
+pub async fn probe_tcp_target(
+    transport: &Arc<dyn ErasedTransport>,
+    target_addr: &str,
+) -> ProbeResult {
     let result = probe_inner(transport, target_addr).await;
     match result {
-        Ok(open) => open,
+        Ok(status) => match status {
+            ResponseStatus::Success => ProbeResult::Open,
+            ResponseStatus::ConnectionRefused => ProbeResult::Closed,
+            _ => {
+                tracing::debug!(target_addr, ?status, "SYN probe: host/network unreachable");
+                ProbeResult::Unreachable
+            }
+        },
         Err(e) => {
-            tracing::debug!(target_addr, error = %e, "SYN probe failed, treating as closed");
-            false
+            tracing::debug!(target_addr, error = %e, "SYN probe: transport error");
+            ProbeResult::TransportError
         }
     }
 }
@@ -33,7 +54,7 @@ pub async fn probe_tcp_target(transport: &Arc<dyn ErasedTransport>, target_addr:
 async fn probe_inner(
     transport: &Arc<dyn ErasedTransport>,
     target_addr: &str,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<ResponseStatus, Box<dyn std::error::Error + Send + Sync>> {
     let mut stream = transport.open_bi_erased().await?;
 
     let header = TcpStreamHeader {
@@ -48,7 +69,7 @@ async fn probe_inner(
 
     let status: TcpStreamStatus = stream.read_proto(TCP_STREAM_HEADER_MTU).await?;
 
-    Ok(status.status() == ResponseStatus::Success)
+    Ok(status.status())
 }
 
 /// Extract destination IP and port from a raw IP packet containing a TCP SYN.

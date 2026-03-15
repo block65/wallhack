@@ -9,7 +9,7 @@ use smoltcp::wire::{
 };
 use tokio::{io::AsyncWriteExt, time::Instant};
 
-use super::{CacheEntry, Netstack, SynProxyState, test_helpers::*};
+use super::{CacheEntry, Netstack, SynProbeCache, test_helpers::*};
 use crate::{
     config::StackConfig,
     inner::{InnerStack, device::VecDevice},
@@ -159,29 +159,36 @@ async fn test_udp_bind_any_enables_jit() {
 }
 
 #[tokio::test]
-async fn test_syn_proxy_state() {
-    let state = SynProxyState::new(false);
-    assert!(!state.is_fast_mode());
+async fn test_syn_probe_cache() {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+    let addr80 = SocketAddr::new(ip, 80);
+    let addr443 = SocketAddr::new(ip, 443);
+    let addr9999 = SocketAddr::new(ip, 9999);
+    let addr_absent = SocketAddr::new(ip, 1234);
 
-    state.mark_probing(80);
-    assert_eq!(state.get(80), Some(CacheEntry::Probing));
+    let state = SynProbeCache::new();
 
-    state.mark_open(80);
-    assert_eq!(state.get(80), Some(CacheEntry::Open));
-    assert!(!state.is_closed(80));
+    state.mark_probing(addr80);
+    assert_eq!(state.get(addr80), Some(CacheEntry::Probing));
 
-    state.mark_closed(443);
-    assert_eq!(state.get(443), Some(CacheEntry::Closed));
-    assert!(state.is_closed(443));
+    state.mark_open(addr80);
+    assert_eq!(state.get(addr80), Some(CacheEntry::Open));
+    assert!(!state.is_closed(addr80));
 
-    assert_eq!(state.get(9999), None);
+    state.mark_closed(addr443);
+    assert_eq!(state.get(addr443), Some(CacheEntry::Closed));
+    assert!(state.is_closed(addr443));
+
+    state.mark_unreachable(addr9999);
+    assert_eq!(state.get(addr9999), Some(CacheEntry::Unreachable));
+    assert!(!state.is_closed(addr9999));
+
+    assert_eq!(state.get(addr_absent), None);
 
     state.clear_cache();
-    assert_eq!(state.get(80), None);
-    assert_eq!(state.get(443), None);
-
-    state.set_fast_mode(true);
-    assert!(state.is_fast_mode());
+    assert_eq!(state.get(addr80), None);
+    assert_eq!(state.get(addr443), None);
 }
 
 // ============================================================================
