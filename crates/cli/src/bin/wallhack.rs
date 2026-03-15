@@ -212,6 +212,25 @@ fn run_daemon_repl(
             }
         });
 
+        #[cfg(feature = "vsock")]
+        {
+            let ipc_api_vsock = handle.api_arc();
+            let peer_events_vsock = handle.peer_events_sender();
+            let shutdown_rx_vsock = handle.shutdown_rx();
+            tokio::spawn(async move {
+                if let Err(e) = wallhack_core::ipc::run_vsock_listener(
+                    ipc_api_vsock,
+                    peer_events_vsock,
+                    wallhack_core::ipc::VSOCK_IPC_PORT,
+                    shutdown_rx_vsock,
+                )
+                .await
+                {
+                    tracing::warn!("vsock IPC listener unavailable: {e}");
+                }
+            });
+        }
+
         // In-process connection for the REPL (with notifications).
         let (client, server) = tokio::io::duplex(4096);
         let api = handle.api_arc();
@@ -279,10 +298,11 @@ fn run_ctl(cli: wallhack_cli::cli::Cli) -> ! {
 
 async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlError> {
     let mut stream = match &cli.host {
-        Some(host) => ipc::connect_to(&ipc::resolve_host(host)).await,
-        None => ipc::connect().await,
-    }
-    .map_err(ipc::IpcError::from)?;
+        Some(host) => ipc::connect_to(&ipc::resolve_host(host))
+            .await
+            .map_err(ipc::IpcError::from)?,
+        None => ipc::connect().await.map_err(ipc::IpcError::from)?,
+    };
 
     let Some(command) = cli.command else {
         eprintln!("error: missing subcommand\nRun with --help for usage information.");
