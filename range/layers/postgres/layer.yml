@@ -1,0 +1,13 @@
+packages:
+  - postgresql16
+start: |
+  PGDATA=/var/lib/postgresql/16/data
+  mkdir -p "$PGDATA"
+  chown -R postgres:postgres /var/lib/postgresql
+  if [ ! -f "$PGDATA/PG_VERSION" ]; then
+    su -s /bin/sh postgres -c "initdb -D $PGDATA"
+  fi
+  su -s /bin/sh postgres -c "pg_ctl -D $PGDATA -l /tmp/postgres.log start"
+  sleep 2
+  su -s /bin/sh postgres -c "psql -c \"CREATE USER app WITH PASSWORD 'supersecret';\" 2>/dev/null || true"
+  su -s /bin/sh postgres -c "psql -c \"CREATE DATABASE production OWNER app;\" 2>/dev/null || true"

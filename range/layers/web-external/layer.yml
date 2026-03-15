@@ -1,0 +1,7 @@
+packages:
+  - nginx
+configs:
+  - etc/nginx/http.d/default.conf
+  - var/www/localhost/htdocs/index.html
+start: |
+  nginx -g "daemon off;" &

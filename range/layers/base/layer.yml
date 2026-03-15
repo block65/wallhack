@@ -1,0 +1,6 @@
+# Base layer — networking tools present on every VM
+packages:
+  - iperf3
+  - iproute2
+  - iptables
+  - socat

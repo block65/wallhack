@@ -1,5 +1,6 @@
 mod bench "bench/bench.just"
-mod website
+mod website "website/website.just"
+mod range "range/range.just"
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
