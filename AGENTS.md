@@ -1,10 +1,9 @@
 # Agent Guidelines for wallhack
 
-**Always:** `cat standards/README.md` — follow all "Always load" standards listed there.
+**Always:** `cat standards/index.md` — follow all "Always load" standards listed there.
 **Before writing or modifying Rust code:** STOP. `cat standards/lang/rust.md` and follow it.
-**Before staging, committing, or creating a PR:** STOP. `cat standards/workflow/git.md` and follow it.
 **Before opening or merging a PR:** STOP. `cat standards/workflow/triple.md` and follow it.
-**Before changing any website content:**  `cat ./website/WRITING.md`
+**Before changing any website content:** `cat ./website/WRITING.md`
 
 ## Crate structure
 
