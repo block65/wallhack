@@ -39,13 +39,5 @@ __pycache__/
 /bin/
 .mcp.json
 
-
-# DO NOT COMMIT THIS
-results_chunk*.json
-files/
-pending_issues.json
-all_issues.json
-issues.db
-ingest_issues.py
-collect_results.py
-docs/uat_deep_chain_report.md
+# Transient research files and random scripts
+/_transient
