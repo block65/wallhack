@@ -201,6 +201,8 @@ pub struct ServerOptions {
     pub peers: Option<SharedRegistry>,
     /// Shared route table.
     pub routes: Option<SharedRouteTable>,
+    /// Shared route update channel sender.
+    pub route_updates: Option<tokio::sync::broadcast::Sender<crate::control::routes::RouteUpdate>>,
     /// The server's own handshake, sent to peers during the exchange.
     pub local_handshake: Option<Handshake>,
 }
