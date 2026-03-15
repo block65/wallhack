@@ -377,11 +377,7 @@ where
         match server.accept(NodeRole::Relay).await {
             Ok(Some(accept_result)) => {
                 let erased = accept_result.erase();
-                handle_relay_connection(
-                    erased,
-                    source_instr_tx.clone(),
-                    &fanout_register_tx,
-                );
+                handle_relay_connection(erased, source_instr_tx.clone(), &fanout_register_tx);
             }
             Ok(None) => {
                 tracing::info!("Server closed");
