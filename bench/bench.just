@@ -1,6 +1,6 @@
 iperf3_ver := "3.20"
 kernel_ver := "6.19"
-busybox_ver := "1.37.0"
+busybox_ver := "1.35.0"
 socat_ver := "1.8.1.1"
 iproute2_ver := "6.12.0"
 musl_target := "x86_64-unknown-linux-musl"
