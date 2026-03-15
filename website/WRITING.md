@@ -1,6 +1,6 @@
 # Website Writing Style
 
-Follow the rules in `../standards/writing/technical.md`
+Before making any changes or commits: STOP. `cat ../standards/writing/technical.md`
 
 ## 1. Frontmatter & SEO
 Every page requires metadata for navigation and search:
