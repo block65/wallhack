@@ -13,27 +13,27 @@
 		"format": "biome check --write"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.4",
-		"vite": "^6 || ^7",
-		"wrangler": "^4.69.0"
+		"@biomejs/biome": "^2.4.7",
+		"vite": "^7.3.1",
+		"wrangler": "^4.73.0"
 	},
 	"dependencies": {
-		"@astrojs/markdoc": "^0.15.10",
-		"@astrojs/sitemap": "^3.7.0",
+		"@astrojs/markdoc": "^0.15.11",
+		"@astrojs/sitemap": "^3.7.1",
 		"@fontsource-variable/jetbrains-mono": "^5.2.8",
 		"@fontsource/dm-serif-display": "^5.2.8",
 		"@fontsource/inter": "^5.2.8",
-		"@iconify-json/lucide": "^1.2.94",
+		"@iconify-json/lucide": "^1.2.98",
 		"@iconify-json/ph": "^1.2.2",
 		"@resvg/resvg-js": "^2.6.2",
 		"@tailwindcss/vite": "^4.2.1",
-		"astro": "^5.18.0",
+		"astro": "^5.18.1",
 		"astro-icon": "^1.1.5",
 		"astro-pagefind": "^1.8.5",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
-		"satori": "^0.19.2",
-		"shiki": "^3.22.0",
+		"satori": "^0.19.3",
+		"shiki": "^3.23.0",
 		"tailwind-merge": "^3.5.0",
 		"tailwindcss": "^4.2.1"
 	}
