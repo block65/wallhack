@@ -64,7 +64,6 @@ pub struct EntryConfig {
     pub connectivity: ConnectivitySpec,
     pub api: Option<ApiConfig>,
     pub max_peers: Option<usize>,
-    pub fast: bool,
 }
 
 /// Exit node configuration.

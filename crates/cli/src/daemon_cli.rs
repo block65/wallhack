@@ -143,7 +143,6 @@ impl Default for Command {
             api_user: None,
             api_secret: None,
             max_peers: None,
-            fast: false,
         })
     }
 }
@@ -179,10 +178,6 @@ pub struct EntryCommand {
     /// maximum number of concurrent peer connections
     #[argh(option)]
     pub max_peers: Option<usize>,
-
-    /// skip SYN proxy verification (optimistic JIT, faster but less accurate port scanning)
-    #[argh(switch)]
-    pub fast: bool,
 }
 
 /// Exit node: makes syscalls to the local network on behalf of the tunnel.
@@ -511,7 +506,6 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
                     connectivity,
                     api,
                     max_peers: cmd.max_peers,
-                    fast: cmd.fast,
                 })
             }
             Command::Exit(cmd) => {
