@@ -26,21 +26,17 @@ pub fn create_async(local_addr: IpAddr) -> io::Result<AsyncFd<socket2::Socket>> 
     } else {
         socket2::Protocol::ICMPV6
     };
-    let socket_type = socket2::Type::DGRAM;
 
-    let socket = match socket2::Socket::new(domain, socket_type, Some(protocol)) {
+    let socket = match socket2::Socket::new(domain, socket2::Type::DGRAM, Some(protocol)) {
         Ok(sock) => {
-            tracing::trace!(
-                "Successfully created ICMP datagram socket (fd: {})",
-                sock.as_raw_fd()
-            );
+            tracing::trace!(fd = sock.as_raw_fd(), "created ICMP datagram socket");
             sock
         }
         Err(err) => {
             tracing::error!("Failed to create ICMP datagram socket: {err}");
             if err.kind() == io::ErrorKind::PermissionDenied {
                 tracing::error!(
-                    "Hint: This might be due to permissions. Check kernel's net.ipv4.ping_group_range or run with CAP_NET_RAW."
+                    "Hint: Check kernel's net.ipv4.ping_group_range sysctl."
                 );
             }
             return Err(err);

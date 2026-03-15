@@ -11,18 +11,20 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
 
 use smoltcp::{
-    phy::Device,
-    wire::{IpProtocol, IpVersion, Ipv4Packet, Ipv6Packet, TcpPacket},
+    phy::{ChecksumCapabilities, Device},
+    wire::{
+        IpProtocol, IpVersion, Ipv4Packet, Ipv4Repr, Ipv6Packet, TcpControl, TcpPacket, TcpRepr,
+        TcpSeqNumber,
+    },
 };
 use tokio::{
     sync::{Notify, watch},
@@ -36,88 +38,105 @@ use crate::inner::{InnerStack, peek_device::PeekDevice};
 pub type ReadinessFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 // ============================================================================
-// SYN proxy types
+// SYN probe cache types
 // ============================================================================
 
-/// Per-port probe result cached by the SYN proxy.
+/// Cache entries expire after this duration. Prevents stale results from
+/// persisting when scanning multiple hosts (per-port cache may differ across
+/// targets) and ensures transient network issues don't cause permanent denial.
+const CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Per-(host, port) probe result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheEntry {
     /// Probe in progress — SYN is held, waiting for exit confirmation.
     Probing,
     /// Exit confirmed port is reachable.
     Open,
-    /// Exit confirmed port is unreachable.
+    /// Exit confirmed port is unreachable (ECONNREFUSED) — smoltcp will RST.
     Closed,
+    /// Host unreachable (EHOSTUNREACH) — respond with ICMP Destination Unreachable.
+    Unreachable,
 }
 
 /// A SYN packet held while the exit node is probed for reachability.
 pub struct HeldSyn {
     /// The raw IP packet (SYN).
     pub packet: Vec<u8>,
-    /// Destination port extracted from the SYN.
-    pub dst_port: u16,
+    /// Destination address (IP + port) — cache lookup key.
+    pub dst_addr: SocketAddr,
 }
 
-/// Shared state for the SYN proxy, accessible from poll loop and manager.
-pub struct SynProxyState {
-    /// When true, skip probing and JIT-bind immediately (optimistic/fast mode).
-    fast_mode: AtomicBool,
-    /// Per-port cache of probe results.
-    cache: Mutex<HashMap<u16, CacheEntry>>,
+/// Probe result cache for the SYN intercept path, shared between poll loop and connection manager.
+pub struct SynProbeCache {
+    /// Per-(host, port) cache of probe results with insertion time for TTL expiry.
+    cache: Mutex<HashMap<SocketAddr, (CacheEntry, Instant)>>,
 }
 
-impl SynProxyState {
-    /// Create a new SYN proxy state.
+impl SynProbeCache {
+    /// Create a new probe cache.
     #[must_use]
-    pub fn new(fast_mode: bool) -> Self {
+    pub fn new() -> Self {
         Self {
-            fast_mode: AtomicBool::new(fast_mode),
             cache: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Whether fast (optimistic JIT) mode is enabled.
+    /// Look up the cached status for a (host, port). Returns `None` if expired or absent.
     #[must_use]
-    pub fn is_fast_mode(&self) -> bool {
-        self.fast_mode.load(Ordering::Relaxed)
+    pub fn get(&self, addr: SocketAddr) -> Option<CacheEntry> {
+        let cache = self.cache.lock();
+        let &(entry, created) = cache.get(&addr)?;
+        if created.elapsed() > CACHE_TTL {
+            return None;
+        }
+        Some(entry)
     }
 
-    /// Toggle fast mode on or off, clearing the cache on change.
-    pub fn set_fast_mode(&self, enabled: bool) {
-        self.fast_mode.store(enabled, Ordering::Relaxed);
-        self.clear_cache();
+    /// Mark a (host, port) as currently being probed.
+    pub fn mark_probing(&self, addr: SocketAddr) {
+        self.cache
+            .lock()
+            .insert(addr, (CacheEntry::Probing, Instant::now()));
     }
 
-    /// Look up the cached status for a port.
+    /// Mark a (host, port) as open (exit confirmed reachable).
+    pub fn mark_open(&self, addr: SocketAddr) {
+        self.cache
+            .lock()
+            .insert(addr, (CacheEntry::Open, Instant::now()));
+    }
+
+    /// Mark a (host, port) as closed (ECONNREFUSED) — smoltcp will RST.
+    pub fn mark_closed(&self, addr: SocketAddr) {
+        self.cache
+            .lock()
+            .insert(addr, (CacheEntry::Closed, Instant::now()));
+    }
+
+    /// Mark a (host, port) as unreachable (EHOSTUNREACH) — respond with ICMP.
+    pub fn mark_unreachable(&self, addr: SocketAddr) {
+        self.cache
+            .lock()
+            .insert(addr, (CacheEntry::Unreachable, Instant::now()));
+    }
+
+    /// Check if a (host, port) is cached as closed (and not expired).
     #[must_use]
-    pub fn get(&self, port: u16) -> Option<CacheEntry> {
-        self.cache.lock().get(&port).copied()
-    }
-
-    /// Mark a port as currently being probed.
-    pub fn mark_probing(&self, port: u16) {
-        self.cache.lock().insert(port, CacheEntry::Probing);
-    }
-
-    /// Mark a port as open (exit confirmed reachable).
-    pub fn mark_open(&self, port: u16) {
-        self.cache.lock().insert(port, CacheEntry::Open);
-    }
-
-    /// Mark a port as closed (exit confirmed unreachable).
-    pub fn mark_closed(&self, port: u16) {
-        self.cache.lock().insert(port, CacheEntry::Closed);
-    }
-
-    /// Check if a port is cached as closed.
-    #[must_use]
-    pub fn is_closed(&self, port: u16) -> bool {
-        self.cache.lock().get(&port) == Some(&CacheEntry::Closed)
+    pub fn is_closed(&self, addr: SocketAddr) -> bool {
+        let cache = self.cache.lock();
+        matches!(cache.get(&addr), Some(&(CacheEntry::Closed, created)) if created.elapsed() <= CACHE_TTL)
     }
 
     /// Clear the entire cache.
     pub fn clear_cache(&self) {
         self.cache.lock().clear();
+    }
+}
+
+impl Default for SynProbeCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -165,12 +184,16 @@ pub struct Netstack<D: Device + Send + 'static> {
     udp_ports: Arc<Mutex<HashSet<u16>>>,
     jit_notify: Arc<Notify>,
     readable_fn: Option<ReadinessFn>,
-    /// SYN proxy state (None = no proxy, fast mode by default).
-    syn_proxy: Option<Arc<SynProxyState>>,
+    /// Port probe cache (None = disabled).
+    probe_cache: Option<Arc<SynProbeCache>>,
     /// Channel for sending held SYNs to the connection manager.
     syn_tx: Option<tokio::sync::mpsc::UnboundedSender<HeldSyn>>,
     /// Channel for receiving re-injected packets from the manager.
     inject_rx: Option<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>>,
+    /// Channel for sending raw packets (e.g. ICMP) to the TUN device (bypassing smoltcp).
+    egress_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    /// Channel for forwarding intercepted ICMP Echo Requests to the manager.
+    icmp_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     /// Notify for waking poll loop when a probe completes.
     wake_notify: Option<Arc<Notify>>,
 }
@@ -205,9 +228,11 @@ impl<D: Device + Send + 'static> Netstack<D> {
             udp_ports: Arc::new(Mutex::new(HashSet::new())),
             jit_notify: Arc::new(Notify::new()),
             readable_fn: None,
-            syn_proxy: None,
+            probe_cache: None,
             syn_tx: None,
             inject_rx: None,
+            egress_tx: None,
+            icmp_tx: None,
             wake_notify: None,
         }
     }
@@ -247,36 +272,43 @@ impl<D: Device + Send + 'static> Netstack<D> {
         self.restart_poll_loop();
     }
 
-    /// Configure SYN proxy channels and state.
+    /// Configure SYN probe cache channels and state.
     ///
-    /// Returns the receiver for held SYNs and sender for re-injected packets,
-    /// plus a wake notify for the poll loop.
-    ///
-    /// The caller (`ConnectionManager`) uses `syn_rx` to receive held SYNs,
-    /// probes the exit, then sends verified packets via `inject_tx` and
-    /// wakes the poll loop via `wake_notify`.
-    pub fn set_syn_proxy(
+    /// Returns:
+    /// - `syn_rx`: receiver for held SYNs (manager probes exit then acts on result)
+    /// - `inject_tx`: sender for re-injected packets back to smoltcp ingress
+    /// - `wake_notify`: wake the poll loop when a probe completes
+    /// - `egress_rx`: receiver for raw packets (ICMP) to write directly to the TUN
+    /// - `icmp_rx`: receiver for intercepted ICMP Echo Requests to forward via tunnel
+    #[allow(clippy::type_complexity)]
+    pub fn set_probe_cache(
         &mut self,
-        state: Arc<SynProxyState>,
+        state: Arc<SynProbeCache>,
     ) -> (
         tokio::sync::mpsc::UnboundedReceiver<HeldSyn>,
         tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
         Arc<Notify>,
+        tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+        tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     )
     where
         D: PeekDevice,
     {
         let (syn_tx, syn_rx) = tokio::sync::mpsc::unbounded_channel();
         let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (egress_tx, egress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (icmp_tx, icmp_rx) = tokio::sync::mpsc::unbounded_channel();
         let wake_notify = Arc::new(Notify::new());
 
-        self.syn_proxy = Some(state);
+        self.probe_cache = Some(state);
         self.syn_tx = Some(syn_tx);
         self.inject_rx = Some(Arc::new(Mutex::new(inject_rx)));
+        self.egress_tx = Some(egress_tx);
+        self.icmp_tx = Some(icmp_tx);
         self.wake_notify = Some(Arc::clone(&wake_notify));
         self.restart_poll_loop();
 
-        (syn_rx, inject_tx, wake_notify)
+        (syn_rx, inject_tx, wake_notify, egress_rx, icmp_rx)
     }
 
     fn restart_poll_loop(&mut self)
@@ -293,9 +325,11 @@ impl<D: Device + Send + 'static> Netstack<D> {
             tcp_ports_watch: Arc::clone(&self.tcp_ports_watch),
             udp_ports: Arc::clone(&self.udp_ports),
             readable_fn: self.readable_fn.clone(),
-            syn_proxy: self.syn_proxy.clone(),
+            probe_cache: self.probe_cache.clone(),
             syn_tx: self.syn_tx.clone(),
             inject_rx: self.inject_rx.clone(),
+            egress_tx: self.egress_tx.clone(),
+            icmp_tx: self.icmp_tx.clone(),
             wake_notify: self.wake_notify.clone(),
         };
         self.poll_handle = tokio::spawn(poll_loop_jit(shared, notify, config));
@@ -410,9 +444,13 @@ struct JitPollConfig {
     tcp_ports_watch: Arc<watch::Sender<Arc<HashSet<u16>>>>,
     udp_ports: Arc<Mutex<HashSet<u16>>>,
     readable_fn: Option<ReadinessFn>,
-    syn_proxy: Option<Arc<SynProxyState>>,
+    probe_cache: Option<Arc<SynProbeCache>>,
     syn_tx: Option<tokio::sync::mpsc::UnboundedSender<HeldSyn>>,
     inject_rx: Option<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>>,
+    /// Channel for sending raw packets (ICMP) directly to the TUN (bypasses smoltcp).
+    egress_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    /// Channel for forwarding intercepted ICMP Echo Requests to the manager.
+    icmp_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     wake_notify: Option<Arc<Notify>>,
 }
 
@@ -506,30 +544,34 @@ async fn poll_loop_jit<D: Device + Send + 'static + PeekDevice>(
     }
 }
 
-/// Phase 2+3: JIT ingress processing with optional SYN proxy.
+/// Phase 2+3: JIT ingress processing with optional SYN probe intercept.
 fn jit_poll_ingress<D: Device + Send + 'static + PeekDevice>(
     inner: &mut InnerStack<D>,
     config: &JitPollConfig,
     notify: &Arc<Notify>,
 ) {
-    let syn_proxy_active = config.syn_proxy.as_ref().is_some_and(|s| !s.is_fast_mode());
+    // Intercept ICMP Echo Requests before smoltcp auto-replies (any_ip mode).
+    // Extracted packets are forwarded to the manager for tunnel delivery.
+    if let Some(ref icmp_tx) = config.icmp_tx {
+        extract_icmp_echo_requests(inner, icmp_tx);
+    }
 
-    if syn_proxy_active {
-        handle_syn_proxy_ingress(inner, config, notify);
+    if config.probe_cache.is_some() {
+        handle_probed_syn_ingress(inner, config, notify);
     } else {
         let port_info: Vec<_> = inner
             .peek_all_ingress()
             .iter()
             .filter_map(|pkt| parse_l4(pkt))
             .collect();
-        for (protocol, dst_port, is_syn) in port_info {
-            let _ = jit_bind_port(inner, protocol, dst_port, is_syn, config, notify);
+        for (protocol, dst_addr, is_syn) in port_info {
+            let _ = jit_bind_port(inner, protocol, dst_addr, is_syn, config, notify);
         }
     }
 
     // Drop unmatched TCP, but exempt closed-cached ports.
     if config.jit_tcp {
-        drop_unmatched_tcp_with_proxy(inner, config.syn_proxy.as_ref());
+        drop_unmatched_tcp(inner, config.probe_cache.as_ref());
     }
 }
 
@@ -543,7 +585,8 @@ fn prune_and_notify<D: Device + Send + 'static>(
     if prune_counter.is_multiple_of(100) {
         let socket_count = inner.socket_count();
         let pruned = inner.prune_closed_tcp_sockets()
-            + inner.prune_stale_syn_received(std::time::Duration::from_mins(1));
+            + inner.prune_stale_syn_received(std::time::Duration::from_mins(1))
+            + inner.prune_stale_listeners(std::time::Duration::from_secs(30));
 
         if pruned > 0 || socket_count > 5 {
             let states = inner.tcp_state_summary();
@@ -559,75 +602,195 @@ fn prune_and_notify<D: Device + Send + 'static>(
     notify.notify_waiters();
 }
 
-/// Handle SYN proxy ingress: classify each pending packet, hold unknown SYNs,
-/// JIT-bind open ports, let closed ports through (no JIT bind → smoltcp RST).
-fn handle_syn_proxy_ingress<D: Device + Send + 'static + PeekDevice>(
+/// Handle probed SYN ingress: classify each pending packet, hold unknown SYNs,
+/// JIT-bind open ports, let closed ports through (no JIT bind → smoltcp RST),
+/// silently drop filtered (unreachable) ports.
+fn handle_probed_syn_ingress<D: Device + Send + 'static + PeekDevice>(
     inner: &mut InnerStack<D>,
     config: &JitPollConfig,
     notify: &Arc<Notify>,
 ) {
-    let Some(state) = config.syn_proxy.as_ref() else {
+    let Some(state) = config.probe_cache.as_ref() else {
         return;
     };
 
     // Collect work to be done.
     let mut held_syns: Vec<HeldSyn> = Vec::new();
-    let mut probing_ports: HashSet<u16> = HashSet::new();
-    let mut bind_tasks: Vec<(IpProtocol, u16, bool)> = Vec::new();
+    let mut drop_addrs: HashSet<SocketAddr> = HashSet::new();
+    let mut egress_packets: Vec<Vec<u8>> = Vec::new();
+    let mut bind_tasks: Vec<(IpProtocol, SocketAddr, bool)> = Vec::new();
 
     // Classify packets.
     {
         let packets = inner.peek_all_ingress();
+        if !packets.is_empty() {
+            tracing::debug!(
+                "handle_probed_syn_ingress: peeking {} packets",
+                packets.len()
+            );
+        }
         for pkt in packets {
-            let Some((protocol, dst_port, is_syn)) = parse_l4(pkt) else {
+            let Some((protocol, dst_addr, is_syn)) = parse_l4(pkt) else {
                 continue;
             };
 
+            tracing::trace!(?protocol, ?dst_addr, is_syn, "analyzing ingress packet");
+
             if protocol == IpProtocol::Tcp && is_syn && config.jit_tcp {
-                match state.get(dst_port) {
+                match state.get(dst_addr) {
                     Some(CacheEntry::Open) => {
-                        bind_tasks.push((protocol, dst_port, is_syn));
+                        tracing::debug!(?dst_addr, "Cache hit: OPEN -> Bind");
+                        bind_tasks.push((protocol, dst_addr, is_syn));
                     }
                     Some(CacheEntry::Closed) => {
-                        // Keep in pending (no JIT bind), smoltcp will RST.
+                        tracing::debug!(?dst_addr, "Cache hit: CLOSED -> RST");
+                        if let Some(rst) = build_ipv4_rst(pkt) {
+                            egress_packets.push(rst);
+                        }
+                        drop_addrs.insert(dst_addr);
                     }
                     Some(CacheEntry::Probing) => {
-                        probing_ports.insert(dst_port);
+                        tracing::debug!(?dst_addr, "Cache hit: PROBING -> Drop");
+                        // Another SYN arrived while probe is in flight — drop.
+                        drop_addrs.insert(dst_addr);
+                    }
+                    Some(CacheEntry::Unreachable) => {
+                        tracing::debug!(?dst_addr, "Cache hit: UNREACHABLE -> ICMP");
+                        if let Some(icmp) = build_icmp_host_unreachable(pkt) {
+                            egress_packets.push(icmp);
+                        }
+                        drop_addrs.insert(dst_addr);
                     }
                     None => {
-                        state.mark_probing(dst_port);
-                        probing_ports.insert(dst_port);
+                        tracing::info!(?dst_addr, "Cache miss -> Start Probe");
+                        state.mark_probing(dst_addr);
+                        drop_addrs.insert(dst_addr);
                         held_syns.push(HeldSyn {
                             packet: pkt.clone(),
-                            dst_port,
+                            dst_addr,
                         });
                     }
                 }
             } else {
-                bind_tasks.push((protocol, dst_port, is_syn));
+                bind_tasks.push((protocol, dst_addr, is_syn));
             }
         }
     }
 
     // Perform JIT binding.
-    for (protocol, dst_port, is_syn) in bind_tasks {
-        let _ = jit_bind_port(inner, protocol, dst_port, is_syn, config, notify);
+    for (protocol, dst_addr, is_syn) in bind_tasks {
+        let _ = jit_bind_port(inner, protocol, dst_addr, is_syn, config, notify);
     }
 
-    // Drop held/probing SYN packets from the pending queue.
-    if !probing_ports.is_empty() {
+    // Drop held/probing/filtered SYN packets from the pending queue.
+    if !drop_addrs.is_empty() {
         inner.device_mut().retain_pending(|pkt| {
-            let Some((protocol, dst_port, is_syn)) = parse_l4(pkt) else {
+            let Some((protocol, dst_addr, is_syn)) = parse_l4(pkt) else {
                 return true;
             };
-            !(protocol == IpProtocol::Tcp && is_syn && probing_ports.contains(&dst_port))
+            !(protocol == IpProtocol::Tcp && is_syn && drop_addrs.contains(&dst_addr))
         });
     }
 
     // Send held SYNs to the manager for probing.
     if let Some(tx) = config.syn_tx.as_ref() {
         for held in held_syns {
+            tracing::debug!(dst=?held.dst_addr, "Sending SYN to manager for probing");
             let _ = tx.send(held);
+        }
+    }
+
+    // Send raw packets (ICMP, RST) to the TUN (bypassing smoltcp).
+    if let Some(tx) = config.egress_tx.as_ref() {
+        for pkt in egress_packets {
+            let _ = tx.send(pkt);
+        }
+    }
+}
+
+/// Extract ICMP Echo Request packets from the pending queue before smoltcp
+/// processes them (smoltcp with `any_ip=true` would auto-reply locally).
+/// Matched packets are removed from pending and sent via `icmp_tx` for
+/// forwarding through the tunnel to the actual target.
+fn extract_icmp_echo_requests<D: Device + Send + 'static + PeekDevice>(
+    inner: &mut InnerStack<D>,
+    icmp_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) {
+    let packets = inner.peek_all_ingress();
+    let has_icmp = packets.iter().any(|pkt| is_icmp_echo_request(pkt));
+    if !has_icmp {
+        return;
+    }
+
+    // Collect packets to forward before mutating the queue.
+    let to_forward: Vec<Vec<u8>> = packets
+        .iter()
+        .filter(|pkt| is_icmp_echo_request(pkt))
+        .cloned()
+        .collect();
+
+    inner
+        .device_mut()
+        .retain_pending(|pkt| !is_icmp_echo_request(pkt));
+
+    for pkt in to_forward {
+        tracing::trace!(len = pkt.len(), "forwarding ICMP echo request to manager");
+        let _ = icmp_tx.send(pkt);
+    }
+}
+
+/// Test whether a raw IP packet is an ICMP Echo Request (ping).
+///
+/// Matches `ICMPv4` type 8 and `ICMPv6` type 128.
+fn is_icmp_echo_request(packet: &[u8]) -> bool {
+    let Ok(version) = IpVersion::of_packet(packet) else {
+        return false;
+    };
+    match version {
+        IpVersion::Ipv4 => {
+            let Ok(ipv4) = Ipv4Packet::new_checked(packet) else {
+                return false;
+            };
+            if ipv4.next_header() != IpProtocol::Icmp {
+                return false;
+            }
+            let payload = ipv4.payload();
+            // ICMP type 8 = Echo Request, minimum 8 bytes (type, code, cksum, id, seq)
+            payload.len() >= 8 && payload[0] == 8
+        }
+        IpVersion::Ipv6 => is_icmpv6_echo_request(packet),
+    }
+}
+
+/// Check for `ICMPv6` Echo Request (type 128), walking extension headers.
+fn is_icmpv6_echo_request(packet: &[u8]) -> bool {
+    let Ok(ipv6) = Ipv6Packet::new_checked(packet) else {
+        return false;
+    };
+    let mut next_header = ipv6.next_header();
+    let mut payload = ipv6.payload();
+
+    loop {
+        match next_header {
+            IpProtocol::HopByHop
+            | IpProtocol::Ipv6Route
+            | IpProtocol::Ipv6Frag
+            | IpProtocol::Ipv6Opts => {
+                if payload.len() < 2 {
+                    return false;
+                }
+                next_header = IpProtocol::from(payload[0]);
+                let ext_len = (usize::from(payload[1]) + 1) * 8;
+                if payload.len() < ext_len {
+                    return false;
+                }
+                payload = &payload[ext_len..];
+            }
+            IpProtocol::Icmpv6 => {
+                // ICMPv6 type 128 = Echo Request
+                return payload.len() >= 8 && payload[0] == 128;
+            }
+            _ => return false,
         }
     }
 }
@@ -635,11 +798,12 @@ fn handle_syn_proxy_ingress<D: Device + Send + 'static + PeekDevice>(
 fn jit_bind_port<D: Device + Send + 'static>(
     inner: &mut InnerStack<D>,
     protocol: IpProtocol,
-    dst_port: u16,
+    dst_addr: SocketAddr,
     is_syn: bool,
     config: &JitPollConfig,
     notify: &Arc<Notify>,
 ) -> Result<(), crate::error::Error> {
+    let dst_port = dst_addr.port();
     tracing::trace!(
         ?protocol,
         dst_port,
@@ -651,9 +815,15 @@ fn jit_bind_port<D: Device + Send + 'static>(
 
     match protocol {
         IpProtocol::Tcp if config.jit_tcp && dst_port != 0 && is_syn => {
-            // Create a LISTEN socket for EACH SYN packet.
-            // smoltcp transitions LISTEN -> SYN_RECEIVED -> ESTABLISHED per socket,
-            // so we need one LISTEN socket per incoming connection.
+            // Create a wildcard LISTEN socket for EACH SYN. smoltcp transitions
+            // LISTEN -> SYN_RECEIVED -> ESTABLISHED per socket, so we need one
+            // per incoming connection.
+            //
+            // Cross-host isolation (A:22 vs B:22) is handled by the SocketAddr-
+            // keyed SynProbeCache: only SYNs whose (IP, port) is cached as Open
+            // ever reach this point. We cannot use host-specific listeners here
+            // because smoltcp's AnyIP mode skips specific-IP sockets whose addr
+            // is not in the interface ip_addrs list.
             tracing::debug!(dst_port, "JIT: SYN packet detected");
             inner.tcp_listen(dst_port)?;
             let mut ports = config.tcp_ports.lock();
@@ -679,7 +849,7 @@ fn jit_bind_port<D: Device + Send + 'static>(
     Ok(())
 }
 
-fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
+fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, SocketAddr, bool)> {
     let version = IpVersion::of_packet(packet).ok()?;
     match version {
         IpVersion::Ipv4 => parse_ipv4_l4(packet),
@@ -687,9 +857,10 @@ fn parse_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
     }
 }
 
-fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
+fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, SocketAddr, bool)> {
     let ipv4_pkt = Ipv4Packet::new_checked(packet).ok()?;
     let protocol = ipv4_pkt.next_header();
+    let dst_ip = IpAddr::V4(ipv4_pkt.dst_addr());
     let payload = ipv4_pkt.payload();
 
     let (dst_port, is_syn) = match protocol {
@@ -706,11 +877,12 @@ fn parse_ipv4_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
         _ => return None,
     };
 
-    Some((protocol, dst_port, is_syn))
+    Some((protocol, SocketAddr::new(dst_ip, dst_port), is_syn))
 }
 
-fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
+fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, SocketAddr, bool)> {
     let ipv6_pkt = Ipv6Packet::new_checked(packet).ok()?;
+    let dst_ip = IpAddr::V6(ipv6_pkt.dst_addr());
     let mut next_header = ipv6_pkt.next_header();
     let mut payload = ipv6_pkt.payload();
 
@@ -740,68 +912,307 @@ fn parse_ipv6_l4(packet: &[u8]) -> Option<(IpProtocol, u16, bool)> {
                 let tcp_pkt = TcpPacket::new_checked(payload).ok()?;
                 let dst_port = tcp_pkt.dst_port();
                 let is_syn = tcp_pkt.syn() && !tcp_pkt.ack();
-                return Some((IpProtocol::Tcp, dst_port, is_syn));
+                return Some((IpProtocol::Tcp, SocketAddr::new(dst_ip, dst_port), is_syn));
             }
             IpProtocol::Udp => {
                 if payload.len() < 4 {
                     return None;
                 }
                 let dst_port = u16::from_be_bytes([payload[2], payload[3]]);
-                return Some((IpProtocol::Udp, dst_port, false));
+                return Some((IpProtocol::Udp, SocketAddr::new(dst_ip, dst_port), false));
             }
             _ => return None,
         }
     }
 }
 
-/// Drop pending TCP packets that have no matching socket, with SYN proxy
-/// exemptions.
+/// Build an ICMP Destination Unreachable (Host Unreachable) packet from an
+/// original IPv4 packet.
+///
+/// The ICMP packet is addressed FROM the target IP (as if the last-hop router
+/// reported unreachable) TO the original sender. Per RFC 792, the ICMP payload
+/// contains the original IP header + first 8 bytes of the original L4 data.
+///
+/// Returns `None` if the packet is too short or not IPv4.
+#[must_use]
+pub fn build_icmp_host_unreachable(original: &[u8]) -> Option<Vec<u8>> {
+    // Only handle IPv4 for now.
+    if original.len() < 28 || (original[0] >> 4) != 4 {
+        return None;
+    }
+    let ihl = (original[0] & 0x0f) as usize * 4;
+    if original.len() < ihl + 8 {
+        return None;
+    }
+
+    // Original IPs: [12..16] = src, [16..20] = dst.
+    let original_src = &original[12..16];
+    let original_dst = &original[16..20];
+
+    // ICMP payload: original IP header + first 8 bytes of L4.
+    let payload_len = ihl + 8;
+    let _ = &original[..payload_len];
+
+    // Total: 20 (IP) + 8 (ICMP header) + payload_len.
+    let icmp_msg_len = 8 + payload_len;
+    let total_len = 20 + icmp_msg_len;
+    let mut pkt = vec![0u8; total_len];
+
+    // -- IPv4 header (20 bytes) --
+    // We are spoofing the "router" (Exit Node) sending the ICMP error.
+    // The source IP of the ICMP packet should be the destination IP of the original SYN
+    // (the host that is unreachable), or the gateway.
+    // Nmap expects the source to be the target host or an intermediate router.
+    // Let's use the original destination as the source (spoofing the target itself saying "I am unreachable").
+    // Or we could use a specific gateway IP if we had one.
+    pkt[0] = 0x45; // version=4, IHL=5
+    // Total Length
+    #[allow(clippy::cast_possible_truncation)]
+    pkt[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
+    // ID (random or 0)
+    pkt[4..6].copy_from_slice(&0u16.to_be_bytes());
+    // Flags + Fragment Offset
+    pkt[6..8].copy_from_slice(&0u16.to_be_bytes());
+    pkt[8] = 64; // TTL
+    pkt[9] = 1; // protocol: ICMP
+    pkt[10..12].copy_from_slice(&0u16.to_be_bytes()); // Checksum placeholder
+    pkt[12..16].copy_from_slice(original_dst); // Source IP = Target IP
+    pkt[16..20].copy_from_slice(original_src); // Dest IP = Scanner IP
+
+    // IPv4 Header Checksum
+    let ip_cksum = internet_checksum(&pkt[..20]);
+    pkt[10..12].copy_from_slice(&ip_cksum.to_be_bytes());
+
+    // -- ICMP Header (8 bytes) + Payload --
+    let icmp_start = 20;
+    // Type 3: Destination Unreachable
+    pkt[icmp_start] = 3;
+    // Code 1: Host Unreachable
+    pkt[icmp_start + 1] = 1;
+    // Checksum placeholder
+    pkt[icmp_start + 2..icmp_start + 4].copy_from_slice(&0u16.to_be_bytes());
+    // Unused (4 bytes) - strictly zero for Host Unreachable
+    pkt[icmp_start + 4..icmp_start + 8].copy_from_slice(&0u32.to_be_bytes());
+
+    // Copy original IP header + first 8 bytes of original payload
+    // Ensure we don't read past end of original
+    let copy_len = std::cmp::min(original.len(), ihl + 8);
+    pkt[icmp_start + 8..icmp_start + 8 + copy_len].copy_from_slice(&original[..copy_len]);
+
+    // ICMP Checksum (over ICMP header and data)
+    let icmp_cksum = internet_checksum(&pkt[icmp_start..]);
+    pkt[icmp_start + 2..icmp_start + 4].copy_from_slice(&icmp_cksum.to_be_bytes());
+
+    Some(pkt)
+}
+
+/// RFC 1071 Internet checksum (ones' complement sum of 16-bit words).
+fn internet_checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = 0;
+    while i + 1 < data.len() {
+        let word = u16::from_be_bytes([data[i], data[i + 1]]);
+        sum = sum.wrapping_add(u32::from(word));
+        i += 2;
+    }
+    if i < data.len() {
+        sum = sum.wrapping_add(u32::from(data[i]) << 8);
+    }
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    !(sum as u16)
+}
+
+/// Drop pending TCP packets that have no matching socket.
 ///
 /// smoltcp replies with RST to any TCP segment that doesn't match a socket.
 /// In a tunnel context this leaks the entry node's presence to scanners
 /// (e.g. nmap marks the host "up" on receiving a RST to a probe ACK).
 /// By silently dropping unmatched segments we behave like a filtered host.
 ///
-/// **SYN proxy exemption**: SYN packets to ports cached as `Closed` are kept
-/// so that smoltcp (with no listener on that port) generates a native RST.
-/// This is how nmap sees "closed" instead of "filtered".
-fn drop_unmatched_tcp_with_proxy<D: Device + Send + 'static + PeekDevice>(
+/// **Strict Flow Matching**: To support `AnyIP` (wildcard) listeners without
+/// leaking RSTs for unmatched ACKs (e.g. nmap ping scan), we enforce:
+/// - **SYN**: Allowed if a listener exists OR if it's a new probe.
+/// - **!SYN**: Allowed ONLY if it matches an existing 4-tuple (Established).
+fn drop_unmatched_tcp<D: Device + Send + 'static + PeekDevice>(
     inner: &mut InnerStack<D>,
-    syn_proxy: Option<&Arc<SynProxyState>>,
+    _probe_cache: Option<&Arc<SynProbeCache>>,
 ) {
-    use smoltcp::socket::Socket;
+    use smoltcp::{socket::Socket, wire::IpAddress};
 
-    // Collect ports that have an active TCP socket to avoid borrow conflicts.
-    let active_ports: HashSet<u16> = inner
-        .sockets()
-        .iter()
-        .filter_map(|(_, socket)| {
-            let Socket::Tcp(tcp) = socket else {
-                return None;
-            };
-            if tcp.state() == smoltcp::socket::tcp::State::Closed {
-                return None;
+    // Collect Active Flows (for !SYN matching).
+    // We need (LocalPort, RemoteIP, RemotePort) to match ingress packets.
+    // (Ingress DstPort == LocalPort, Ingress SrcIP == RemoteIP, Ingress SrcPort == RemotePort)
+    // Performance Note: Using O(N) scan here.
+    // TODO: For high-throughput (Fix 2), replace this with a persistent Conntrack Map (O(1)).
+    // For now, we perform the scan to satisfy correctness, but acknowledge the bottleneck.
+    let mut active_flows: HashSet<(u16, IpAddress, u16)> = HashSet::new();
+
+    for socket in inner.sockets().iter() {
+        let Socket::Tcp(tcp) = socket.1 else { continue };
+        match tcp.state() {
+            smoltcp::socket::tcp::State::Closed | smoltcp::socket::tcp::State::Listen => {}
+            _ => {
+                // Established, SynReceived, FinWait, etc.
+                if let Some(remote) = tcp.remote_endpoint() {
+                    let local_port = tcp.local_endpoint().map_or(0, |e| e.port);
+                    if local_port != 0 {
+                        active_flows.insert((local_port, remote.addr, remote.port));
+                    }
+                }
             }
-            let port = tcp
-                .local_endpoint()
-                .map_or_else(|| tcp.listen_endpoint().port, |ep| ep.port);
-            if port == 0 { None } else { Some(port) }
-        })
-        .collect();
+        }
+    }
 
     inner.device_mut().retain_pending(|pkt| {
-        let Some((protocol, dst_port, is_syn)) = parse_l4(pkt) else {
+        let Some((protocol, dst_addr, is_syn)) = parse_l4(pkt) else {
             return true;
         };
+        // Only filter TCP
         if protocol != IpProtocol::Tcp {
             return true;
         }
-        // Keep if a socket exists for this port.
-        if active_ports.contains(&dst_port) {
+
+        // Allow SYN (handled by handle_probed_syn_ingress for probing/JIT).
+        // We never drop SYNs here; the probe logic decides their fate.
+        if is_syn {
             return true;
         }
-        // SYN proxy exemption: let SYN packets to closed ports through
-        // so smoltcp generates a native RST (no listener → RST).
-        is_syn && syn_proxy.is_some_and(|state| state.is_closed(dst_port))
+
+        // Strict Flow Matching for !SYN (ACK, FIN, RST, PSH, etc.)
+        // Packet: DstPort=LocalPort, SrcIP=RemoteIP, SrcPort=RemotePort
+
+        let Some(src_info) = parse_l4_src(pkt) else {
+            return false; // malformed/unknown src, drop safely
+        };
+
+        let (src_ip, src_port) = src_info;
+        let key = (dst_addr.port(), src_ip, src_port);
+
+        if active_flows.contains(&key) {
+            return true;
+        }
+
+        // Drop unmatched non-SYN (ACK scan, stray packets)
+        false
     });
+}
+
+/// Extract Source IP and Port from a packet (for flow matching).
+fn parse_l4_src(packet: &[u8]) -> Option<(smoltcp::wire::IpAddress, u16)> {
+    let version = IpVersion::of_packet(packet).ok()?;
+    match version {
+        IpVersion::Ipv4 => {
+            let ipv4 = Ipv4Packet::new_checked(packet).ok()?;
+            let src_ip = smoltcp::wire::IpAddress::Ipv4(ipv4.src_addr());
+            let payload = ipv4.payload();
+            let tcp = TcpPacket::new_checked(payload).ok()?;
+            Some((src_ip, tcp.src_port()))
+        }
+        IpVersion::Ipv6 => {
+            let ipv6 = Ipv6Packet::new_checked(packet).ok()?;
+            let src_ip = smoltcp::wire::IpAddress::Ipv6(ipv6.src_addr());
+            parse_ipv6_src_port(packet).map(|p| (src_ip, p))
+        }
+    }
+}
+
+/// Extract Source Port from IPv6 TCP packet (handling extension headers).
+fn parse_ipv6_src_port(packet: &[u8]) -> Option<u16> {
+    let ipv6_pkt = Ipv6Packet::new_checked(packet).ok()?;
+    let mut next_header = ipv6_pkt.next_header();
+    let mut payload = ipv6_pkt.payload();
+
+    loop {
+        match next_header {
+            IpProtocol::HopByHop
+            | IpProtocol::Ipv6Route
+            | IpProtocol::Ipv6Frag
+            | IpProtocol::Ipv6Opts => {
+                if payload.len() < 2 {
+                    return None;
+                }
+                next_header = IpProtocol::from(payload[0]);
+                let ext_len = (usize::from(payload[1]) + 1) * 8;
+                if payload.len() < ext_len {
+                    return None;
+                }
+                payload = &payload[ext_len..];
+            }
+            IpProtocol::Tcp => {
+                let tcp_pkt = TcpPacket::new_checked(payload).ok()?;
+                return Some(tcp_pkt.src_port());
+            }
+            _ => return None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn build_rst_reply(original: &[u8]) -> Option<Vec<u8>> {
+    let version = IpVersion::of_packet(original).ok()?;
+    match version {
+        IpVersion::Ipv4 => build_ipv4_rst(original),
+        IpVersion::Ipv6 => None, // TODO: IPv6 support
+    }
+}
+
+fn build_ipv4_rst(original: &[u8]) -> Option<Vec<u8>> {
+    let ipv4_in = Ipv4Packet::new_checked(original).ok()?;
+    let tcp_in = TcpPacket::new_checked(ipv4_in.payload()).ok()?;
+
+    // Logic for RST sequence numbers (RFC 793):
+    // If input has ACK, RST seq = ACK
+    // If input has no ACK, RST seq = 0, ACK = SEQ + LEN
+    let payload_len = tcp_in.payload().len();
+    let (seq, ack) = if tcp_in.ack() {
+        (tcp_in.ack_number(), None)
+    } else {
+        let len = payload_len + usize::from(tcp_in.syn()) + usize::from(tcp_in.fin());
+        (TcpSeqNumber(0), Some(tcp_in.seq_number() + len))
+    };
+
+    let src_addr = ipv4_in.dst_addr();
+    let dst_addr = ipv4_in.src_addr();
+
+    let tcp_repr = TcpRepr {
+        src_port: tcp_in.dst_port(),
+        dst_port: tcp_in.src_port(),
+        control: TcpControl::Rst,
+        seq_number: seq,
+        ack_number: ack,
+        window_len: 0,
+        window_scale: None,
+        max_seg_size: None,
+        sack_permitted: false,
+        sack_ranges: [None; 3],
+        payload: &[],
+        timestamp: None,
+    };
+
+    let ip_repr = Ipv4Repr {
+        src_addr,
+        dst_addr,
+        next_header: IpProtocol::Tcp,
+        payload_len: tcp_repr.header_len() + tcp_repr.payload.len(),
+        hop_limit: 64,
+    };
+
+    let total_len = ip_repr.buffer_len() + tcp_repr.header_len() + tcp_repr.payload.len();
+    let mut buf = vec![0u8; total_len];
+
+    let mut ipv4_out = Ipv4Packet::new_unchecked(&mut buf);
+    ip_repr.emit(&mut ipv4_out, &ChecksumCapabilities::default());
+
+    let mut tcp_out = TcpPacket::new_unchecked(ipv4_out.payload_mut());
+    tcp_repr.emit(
+        &mut tcp_out,
+        &src_addr.into(),
+        &dst_addr.into(),
+        &ChecksumCapabilities::default(),
+    );
+
+    Some(buf)
 }

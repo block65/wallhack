@@ -1,11 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use smoltcp::phy::Device;
@@ -15,13 +8,13 @@ use tokio::{
     time::Instant,
 };
 use wallhack_entry_stack::async_stack::{
-    HeldSyn, Netstack, SynProxyState, udp_socket::UdpSocketAny,
+    HeldSyn, Netstack, SynProbeCache, udp_socket::UdpSocketAny,
 };
 use wallhack_transport::ErasedTransport;
 use wallhack_wire::{
     data::{
         EntryNodeInstruction, ExitNodeResponse, UdpSendInstruction, entry_node_instruction,
-        exit_node_response, udp_response,
+        exit_node_response, icmp_response, udp_response,
     },
     socket_set::SocketSet,
 };
@@ -32,14 +25,8 @@ use super::{
     actor::TunActor,
     icmp::{build_icmp_dest_unreachable, icmp_reason_from_str},
     session::run_tcp_session,
-    syn_proxy::{parse_syn_target, probe_tcp_target},
+    syn_proxy::{ProbeResult, parse_syn_target, probe_tcp_target},
 };
-
-/// Warn once when connection rate exceeds this threshold (connections/sec)
-const HIGH_RATE_THRESHOLD: f64 = 50.0;
-
-/// Window for rate calculation
-const RATE_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -62,18 +49,18 @@ pub struct ConnectionManager<D: Device + Send + 'static> {
     metrics: SharedMetrics,
     tun_writer: Arc<AsyncFd<tun::Device>>,
     udp_sessions: HashMap<(smoltcp::wire::IpEndpoint, u16), UdpSession>,
-    /// Timestamps of recent TCP connections for rate detection
-    recent_connections: Vec<Instant>,
-    /// Only warn once about high connection rate
-    rate_warned: AtomicBool,
-    /// SYN proxy: receive held SYN packets from the poll loop.
+    /// Port probe: receive held SYN packets from the poll loop.
     syn_rx: tokio::sync::mpsc::UnboundedReceiver<HeldSyn>,
-    /// SYN proxy: send re-injected packets back to the poll loop.
+    /// Port probe: send re-injected packets back to the poll loop.
     inject_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    /// SYN proxy: wake the poll loop when a probe completes.
+    /// Port probe: wake the poll loop when a probe completes.
     wake_notify: Arc<Notify>,
-    /// SYN proxy: shared state for fast mode toggle and port cache.
-    syn_proxy_state: Arc<SynProxyState>,
+    /// Port probe: cache of per-(host,port) probe results.
+    probe_cache: Arc<SynProbeCache>,
+    /// Raw packets (ICMP) from the poll loop to write directly to the TUN.
+    egress_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    /// Intercepted ICMP Echo Requests from the poll loop for tunnel forwarding.
+    icmp_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     /// Unified data stream: send UDP instructions to the exit node.
     instructions_tx: mpsc::Sender<EntryNodeInstruction>,
     /// Unified data stream: receive responses from the exit node.
@@ -85,13 +72,13 @@ impl ConnectionManager<super::actor::SmoltcpTunDevice> {
         actor: TunActor,
         transport: Arc<dyn ErasedTransport>,
         metrics: SharedMetrics,
-        fast_mode: bool,
         instructions_tx: mpsc::Sender<EntryNodeInstruction>,
         responses_rx: mpsc::Receiver<ExitNodeResponse>,
-    ) -> (Self, Arc<SynProxyState>) {
+    ) -> (Self, Arc<SynProbeCache>) {
         let (mut stack, tun_writer) = actor.into_stack();
-        let state = Arc::new(SynProxyState::new(fast_mode));
-        let (syn_rx, inject_tx, wake_notify) = stack.set_syn_proxy(Arc::clone(&state));
+        let state = Arc::new(SynProbeCache::new());
+        let (syn_rx, inject_tx, wake_notify, egress_rx, icmp_rx) =
+            stack.set_probe_cache(Arc::clone(&state));
 
         let manager = Self {
             stack,
@@ -99,12 +86,12 @@ impl ConnectionManager<super::actor::SmoltcpTunDevice> {
             metrics,
             tun_writer,
             udp_sessions: HashMap::new(),
-            recent_connections: Vec::new(),
-            rate_warned: AtomicBool::new(false),
             syn_rx,
             inject_tx,
             wake_notify,
-            syn_proxy_state: Arc::clone(&state),
+            probe_cache: Arc::clone(&state),
+            egress_rx,
+            icmp_rx,
             instructions_tx,
             responses_rx,
         };
@@ -138,17 +125,6 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                         remote = ?stream.remote_endpoint(),
                         "TCP stream accepted, spawning session"
                     );
-
-                    // Track connection rate for RTFM warning
-                    let now = Instant::now();
-                    self.recent_connections.push(now);
-                    self.recent_connections.retain(|t| now.duration_since(*t) < RATE_WINDOW);
-                    let count = u32::try_from(self.recent_connections.len()).unwrap_or(u32::MAX);
-                    let rate = f64::from(count) / RATE_WINDOW.as_secs_f64();
-                    if rate > HIGH_RATE_THRESHOLD && !self.rate_warned.swap(true, Ordering::Relaxed) {
-                        tracing::warn!("High connection rate detected ({rate:.0}/s)");
-                        tracing::warn!("Tip: for scanning (nmap, masscan), consider scan mode for better performance");
-                    }
 
                     self.metrics.inc_active_connections();
                     let transport = Arc::clone(&self.transport);
@@ -226,31 +202,62 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                 }
                 Some(held) = self.syn_rx.recv() => {
                     let transport = Arc::clone(&self.transport);
-                    let state = Arc::clone(&self.syn_proxy_state);
+                    let state = Arc::clone(&self.probe_cache);
                     let inject_tx = self.inject_tx.clone();
+                    let tun = Arc::clone(&self.tun_writer);
                     let wake = Arc::clone(&self.wake_notify);
-                    let port = held.dst_port;
+                    let dst_addr = held.dst_addr;
                     tokio::spawn(async move {
                         let Some(target_addr) = parse_syn_target(&held.packet) else {
-                            tracing::debug!(port, "SYN probe: failed to parse target");
-                            state.mark_closed(port);
+                            tracing::debug!(%dst_addr, "SYN probe: failed to parse target");
+                            state.mark_unreachable(dst_addr);
                             wake.notify_one();
                             return;
                         };
-                        let open = probe_tcp_target(&transport, &target_addr).await;
-                        if open {
-                            tracing::debug!(port, "SYN probe: open");
-                            state.mark_open(port);
-                            // Re-inject the original SYN so the poll loop can JIT-bind + process it.
-                            let _ = inject_tx.send(held.packet);
-                        } else {
-                            tracing::debug!(port, "SYN probe: closed");
-                            state.mark_closed(port);
-                            // Re-inject so smoltcp sees the SYN with no listener → RST.
-                            let _ = inject_tx.send(held.packet);
+                        match probe_tcp_target(&transport, &target_addr).await {
+                            ProbeResult::Open => {
+                                tracing::debug!(%dst_addr, "SYN probe: open");
+                                state.mark_open(dst_addr);
+                                let _ = inject_tx.send(held.packet);
+                            }
+                            ProbeResult::Closed => {
+                                tracing::debug!(%dst_addr, "SYN probe: closed");
+                                state.mark_closed(dst_addr);
+                                let _ = inject_tx.send(held.packet);
+                            }
+                            ProbeResult::Unreachable => {
+                                tracing::debug!(%dst_addr, "SYN probe: unreachable");
+                                state.mark_unreachable(dst_addr);
+                                // Inject ICMP Host Unreachable so nmap marks host "down".
+                                write_icmp_to_tun(&tun, &held.packet);
+                            }
+                            ProbeResult::TransportError => {
+                                // Tunnel issue — don't cache, drop silently.
+                                // nmap will see "filtered" (timeout).
+                                tracing::debug!(%dst_addr, "SYN probe: transport error");
+                            }
                         }
                         wake.notify_one();
                     });
+                }
+                Some(icmp_packet) = self.egress_rx.recv() => {
+                    // ICMP packets from the poll loop (cache-hit retransmits).
+                    write_raw_to_tun(&self.tun_writer, &icmp_packet);
+                }
+                Some(icmp_pkt) = self.icmp_rx.recv() => {
+                    // ICMP Echo Request intercepted from the entry stack.
+                    // Forward to the exit node for real ping delivery.
+                    if let Some(instr) = build_icmp_instruction(&icmp_pkt) {
+                        tracing::trace!(len = icmp_pkt.len(), "forwarding ICMP echo request to exit");
+                        if self.instructions_tx.send(instr).await.is_err() {
+                            tracing::debug!("ICMP: instructions channel closed, stopping");
+                            return Ok(());
+                        }
+                        self.metrics.inc_packets_out(1);
+                        self.metrics.inc_bytes_out(icmp_pkt.len() as u64);
+                    } else {
+                        tracing::warn!(len = icmp_pkt.len(), "failed to build ICMP instruction from packet");
+                    }
                 }
                 () = tokio::time::sleep(Duration::from_secs(5)) => {
                     let now = Instant::now();
@@ -267,6 +274,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_exit_response<D2>(&mut self, udp: &mut UdpSocketAny<D2>, response: ExitNodeResponse)
     where
         D2: Device + Send + 'static,
@@ -369,9 +377,278 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     tracing::warn!("Failed to inject ICMP packet: {e}");
                 }
             }
-            _ => {
-                // Other response types (TCP, ICMP) are not relevant to the UDP path
+            Some(exit_node_response::Response::IcmpResponse(icmp_resp)) => {
+                let Ok(socket_set) = SocketSet::try_from(pair) else {
+                    tracing::warn!("ICMP response: invalid pair, dropping");
+                    return;
+                };
+                let (src_std, dst_std): (std::net::SocketAddr, std::net::SocketAddr) =
+                    socket_set.into();
+
+                match icmp_resp.response {
+                    Some(icmp_response::Response::DataRecv(data_recv))
+                        if !data_recv.data.is_empty() =>
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let original_ident = data_recv.echo_ident as u16;
+                        if let Some(packet) =
+                            build_icmp_echo_reply(&data_recv.data, original_ident, src_std, dst_std)
+                        {
+                            tracing::trace!(
+                                data_len = data_recv.data.len(),
+                                original_ident,
+                                "injecting ICMP echo reply into TUN"
+                            );
+                            write_raw_to_tun(&self.tun_writer, &packet);
+                            self.metrics.inc_packets_in(1);
+                            self.metrics.inc_bytes_in(data_recv.data.len() as u64);
+                        }
+                    }
+                    _ => {}
+                }
             }
+            _ => {}
         }
     }
+}
+
+/// Build ICMP Host Unreachable from the original SYN packet and write to TUN.
+fn write_icmp_to_tun(tun: &Arc<AsyncFd<tun::Device>>, original_syn: &[u8]) {
+    if let Some(icmp) = wallhack_entry_stack::async_stack::build_icmp_host_unreachable(original_syn)
+    {
+        write_raw_to_tun(tun, &icmp);
+    }
+}
+
+/// Write a raw IP packet directly to the TUN device.
+fn write_raw_to_tun(tun: &Arc<AsyncFd<tun::Device>>, packet: &[u8]) {
+    if let Err(e) = tun.get_ref().send(packet) {
+        tracing::debug!(error = %e, "Failed to write ICMP to TUN");
+    }
+}
+
+/// Parse a raw IP packet containing an ICMP Echo Request and build an
+/// [`EntryNodeInstruction::IcmpSend`] for tunnel delivery.
+fn build_icmp_instruction(packet: &[u8]) -> Option<EntryNodeInstruction> {
+    use smoltcp::wire::{IpVersion, Ipv4Packet, Ipv6Packet};
+    use wallhack_wire::data::{
+        IcmpEchoRequest, IcmpSendInstruction, SocketAddressPair, icmp_send_instruction::IcmpMessage,
+    };
+
+    let version = IpVersion::of_packet(packet).ok()?;
+
+    match version {
+        IpVersion::Ipv4 => {
+            let ipv4 = Ipv4Packet::new_checked(packet).ok()?;
+            let payload = ipv4.payload();
+            if payload.len() < 8 || payload[0] != 8 {
+                return None;
+            }
+
+            let ident = u16::from_be_bytes([payload[4], payload[5]]);
+            let seq_no = u16::from_be_bytes([payload[6], payload[7]]);
+            let data = payload[8..].to_vec();
+
+            let src_v4 = std::net::SocketAddrV4::new(ipv4.src_addr(), 0);
+            let dst_v4 = std::net::SocketAddrV4::new(ipv4.dst_addr(), 0);
+            let pair = SocketAddressPair::from(SocketSet::Ipv4((src_v4, dst_v4)));
+
+            Some(EntryNodeInstruction {
+                instruction: Some(entry_node_instruction::Instruction::IcmpSend(
+                    IcmpSendInstruction {
+                        pair: Some(pair),
+                        icmp_message: Some(IcmpMessage::IcmpEchoRequest(IcmpEchoRequest {
+                            seq_no: u32::from(seq_no),
+                            ident: u32::from(ident),
+                            data: data.into(),
+                        })),
+                    },
+                )),
+            })
+        }
+        IpVersion::Ipv6 => {
+            let ipv6 = Ipv6Packet::new_checked(packet).ok()?;
+            let icmp_payload = find_icmpv6_payload(ipv6.next_header(), ipv6.payload())?;
+
+            if icmp_payload.len() < 8 || icmp_payload[0] != 128 {
+                return None;
+            }
+
+            let ident = u16::from_be_bytes([icmp_payload[4], icmp_payload[5]]);
+            let seq_no = u16::from_be_bytes([icmp_payload[6], icmp_payload[7]]);
+            let data = icmp_payload[8..].to_vec();
+
+            let src_addr = std::net::SocketAddrV6::new(ipv6.src_addr(), 0, 0, 0);
+            let dst_addr = std::net::SocketAddrV6::new(ipv6.dst_addr(), 0, 0, 0);
+            let pair = SocketAddressPair::from(SocketSet::Ipv6((src_addr, dst_addr)));
+
+            Some(EntryNodeInstruction {
+                instruction: Some(entry_node_instruction::Instruction::IcmpSend(
+                    IcmpSendInstruction {
+                        pair: Some(pair),
+                        icmp_message: Some(IcmpMessage::IcmpEchoRequest(IcmpEchoRequest {
+                            seq_no: u32::from(seq_no),
+                            ident: u32::from(ident),
+                            data: data.into(),
+                        })),
+                    },
+                )),
+            })
+        }
+    }
+}
+
+/// Walk IPv6 extension headers to find the `ICMPv6` payload.
+fn find_icmpv6_payload(
+    mut next_header: smoltcp::wire::IpProtocol,
+    mut payload: &[u8],
+) -> Option<&[u8]> {
+    use smoltcp::wire::IpProtocol;
+    loop {
+        match next_header {
+            IpProtocol::HopByHop
+            | IpProtocol::Ipv6Route
+            | IpProtocol::Ipv6Frag
+            | IpProtocol::Ipv6Opts => {
+                if payload.len() < 2 {
+                    return None;
+                }
+                next_header = IpProtocol::from(payload[0]);
+                let ext_len = (usize::from(payload[1]) + 1) * 8;
+                if payload.len() < ext_len {
+                    return None;
+                }
+                payload = &payload[ext_len..];
+            }
+            IpProtocol::Icmpv6 => return Some(payload),
+            _ => return None,
+        }
+    }
+}
+
+/// Construct a raw IP + ICMP Echo Reply packet from the exit node's response
+/// data. The response `data` is the raw ICMP message from the OS DGRAM socket
+/// (ICMP header + payload, no IP header).
+///
+/// `original_ident` is the Echo identifier from the original request (the
+/// kernel on the exit node may have substituted its own).
+///
+/// `src_std` / `dst_std` are the original pair addresses (src = originator,
+/// dst = target). The reply packet reverses these: IP src = target, IP dst =
+/// originator.
+fn build_icmp_echo_reply(
+    raw_icmp: &[u8],
+    original_ident: u16,
+    src_std: std::net::SocketAddr,
+    dst_std: std::net::SocketAddr,
+) -> Option<Vec<u8>> {
+    use smoltcp::phy::ChecksumCapabilities;
+
+    // Need at least type(1) + code(1) + checksum(2) + ident(2) + seq(2)
+    if raw_icmp.len() < 8 {
+        return None;
+    }
+
+    let caps = ChecksumCapabilities::default();
+
+    match (src_std, dst_std) {
+        (std::net::SocketAddr::V4(src_v4), std::net::SocketAddr::V4(dst_v4)) => {
+            build_icmpv4_echo_reply(raw_icmp, original_ident, src_v4, dst_v4, &caps)
+        }
+        (std::net::SocketAddr::V6(src_v6), std::net::SocketAddr::V6(dst_v6)) => {
+            build_icmpv6_echo_reply(raw_icmp, original_ident, src_v6, dst_v6, &caps)
+        }
+        _ => None,
+    }
+}
+
+fn build_icmpv4_echo_reply(
+    raw_icmp: &[u8],
+    original_ident: u16,
+    src_v4: std::net::SocketAddrV4,
+    dst_v4: std::net::SocketAddrV4,
+    caps: &smoltcp::phy::ChecksumCapabilities,
+) -> Option<Vec<u8>> {
+    use smoltcp::wire::{Icmpv4Packet, Icmpv4Repr, IpProtocol, Ipv4Packet, Ipv4Repr};
+
+    let icmp_pkt = Icmpv4Packet::new_checked(raw_icmp).ok()?;
+    let repr = Icmpv4Repr::parse(&icmp_pkt, caps).ok()?;
+
+    let Icmpv4Repr::EchoReply { seq_no, data, .. } = repr else {
+        return None;
+    };
+
+    let reply = Icmpv4Repr::EchoReply {
+        ident: original_ident,
+        seq_no,
+        data,
+    };
+
+    // IP: src = target (where the ping went), dst = originator
+    let target_ip: smoltcp::wire::Ipv4Address = *dst_v4.ip();
+    let client_ip: smoltcp::wire::Ipv4Address = *src_v4.ip();
+
+    let ip_repr = Ipv4Repr {
+        src_addr: target_ip,
+        dst_addr: client_ip,
+        next_header: IpProtocol::Icmp,
+        payload_len: reply.buffer_len(),
+        hop_limit: 64,
+    };
+
+    let total = ip_repr.buffer_len() + reply.buffer_len();
+    let mut buf = vec![0u8; total];
+
+    let mut ip_pkt = Ipv4Packet::new_unchecked(&mut buf);
+    ip_repr.emit(&mut ip_pkt, caps);
+
+    let mut icmp_out = Icmpv4Packet::new_unchecked(&mut buf[ip_repr.buffer_len()..]);
+    reply.emit(&mut icmp_out, caps);
+
+    Some(buf)
+}
+
+fn build_icmpv6_echo_reply(
+    raw_icmp: &[u8],
+    original_ident: u16,
+    src_v6: std::net::SocketAddrV6,
+    dst_v6: std::net::SocketAddrV6,
+    caps: &smoltcp::phy::ChecksumCapabilities,
+) -> Option<Vec<u8>> {
+    use smoltcp::wire::{Icmpv6Packet, Icmpv6Repr, IpProtocol, Ipv6Packet, Ipv6Repr};
+
+    let target_ip: smoltcp::wire::Ipv6Address = *dst_v6.ip();
+    let client_ip: smoltcp::wire::Ipv6Address = *src_v6.ip();
+
+    let icmp_pkt = Icmpv6Packet::new_checked(raw_icmp).ok()?;
+    let repr = Icmpv6Repr::parse(&target_ip, &client_ip, &icmp_pkt, caps).ok()?;
+
+    let Icmpv6Repr::EchoReply { seq_no, data, .. } = repr else {
+        return None;
+    };
+
+    let reply = Icmpv6Repr::EchoReply {
+        ident: original_ident,
+        seq_no,
+        data,
+    };
+
+    let ip_repr = Ipv6Repr {
+        src_addr: target_ip,
+        dst_addr: client_ip,
+        next_header: IpProtocol::Icmpv6,
+        payload_len: reply.buffer_len(),
+        hop_limit: 64,
+    };
+
+    let total = ip_repr.buffer_len() + reply.buffer_len();
+    let mut buf = vec![0u8; total];
+
+    let mut ip_pkt = Ipv6Packet::new_unchecked(&mut buf);
+    ip_repr.emit(&mut ip_pkt);
+
+    let mut icmp_out = Icmpv6Packet::new_unchecked(&mut buf[ip_repr.buffer_len()..]);
+    reply.emit(&target_ip, &client_ip, &mut icmp_out, caps);
+
+    Some(buf)
 }
