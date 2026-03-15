@@ -9,6 +9,10 @@ tokio = { workspace = true, features = ["net", "io-util", "sync", "rt"] }
 thiserror.workspace = true
 tracing.workspace = true
 wallhack-wire = { path = "../wire" }
+tokio-vsock = { version = "0.7", optional = true }
+
+[features]
+vsock = ["dep:tokio-vsock"]
 
 [lints]
 workspace = true
