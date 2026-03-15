@@ -1,7 +1,0 @@
-packages:
-  - tinyproxy
-configs:
-  - etc/tinyproxy/tinyproxy.conf
-start: |
-  mkdir -p /var/log/tinyproxy /run/tinyproxy
-  tinyproxy -c /etc/tinyproxy/tinyproxy.conf

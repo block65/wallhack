@@ -1,7 +1,0 @@
-# Plain SSH layer — standard openssh, root login with password
-packages:
-  - openssh
-start: |
-  echo "root:password" | chpasswd 2>/dev/null || true
-  ssh-keygen -A 2>/dev/null
-  /usr/sbin/sshd -D -e &

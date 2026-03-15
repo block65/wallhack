@@ -1,4 +1,0 @@
-packages:
-  - memcached
-start: |
-  memcached -d -u root -l 0.0.0.0

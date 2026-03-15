@@ -1,9 +1,0 @@
-# Hardened SSH layer — openssh with restricted sshd_config
-packages:
-  - openssh
-configs:
-  - etc/ssh/sshd_config
-start: |
-  echo "root:password" | chpasswd 2>/dev/null || true
-  ssh-keygen -A 2>/dev/null
-  /usr/sbin/sshd -D -e &

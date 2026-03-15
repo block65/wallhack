@@ -1,6 +1,0 @@
-packages:
-  - dante-server
-configs:
-  - etc/sockd.conf
-start: |
-  sockd -f /etc/sockd.conf -D &
