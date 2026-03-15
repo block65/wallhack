@@ -1,3 +1,4 @@
+
 # Changelog
 
 ## [0.6.3](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.2...wallhack-cli-v0.6.3) (2026-03-15)
@@ -90,4 +91,3 @@ _4 other changes — [view diff](https://github.com/block65/wallhack/compare/wal
 ### Fixed
 
 - correct markdown link syntax in README
-
