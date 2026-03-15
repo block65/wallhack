@@ -1,5 +1,9 @@
 version: "1"
 
+build:
+  env:
+    WALLHACK_BINARY: ../target/musl/x86_64-unknown-linux-musl/release/wallhack
+
 defaults:
   kernel: ./vm/build/vmlinuz
   alpine: "3.21"
