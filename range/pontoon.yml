@@ -1,0 +1,319 @@
+# yaml-language-server: $schema=./pontoon.schema.json
+version: "1"
+
+defaults:
+  kernel: ./vm/build/vmlinuz
+  alpine: "3.21"
+
+networks:
+  perimeter:
+    subnet: 10.99.1.0/24
+  office:
+    subnet: 10.99.2.0/24
+    internal: true
+  datacenter:
+    subnet: 10.99.3.0/24
+    internal: true
+  management:
+    subnet: 10.99.4.0/24
+    internal: true
+  vault:
+    subnet: 10.99.5.0/24
+    internal: true
+
+services:
+  # ===========================================================================
+  # PERIMETER 10.99.1.0/24
+  # ===========================================================================
+
+  attacker:
+    memory: 256m
+    cpus: 2
+    layers:
+      - base
+      - wallhack
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.100
+    kernel_args:
+      svc.start: wallhack
+      svc.wallhack.role: entry
+      svc.wallhack.name: attacker
+      svc.wallhack.listen: ":4433"
+
+  gateway-perimeter:
+    memory: 128m
+    cpus: 2
+    layers:
+      - base
+      - wallhack
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.10
+      office:
+        ipv4_address: 10.99.2.2
+        masquerade: true
+    kernel_args:
+      svc.start: wallhack
+      svc.wallhack.role: exit
+      svc.wallhack.name: gateway-perimeter
+      svc.wallhack.connect: "10.99.1.100:4433"
+
+  web-external:
+    memory: 128m
+    cpus: 1
+    layers:
+      - base
+      - web-external
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.80
+    kernel_args:
+      svc.start: web-external
+
+  ftp-server:
+    memory: 64m
+    cpus: 1
+    layers:
+      - base
+      - vsftpd
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.21
+    kernel_args:
+      svc.start: vsftpd
+
+  corp-proxy:
+    memory: 128m
+    cpus: 1
+    layers:
+      - base
+      - squid
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.50
+    kernel_args:
+      svc.start: squid
+
+  corp-socks:
+    memory: 64m
+    cpus: 1
+    layers:
+      - base
+      - dante
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.51
+    kernel_args:
+      svc.start: dante
+
+  # ===========================================================================
+  # OFFICE 10.99.2.0/24
+  # ===========================================================================
+
+  gateway-office:
+    memory: 128m
+    cpus: 2
+    layers:
+      - base
+    networks:
+      office:
+        ipv4_address: 10.99.2.10
+      datacenter:
+        ipv4_address: 10.99.3.2
+        masquerade: true
+
+  fileserver:
+    memory: 256m
+    cpus: 1
+    layers:
+      - base
+      - samba
+    networks:
+      office:
+        ipv4_address: 10.99.2.100
+        gateway: 10.99.2.2
+    kernel_args:
+      svc.start: samba
+
+  intranet:
+    memory: 64m
+    cpus: 1
+    layers:
+      - base
+      - intranet
+    networks:
+      office:
+        ipv4_address: 10.99.2.80
+        gateway: 10.99.2.2
+    kernel_args:
+      svc.start: intranet
+
+  ssh-server:
+    memory: 128m
+    cpus: 1
+    layers:
+      - base
+      - ssh-hardened
+    networks:
+      office:
+        ipv4_address: 10.99.2.22
+        gateway: 10.99.2.2
+    kernel_args:
+      svc.start: ssh-hardened
+
+  printer:
+    memory: 256m
+    cpus: 1
+    layers:
+      - base
+      - app-printer
+    networks:
+      office:
+        ipv4_address: 10.99.2.200
+        gateway: 10.99.2.2
+    kernel_args:
+      svc.start: app-printer
+
+  # ===========================================================================
+  # DATACENTER 10.99.3.0/24
+  # ===========================================================================
+
+  gateway-datacenter:
+    memory: 128m
+    cpus: 2
+    layers:
+      - base
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.10
+      management:
+        ipv4_address: 10.99.4.2
+        masquerade: true
+
+  db-postgres:
+    memory: 256m
+    cpus: 1
+    layers:
+      - base
+      - postgres
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.20
+        gateway: 10.99.3.2
+    kernel_args:
+      svc.start: postgres
+
+  db-mariadb:
+    memory: 512m
+    cpus: 1
+    layers:
+      - base
+      - mariadb
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.21
+        gateway: 10.99.3.2
+    kernel_args:
+      svc.start: mariadb
+
+  redis:
+    memory: 64m
+    cpus: 1
+    layers:
+      - base
+      - redis
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.30
+        gateway: 10.99.3.2
+    kernel_args:
+      svc.start: redis
+
+  memcached:
+    memory: 64m
+    cpus: 1
+    layers:
+      - base
+      - memcached
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.40
+        gateway: 10.99.3.2
+    kernel_args:
+      svc.start: memcached
+
+  api-server:
+    memory: 128m
+    cpus: 1
+    layers:
+      - base
+      - app-api
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.80
+        gateway: 10.99.3.2
+    kernel_args:
+      svc.start: app-api
+
+  # ===========================================================================
+  # MANAGEMENT 10.99.4.0/24
+  # ===========================================================================
+
+  gateway-management:
+    memory: 128m
+    cpus: 2
+    layers:
+      - base
+      - ssh-hardened
+    networks:
+      management:
+        ipv4_address: 10.99.4.10
+      vault:
+        ipv4_address: 10.99.5.2
+        masquerade: true
+    kernel_args:
+      svc.start: ssh-hardened
+
+  monitoring:
+    memory: 512m
+    cpus: 1
+    layers:
+      - base
+      - prometheus
+    networks:
+      management:
+        ipv4_address: 10.99.4.80
+        gateway: 10.99.4.2
+    kernel_args:
+      svc.start: prometheus
+
+  # ===========================================================================
+  # VAULT 10.99.5.0/24
+  # ===========================================================================
+
+  backup-server:
+    memory: 128m
+    cpus: 1
+    layers:
+      - base
+      - backup-ssh
+    networks:
+      vault:
+        ipv4_address: 10.99.5.20
+        gateway: 10.99.5.2
+    kernel_args:
+      svc.start: backup-ssh
+
+  gold:
+    memory: 256m
+    cpus: 1
+    layers:
+      - base
+      - app-gold
+    networks:
+      vault:
+        ipv4_address: 10.99.5.100
+        gateway: 10.99.5.2
+    kernel_args:
+      svc.start: app-gold

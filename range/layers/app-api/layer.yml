@@ -1,0 +1,7 @@
+packages:
+  - python3
+  - py3-flask
+configs:
+  - app/app.py
+start: |
+  python3 /app/app.py &

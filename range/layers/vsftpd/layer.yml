@@ -1,0 +1,9 @@
+packages:
+  - vsftpd
+configs:
+  - etc/vsftpd/vsftpd.conf
+start: |
+  mkdir -p /ftp
+  echo "FTP server - try anonymous login" > /ftp/readme.txt
+  echo "CONFIDENTIAL: Q3 salary review data" > /ftp/salaries.txt
+  vsftpd /etc/vsftpd/vsftpd.conf &

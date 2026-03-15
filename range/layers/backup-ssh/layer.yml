@@ -1,0 +1,9 @@
+packages:
+  - openssh
+  - rsync
+start: |
+  adduser -D backup 2>/dev/null || true
+  echo "root:hacker" | chpasswd 2>/dev/null || true
+  echo "backup:backup123" | chpasswd 2>/dev/null || true
+  ssh-keygen -A 2>/dev/null
+  /usr/sbin/sshd -D -e &
