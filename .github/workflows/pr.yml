@@ -58,7 +58,7 @@ jobs:
       - name: Clippy (default)
         run: cargo clippy --all-targets -- -D warnings
 
-  test:
+  build-musl:
     needs: [lint]
     runs-on: ubuntu-latest
     steps:
@@ -67,42 +67,16 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
-      - name: Cache cargo
+      - name: Cache cargo (musl)
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-test-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-test-cargo-
-
-      - name: Test
-        run: cargo test
-
-  build:
-    needs: [lint]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        run: |
-          rustup show
-          rustup target add x86_64-unknown-linux-gnu x86_64-unknown-linux-musl
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
             target/musl/
-          key: ${{ runner.os }}-build-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-build-cargo-
+          key: ${{ runner.os }}-musl-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-musl-cargo-
 
       - name: Cache cross binary
         id: cache-cross
@@ -119,6 +93,9 @@ jobs:
           gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
           tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
 
+      - name: Test (musl — primary)
+        run: CARGO_TARGET_DIR=target/musl cross test --target x86_64-unknown-linux-musl
+
       - name: Build slim (musl — primary)
         run: CARGO_TARGET_DIR=target/musl cross build --release --target x86_64-unknown-linux-musl -p wallhack-cli --no-default-features --features slim
 
@@ -130,6 +107,28 @@ jobs:
 
       - name: Check default binary size (musl — primary)
         run: ./bench/check_bloat.sh --no-build --only=default-musl
+
+  build-glibc:
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustup target add x86_64-unknown-linux-gnu
+
+      - name: Cache cargo (glibc)
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ${{ runner.os }}-glibc-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-glibc-cargo-
 
       - name: Build slim (glibc — sanity)
         run: cargo build --release --target x86_64-unknown-linux-gnu -p wallhack-cli --no-default-features --features slim
