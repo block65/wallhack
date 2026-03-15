@@ -35,9 +35,7 @@ pub fn create_async(local_addr: IpAddr) -> io::Result<AsyncFd<socket2::Socket>> 
         Err(err) => {
             tracing::error!("Failed to create ICMP datagram socket: {err}");
             if err.kind() == io::ErrorKind::PermissionDenied {
-                tracing::error!(
-                    "Hint: Check kernel's net.ipv4.ping_group_range sysctl."
-                );
+                tracing::error!("Hint: Check kernel's net.ipv4.ping_group_range sysctl.");
             }
             return Err(err);
         }

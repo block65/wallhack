@@ -164,7 +164,7 @@ pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 
 /// Enumerate non-loopback, globally-routable CIDRs on local interfaces.
 ///
-/// Queries the kernel via RTM_GETADDR and returns network addresses in CIDR
+/// Queries the kernel via `RTM_GETADDR` and returns network addresses in CIDR
 /// notation with host bits masked (e.g. `10.99.2.4/24` → `10.99.2.0/24`).
 /// Used to populate `Handshake.routes` so peers can install routes
 /// automatically on connect.
@@ -269,7 +269,7 @@ pub(crate) fn enumerate_local_cidrs() -> Vec<String> {
     cidrs
 }
 
-/// Returns `true` if the address is link-local (169.254.0.0/16 or fe80::/10).
+/// Returns `true` if the address is link-local (169.254.0.0/16 or `fe80::/10`).
 ///
 /// `IpAddr::is_link_local()` is not yet stable — this dispatches to the
 /// per-family methods that are available.
