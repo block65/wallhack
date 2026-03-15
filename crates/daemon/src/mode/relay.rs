@@ -380,7 +380,7 @@ where
                 handle_relay_connection(
                     erased,
                     source_instr_tx.clone(),
-                    fanout_register_tx.clone(),
+                    &fanout_register_tx,
                 );
             }
             Ok(None) => {
@@ -400,7 +400,7 @@ where
 fn handle_relay_connection(
     erased: wallhack_core::server::server::ErasedAcceptResult,
     source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
+    fanout_register_tx: &tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     >,
 ) {
@@ -454,6 +454,6 @@ fn handle_relay_connection(
         responses_tx,
         control_tx,
         source_instr_tx,
-        &fanout_register_tx,
+        fanout_register_tx,
     );
 }

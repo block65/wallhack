@@ -243,6 +243,7 @@ where
 /// Run entry node in connect mode.
 ///
 /// DNS resolve once, then retry loop with exponential backoff.
+#[allow(clippy::too_many_lines)] // verbose due to #[cfg] feature-gate branches per protocol
 pub(crate) async fn run_entry_connect(
     global: &GlobalConfig,
     cfg: &EntryConfig,

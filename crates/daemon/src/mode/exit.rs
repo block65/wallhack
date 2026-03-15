@@ -71,6 +71,7 @@ pub async fn run(
 }
 
 /// Run in connect-only mode (standard exit).
+#[allow(clippy::too_many_lines)] // verbose due to #[cfg] feature-gate branches per protocol
 async fn run_exit_connector(
     global: &GlobalConfig,
     name: &str,
