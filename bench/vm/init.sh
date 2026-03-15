@@ -116,7 +116,10 @@ ECHO_UDP_PORT=9998
 IPERF3_PORT=5201
 WH_PORT=6565
 PEER_NAME=vm
-TUN_NAME=tun-${PEER_NAME}
+# TODO: replace with `wallhack peers --json | jq -r '.[0].tun_name'` once
+# wallhack gains a --json flag (non-slim feature) and PeerInfo exposes tun_name.
+# TUN name is wh + FNV-1a32(PEER_NAME), per peer_name_to_iface() in daemon/src/mode/entry.rs
+TUN_NAME=wh5b770c26
 
 # Transport suffix: QUIC = "" (UDP), WebSocket = "/tcp"
 _TSUFFIX=""
