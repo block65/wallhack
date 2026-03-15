@@ -7,6 +7,7 @@ categories = ["network-programming"]
 [features]
 default = ["quic", "websocket"]
 slim = ["quic", "websocket"]
+vsock = ["dep:tokio-vsock"]
 quic = ["dep:quinn", "wallhack-transport/quic"]
 websocket = [
     "dep:tokio-tungstenite",
@@ -81,6 +82,7 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 
 ring = { version = "0.17", default-features = false }
 zeroize = "1"
+tokio-vsock = { version = "0.7", optional = true }
 
 [build-dependencies]
 test-log = { version = "0.2", features = ["trace"] }
