@@ -26,7 +26,7 @@ pub trait PeekDevice: Device {
 
     /// Inject a raw packet into the pending ingress queue.
     ///
-    /// Used by the SYN proxy to re-inject held SYN packets after the
+    /// Used by the SYN intercept path to re-inject held SYN packets after the
     /// exit node confirms (or denies) reachability.
     fn inject_pending(&mut self, packet: Vec<u8>);
 }
