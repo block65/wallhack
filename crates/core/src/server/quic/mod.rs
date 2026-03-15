@@ -214,9 +214,19 @@ impl Server for QuicServer {
         // Create latency channel so pong-derived RTT measurements are available
         // to the caller (e.g. for registry updates and one-shot ping responses).
         let (latency_tx, latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
+        let route_updates = self.options.route_updates.clone().unwrap_or_else(|| {
+            let (tx, _) = tokio::sync::broadcast::channel(16);
+            tx
+        });
 
         tokio::spawn(async move {
-            let handler = Handler::new(handler_config, metrics_ctrl, peers_ctrl, routes_ctrl);
+            let handler = Handler::new(
+                handler_config,
+                metrics_ctrl,
+                peers_ctrl,
+                routes_ctrl,
+                route_updates,
+            );
             let mut channels = protocol::ControlChannels {
                 outgoing_rx: control_rx,
                 handshake_tx: None, // Handshake already read above

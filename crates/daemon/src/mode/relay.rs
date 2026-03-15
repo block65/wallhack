@@ -39,6 +39,7 @@ fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>)
         metrics: Some(metrics),
         peers: None,
         routes: None,
+        route_updates: None,
         local_handshake: Some(wallhack_wire::data::Handshake {
             capabilities: Some(wallhack_wire::data::Capabilities {
                 tun_capable: false,

@@ -56,6 +56,10 @@ pub(crate) struct NodeResources {
     pub metrics: Arc<Metrics>,
     pub peers: Arc<Registry>,
     pub routes: SharedRouteTable,
+    pub route_updates:
+        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
+    pub route_updates_tx:
+        tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     pub node_state: SharedNodeState,
 }
 
@@ -73,6 +77,8 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.metrics,
                 resources.peers,
                 resources.routes,
+                resources.route_updates,
+                resources.route_updates_tx,
                 resources.node_state,
             )
             .await
@@ -97,6 +103,8 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.metrics,
                 resources.peers,
                 resources.routes,
+                resources.route_updates,
+                resources.route_updates_tx,
                 resources.node_state,
             )
             .await

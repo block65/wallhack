@@ -92,12 +92,14 @@ impl ControlServer {
         transport_config.max_idle_timeout(Some(timeout));
         transport_config.keep_alive_interval(Some(Duration::from_secs(10)));
 
+        let (route_updates, _) = tokio::sync::broadcast::channel(16);
         let endpoint = Endpoint::server(server_config, addr)?;
         let handler = Arc::new(Handler::new(
             config,
             metrics,
             Arc::new(Registry::new()),
             RouteTable::shared(),
+            route_updates,
         ));
 
         Ok(Self { endpoint, handler })
