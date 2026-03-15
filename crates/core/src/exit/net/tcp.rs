@@ -34,6 +34,7 @@ impl SyscallExitAdapter {
         Ok(response)
     }
 
+    #[allow(clippy::missing_panics_doc)]
     pub async fn tcp_connect_impl(
         &self,
         set: SocketSet,
@@ -42,7 +43,24 @@ impl SyscallExitAdapter {
 
         let (_, dst_addr) = set.into();
 
-        match tokio::net::TcpStream::connect(dst_addr).await {
+        let socket = match dst_addr {
+            std::net::SocketAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
+            std::net::SocketAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
+        };
+
+        // Bind to unspecified so the kernel picks a source port and does a
+        // fresh routing lookup. The `src` from SocketSet is the tunnel-side
+        // address, not the exit node's physical IP.
+        match dst_addr {
+            std::net::SocketAddr::V4(_) => {
+                socket.bind("0.0.0.0:0".parse().unwrap())?;
+            }
+            std::net::SocketAddr::V6(_) => {
+                socket.bind("[::]:0".parse().unwrap())?;
+            }
+        }
+
+        match socket.connect(dst_addr).await {
             Ok(stream) => {
                 tracing::debug!("Connected to {}", dst_addr);
                 let key = SessionKey::Tcp(set);
