@@ -93,6 +93,18 @@ jobs:
           gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
           tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
 
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and cache cross Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cross-musl
+          tags: wallhack-cross:x86_64-unknown-linux-musl
+          load: true
+          cache-from: type=gha,scope=cross-musl
+          cache-to: type=gha,mode=max,scope=cross-musl
+
       - name: Test (musl — primary)
         run: CARGO_TARGET_DIR=target/musl cross test --release --target x86_64-unknown-linux-musl
 
@@ -130,6 +142,18 @@ jobs:
         run: |
           gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
           tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and cache cross Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cross-musl
+          tags: wallhack-cross:x86_64-unknown-linux-musl
+          load: true
+          cache-from: type=gha,scope=cross-musl
+          cache-to: type=gha,mode=max,scope=cross-musl
 
       - name: Build slim (musl — primary)
         run: CARGO_TARGET_DIR=target/musl cross build --release --target x86_64-unknown-linux-musl -p wallhack-cli --no-default-features --features slim
