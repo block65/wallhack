@@ -1,10 +1,9 @@
 # Agent Guidelines for wallhack
 
-Before starting any work, read the following standards from the `standards/` submodule:
-
-- **Git & Workflow:** `./standards/workflow/git.md`
-- **Rust Standards:** `./standards/lang/rust.md`
-- **PR Workflow (TRIPLE):** `./standards/workflow/triple.md`
+**Before writing or modifying Rust code:** STOP. `cat standards/lang/rust.md` and follow it.
+**Before staging, committing, or creating a PR:** STOP. `cat standards/workflow/git.md` and follow it.
+**Before opening or merging a PR:** STOP. `cat standards/workflow/triple.md` and follow it.
+**Before changing any website content:**  `cat ./website/WRITING.md`
 
 ## Crate structure
 
@@ -48,10 +47,6 @@ Run `just check` from the repo root after finishing a task.
 The spec is manually maintained at `website/src/data/openapi.json`. If you
 add, remove, or change any route, request body, or response shape in
 `crates/wallhack/src/api/`, update that file to match.
-
-## Website
-
-Follow the rules in `./website/WRITING.md`
 
 ## Naming Conventions: Topology and Peers
 - The Protocol Exception: Standard terminology (client, server, send, receive)
