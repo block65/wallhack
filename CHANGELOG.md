@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.3](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.2...wallhack-cli-v0.6.3) (2026-03-15)
+
+### Bug Fixes
+
+* implement role transitions and hint-reactive auto mode (13g) ([0742241](https://github.com/block65/wallhack/commit/0742241e4ea5c88e9f0cd344c145e7940c6f2037))
+* **core:** erase transport generics before async spawn to reduce binary size ([6fadf85](https://github.com/block65/wallhack/commit/6fadf853f5f09f671bf153d434ab9dcb97019bec))
+* **core:** add #[must_use] to erase() methods ([4d6079d](https://github.com/block65/wallhack/commit/4d6079d7f98b5260a2690ff699d1b22cc6e753b3))
+* **core:** remove unnecessary mut bindings in tests ([8019c27](https://github.com/block65/wallhack/commit/8019c27381bd0d3a1c88b8736b6ee5b1d41ff24d))
+* **daemon:** fix clippy lints from type-erasure refactor ([7fa7a1e](https://github.com/block65/wallhack/commit/7fa7a1e5c55dd2803c07d52b4401ebe32fe6f59a))
+
+1 other change — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.2...wallhack-cli-v0.6.3)
+
+
 ## [0.6.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.1...wallhack-cli-v0.6.2) (2026-03-07)
 
 ### Bug Fixes
