@@ -1,5 +1,5 @@
 FROM ghcr.io/cross-rs/x86_64-unknown-linux-musl:main
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends protobuf-compiler \
+  && apt-get install -y --no-install-recommends protobuf-compiler zlib1g-dev \
   && rm -rf /var/lib/apt/lists/*
