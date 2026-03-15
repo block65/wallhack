@@ -1,20 +1,34 @@
-//! Lightweight tracing subscriber with substring-based filtering.
+//! Lightweight tracing subscriber with substring-based filtering and dedup.
 //!
 //! Replaces `tracing-subscriber` + `env-filter` to avoid pulling in the regex
 //! stack (~400KB of `.text`). Filters are comma-separated substrings matched
 //! against the tracing event's module path.
+//!
+//! Consecutive identical log lines are suppressed and summarised as
+//! `"↑ repeated N×"` when the streak breaks.
 
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    sync::{Arc, Mutex, RwLock},
+};
 
 use tracing::{Event, Level, Metadata, Subscriber, level_filters::LevelFilter};
 
 pub type LogWriter = Arc<RwLock<Box<dyn Fn(&str, &str) + Send + Sync>>>;
+
+struct DedupeState {
+    last_hash: u64,
+    last_tag: &'static str,
+    count: usize,
+}
 
 /// A minimal [`Subscriber`] that filters by level and optional module substrings.
 pub struct SimpleSubscriber {
     max_level: LevelFilter,
     filters: Vec<String>,
     writer: LogWriter,
+    dedup: Mutex<DedupeState>,
 }
 
 impl SimpleSubscriber {
@@ -35,6 +49,11 @@ impl SimpleSubscriber {
             max_level,
             filters,
             writer: Arc::new(RwLock::new(Box::new(|tag, msg| eprintln!("{tag}: {msg}")))),
+            dedup: Mutex::new(DedupeState {
+                last_hash: 0,
+                last_tag: "info",
+                count: 0,
+            }),
         }
     }
 
@@ -97,7 +116,34 @@ impl Subscriber for SimpleSubscriber {
             Level::TRACE => "trace",
         };
 
+        // Hash message + level + target to detect consecutive duplicates.
+        let mut hasher = DefaultHasher::new();
+        visitor.0.hash(&mut hasher);
+        level.hash(&mut hasher);
+        event.metadata().target().hash(&mut hasher);
+        let hash = hasher.finish();
+
+        let Ok(mut dedup) = self.dedup.lock() else {
+            return;
+        };
+
+        if hash == dedup.last_hash {
+            dedup.count += 1;
+            return;
+        }
+
+        // Streak broken — flush repeat count, then print the new message.
+        let flush_count = dedup.count;
+        let flush_tag = dedup.last_tag;
+        dedup.last_hash = hash;
+        dedup.last_tag = tag;
+        dedup.count = 0;
+        drop(dedup);
+
         if let Ok(writer) = self.writer.read() {
+            if flush_count > 0 {
+                writer(flush_tag, &format!("↑ repeated {flush_count}×"));
+            }
             writer(tag, &visitor.0);
         }
     }
