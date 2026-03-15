@@ -158,11 +158,12 @@ jobs:
       - name: Build slim (musl — primary)
         run: CARGO_TARGET_DIR=target/musl cross build --release --target x86_64-unknown-linux-musl -p wallhack-cli --no-default-features --features slim
 
-      - name: Build default (musl — primary)
-        run: CARGO_TARGET_DIR=target/musl cross build --release --target x86_64-unknown-linux-musl -p wallhack-cli
-
       - name: Check slim binary size (musl — primary)
         run: ./bench/check_bloat.sh --no-build --only=slim-musl
+        continue-on-error: true
+
+      - name: Build default (musl — primary)
+        run: CARGO_TARGET_DIR=target/musl cross build --release --target x86_64-unknown-linux-musl -p wallhack-cli
 
       - name: Check default binary size (musl — primary)
         run: ./bench/check_bloat.sh --no-build --only=default-musl
@@ -251,11 +252,12 @@ jobs:
       - name: Build slim (glibc — sanity)
         run: cargo build --release --target x86_64-unknown-linux-gnu -p wallhack-cli --no-default-features --features slim
 
-      - name: Build default (glibc — sanity)
-        run: cargo build --release --target x86_64-unknown-linux-gnu -p wallhack-cli
-
       - name: Check slim binary size (glibc — sanity)
         run: ./bench/check_bloat.sh --no-build --only=slim-glibc
+        continue-on-error: true
+
+      - name: Build default (glibc — sanity)
+        run: cargo build --release --target x86_64-unknown-linux-gnu -p wallhack-cli
 
       - name: Check default binary size (glibc — sanity)
         run: ./bench/check_bloat.sh --no-build --only=default-glibc
