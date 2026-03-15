@@ -1,12 +1,22 @@
 ---
-title: CLI
-description: Built-in interactive command-line interface for real-time tunnel management.
+title: CLI & Tools
+description: Built-in interactive command-line interface and MCP server for real-time tunnel management.
 order: 9
 ---
 
-# CLI
+# CLI & Tools Reference
 
-Every entry node includes an interactive command-line interface for direct access to the node state. The CLI is automatically disabled when stdin is not a terminal (e.g., in Docker or when running as a daemon).
+## `wallhack-mcp`
+
+`wallhack-mcp` is an MCP (Model Context Protocol) server that exposes all daemon management operations as tools for AI assistants such as Claude Desktop. It connects to a running `wallhackd` daemon and makes operations like checking status, managing peers, adding routes, and shutting down available as structured tool calls.
+
+By default, `wallhack-mcp` connects to the local daemon Unix socket. To connect to a daemon running in a VM or on a remote host, set `WALLHACK_HOST` to a vsock address:
+
+{% codeblock code="WALLHACK_HOST=vsock://3:4434 wallhack-mcp" /%}
+
+## `wallhack` REPL
+
+Every entry node includes an interactive command-line interface for direct access to the node state. The REPL is automatically disabled when stdin is not a terminal (e.g., in Docker or when running as a daemon).
 
 ## Commands
 
