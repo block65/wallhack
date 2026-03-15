@@ -636,7 +636,7 @@ mod tests {
     async fn test_handshake_exchange() {
         use wallhack_wire::data::Handshake;
 
-        let (mut stream_a, mut stream_b) = bidi_pair();
+        let (stream_a, stream_b) = bidi_pair();
 
         // Side A: sends its handshake, receives B's.
         let (a_hs_tx, a_hs_rx) = tokio::sync::oneshot::channel::<Handshake>();
@@ -720,7 +720,7 @@ mod tests {
     /// is ignored; `handshake_tx` is never fulfilled).
     #[tokio::test]
     async fn test_malformed_handshake() {
-        let (mut stream_a, mut stream_b) = bidi_pair();
+        let (mut stream_a, stream_b) = bidi_pair();
 
         // Send a Ping instead of a Handshake as the first message.
         let bad_msg = ControlMessage {
@@ -759,7 +759,7 @@ mod tests {
     /// Pong latency is computed and forwarded via `latency_tx`.
     #[tokio::test]
     async fn test_ping_latency() {
-        let (mut stream_a, mut stream_b) = bidi_pair();
+        let (mut stream_a, stream_b) = bidi_pair();
 
         let (latency_tx, mut latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
         let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
@@ -842,7 +842,7 @@ mod tests {
     /// Periodic ping timer fires at the configured interval.
     #[tokio::test(start_paused = true)]
     async fn test_periodic_ping() {
-        let (mut stream_a, mut stream_b) = bidi_pair();
+        let (mut stream_a, stream_b) = bidi_pair();
 
         let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
         let mut channels = ControlChannels {
@@ -903,7 +903,7 @@ mod tests {
             },
         };
 
-        let (mut client_stream, mut server_stream) = bidi_pair();
+        let (mut client_stream, server_stream) = bidi_pair();
 
         let handler = Handler::new(
             HandlerConfig::new(
@@ -1033,7 +1033,7 @@ mod tests {
             },
         };
 
-        let (mut client_stream, mut server_stream) = bidi_pair();
+        let (mut client_stream, server_stream) = bidi_pair();
 
         let handler = Handler::new(
             HandlerConfig::new(
