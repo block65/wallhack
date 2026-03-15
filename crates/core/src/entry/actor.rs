@@ -35,9 +35,9 @@ impl TunActor {
         config.tun_name(tun_name.clone());
         config.up();
 
-        let device = Device::new(&config)?;
-        device.set_nonblock()?;
-        let name = device.tun_name()?;
+        let device = Device::new(&config).map_err(Error::Tun)?;
+        device.set_nonblock().map_err(Error::Io)?;
+        let name = device.tun_name().map_err(Error::Tun)?;
         let mtu = device.mtu().unwrap_or(1500) as usize;
 
         // Wrap the TUN device in AsyncFd for epoll-based readiness notification.

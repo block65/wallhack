@@ -457,6 +457,53 @@ impl<D: Device> InnerStack<D> {
         count
     }
 
+    /// Remove `Listen` sockets older than `min_age`.
+    ///
+    /// JIT listeners are created for every probe. If the handshake never starts,
+    /// we need to reap them.
+    pub fn prune_stale_listeners(&mut self, min_age: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let to_remove: Vec<(SocketHandle, u16)> = self
+            .sockets
+            .iter()
+            .filter_map(|(handle, socket)| {
+                let Socket::Tcp(tcp) = socket else {
+                    return None;
+                };
+                if tcp.state() != tcp::State::Listen {
+                    return None;
+                }
+                let age = self
+                    .socket_birth
+                    .get(&handle)
+                    .map_or(std::time::Duration::MAX, |t| now.duration_since(*t));
+                if age >= min_age {
+                    let port = tcp.listen_endpoint().port;
+                    #[cfg(feature = "async")]
+                    tracing::debug!(?handle, port, ?age, "Pruning stale Listen socket");
+                    Some((handle, port))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let count = to_remove.len();
+
+        if let Some(ref ports) = self.jit_tcp_ports {
+            let mut port_set = ports.lock();
+            for (_, port) in &to_remove {
+                port_set.remove(port);
+            }
+        }
+
+        for (handle, _) in &to_remove {
+            self.socket_birth.remove(handle);
+            self.sockets.remove(*handle);
+        }
+        count
+    }
+
     /// Returns a reference to the underlying device.
     #[must_use]
     pub fn device(&self) -> &D {
@@ -660,9 +707,9 @@ mod tests {
         assert_eq!(reply_tcp.ack_number(), TcpSeqNumber(1001));
     }
 
-    /// Verify the critical SYN proxy assumption: SYN to a port with NO listener
+    /// Verify the critical SYN intercept assumption: SYN to a port with NO listener
     /// must produce a RST (not silence). This is the foundation of the SYN
-    /// proxy architecture — if smoltcp silently drops, we'd need manual RST
+    /// intercept architecture — if smoltcp silently drops, we'd need manual RST
     /// construction instead.
     #[test]
     fn syn_without_listener_produces_rst() {
@@ -726,7 +773,7 @@ mod tests {
         let egress = stack.device_mut().drain_egress();
         assert!(
             !egress.is_empty(),
-            "expected RST packet but got silence — SYN proxy architecture won't work"
+            "expected RST packet but got silence — SYN intercept architecture won't work"
         );
 
         let reply = &egress[0];
