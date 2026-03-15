@@ -350,12 +350,13 @@ pub(crate) async fn run_entry_connect(
                         }
                     },
                     move |connect_result| {
+                        let e = connect_result.erase();
                         let m = Arc::clone(&metrics);
                         let r = Arc::clone(&routes);
                         let ru = r_updates.resubscribe();
                         let pa = peer_addr.clone();
                         async move {
-                            run_entry_connected(connect_result, &m, &pa, Some(r), Some(ru)).await
+                            run_entry_connected_erased(e, &m, &pa, Some(r), Some(ru)).await
                         }
                     },
                     RECONNECT_DELAY,
@@ -385,12 +386,13 @@ pub(crate) async fn run_entry_connect(
                         }
                     },
                     move |connect_result| {
+                        let e = connect_result.erase();
                         let m = Arc::clone(&metrics);
                         let r = Arc::clone(&routes);
                         let ru = r_updates.resubscribe();
                         let pa = peer_addr.clone();
                         async move {
-                            run_entry_connected(connect_result, &m, &pa, Some(r), Some(ru)).await
+                            run_entry_connected_erased(e, &m, &pa, Some(r), Some(ru)).await
                         }
                     },
                     RECONNECT_DELAY,
@@ -421,27 +423,30 @@ fn entry_local_handshake(name: &str, version: &str) -> wallhack_wire::data::Hand
 
 /// Run the entry node session once connected.
 ///
-/// Thin generic wrapper: extracts transport and channels from the generic
-/// `ConnectResult<T>`, then delegates to the non-generic inner function.
-pub(crate) async fn run_entry_connected<T>(
-    mut connect_result: wallhack_core::client::client::ConnectResult<T>,
+/// Non-generic: takes the type-erased `ErasedConnectResult` so the async
+/// state machine is monomorphized only once regardless of transport type.
+pub(crate) async fn run_entry_connected_erased(
+    connect_result: wallhack_core::client::client::ErasedConnectResult,
     metrics: &Arc<Metrics>,
     peer_addr: &str,
     routes: Option<SharedRouteTable>,
     route_updates: Option<
         tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     >,
-) -> Result<(), NodeError>
-where
-    T: wallhack_core::transport::Transport + 'static,
-    T::SendStream: 'static,
-    T::RecvStream: 'static,
-    T::BiStream: 'static,
-{
+) -> Result<(), NodeError> {
     use wallhack_core::server::server::DataChannels;
 
+    let wallhack_core::client::client::ErasedConnectResult {
+        peer_handshake_rx,
+        transport,
+        channels,
+        tasks: _tasks,
+        control_tx: _control_tx,
+        peer_addr: _,
+    } = connect_result;
+
     // Wait for the server's handshake to get the peer name
-    let peer_name = if let Some(rx) = connect_result.take_peer_handshake_rx() {
+    let peer_name = if let Some(rx) = peer_handshake_rx {
         #[allow(clippy::single_match_else)]
         match rx.await {
             Ok(h) => Some(h.name),
@@ -458,8 +463,6 @@ where
         tracing::info!("Authenticated peer: {name} at {peer_addr}");
     }
 
-    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
-    let (channels, _tasks, _control_tx) = connect_result.into_parts();
     let DataChannels {
         instructions_tx,
         instructions_rx,
@@ -613,7 +616,7 @@ where
     // Main loop: handle incoming connections
     loop {
         match server.accept(NodeRole::Entry).await {
-            Ok(Some(accept_result)) => {
+            Ok(Some(mut accept_result)) => {
                 // Enforce max peers limit
                 let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() else {
                     tracing::info!(
@@ -740,53 +743,13 @@ struct PeerIdentity {
     capabilities: wallhack_wire::data::Capabilities,
 }
 
-/// Validate the peer's handshake (PSK proof + identity) for generic AcceptResult.
+/// Validate the peer's handshake (PSK proof + identity) for generic `AcceptResult`.
 fn validate_handshake<T: wallhack_core::transport::Transport>(
     accept_result: &mut wallhack_core::server::server::AcceptResult<T>,
     server_psk: Option<&str>,
 ) -> Result<PeerIdentity, NodeError> {
     let channel_binding = accept_result.channel_binding().copied();
     let Some(hs) = accept_result.take_peer_handshake() else {
-        tracing::debug!("No Handshake received, peer unidentified");
-        return Ok(PeerIdentity {
-            name: None,
-            capabilities: wallhack_wire::data::Capabilities::default(),
-        });
-    };
-
-    if let Some(expected_psk) = server_psk {
-        let valid = channel_binding
-            .as_ref()
-            .is_some_and(|binding| hs.verify_psk_proof(expected_psk.as_bytes(), binding));
-        if !valid {
-            return Err(NodeError::PskAuth(hs.name));
-        }
-    }
-
-    let capabilities = hs.capabilities.unwrap_or_default();
-
-    if hs.name.is_empty() {
-        tracing::debug!("Peer identified with empty name (v{})", hs.version);
-        Ok(PeerIdentity {
-            name: None,
-            capabilities,
-        })
-    } else {
-        tracing::debug!("Peer {} identified (v{})", hs.name, hs.version);
-        Ok(PeerIdentity {
-            name: Some(hs.name),
-            capabilities,
-        })
-    }
-}
-
-/// Validate the peer's handshake (PSK proof + identity).
-fn validate_handshake_erased(
-    accept_result: &mut wallhack_core::server::server::ErasedAcceptResult,
-    server_psk: Option<&str>,
-) -> Result<PeerIdentity, NodeError> {
-    let channel_binding = accept_result.channel_binding;
-    let Some(hs) = accept_result.peer_handshake.take() else {
         tracing::debug!("No Handshake received, peer unidentified");
         return Ok(PeerIdentity {
             name: None,
