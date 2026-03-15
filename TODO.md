@@ -262,6 +262,10 @@
 - [ ] Quinn: unauthenticated remote DoS via panic in QUIC transport parameter parsing (high) — `quinn-proto` < 0.11.14, patched in 0.11.14
 
 
+## Code Quality & QOL
+
+- [ ] Remove `PskFailTracker` — replace with generic subscriber dedup by including IP in the log message. `PskFailTracker` is a per-IP HashMap in `daemon/src/mode/mod.rs`, used in `auto.rs` and `entry.rs`. The subscriber's consecutive-dedup handles the common case (single attacker hammering from one IP) just as well.
+
 ## CLI
 - [ ] `wallhack peers --json` — machine-readable output matching REST API shape, with `tun_name` field in `PeerInfo`. Non-slim feature (watch bloat). Needed by bench init.sh to discover TUN name dynamically instead of hardcoding FNV-1a hash.
 
