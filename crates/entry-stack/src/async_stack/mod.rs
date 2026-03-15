@@ -662,7 +662,7 @@ fn handle_probed_syn_ingress<D: Device + Send + 'static + PeekDevice>(
                         drop_addrs.insert(dst_addr);
                     }
                     None => {
-                        tracing::info!(?dst_addr, "Cache miss -> Start Probe");
+                        tracing::debug!(?dst_addr, "Cache miss -> Start Probe");
                         state.mark_probing(dst_addr);
                         drop_addrs.insert(dst_addr);
                         held_syns.push(HeldSyn {

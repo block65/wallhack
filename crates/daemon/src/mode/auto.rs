@@ -941,8 +941,8 @@ async fn run_auto_accept_session_inner(
                 };
                 tokio::spawn(async move {
                     tracing::info!(
-                        "Route update listener started for peer {:?} on tun {}",
-                        peer,
+                        "Route update listener started for peer {} on tun {}",
+                        peer.as_deref().unwrap_or("<unknown>"),
                         tun
                     );
                     loop {
