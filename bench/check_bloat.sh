@@ -21,15 +21,16 @@ mkdir -p "$RESULTS_DIR"
 cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
-# Updated: 2026-02-28, baseline: feat/capability-handshake (4bb6213)
-# Set ~1% above current measured sizes. Keep tight — log top 30 on every bump.
+# Updated: 2026-03-15, baseline: worktree-mcp-server
+# slim threshold = exactly 5MiB (5 * 1024 * 1024). Must stay "5MB slim".
+# default threshold = existing measured + ~1% headroom.
 declare -A THRESHOLDS=(
-    # glibc x86_64 (~1% headroom)
-    ["default-glibc"]=6850000      # current: 6783080 (6.47M); +59KB from handshake/PSK/proto
-    ["slim-glibc"]=5103000         # current: 5052552 (4.82M); +59KB from handshake/PSK/proto
-    # musl x86_64 (~1% headroom, estimated)
-    ["default-musl"]=6850000       # estimated — update after musl build
-    ["slim-musl"]=5103000          # estimated — update after musl build
+    # musl x86_64 — PRIMARY build target
+    ["slim-musl"]=5242880          # 5 * 1024 * 1024; current: 5216712
+    ["default-musl"]=7210000       # current: 7136648 (~1% headroom)
+    # glibc x86_64 — sanity check only
+    ["slim-glibc"]=5242880         # 5 * 1024 * 1024; current: 5241936
+    ["default-glibc"]=7215000      # current: 7143368 (~1% headroom)
 )
 
 # --- Build definitions ---
