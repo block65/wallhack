@@ -268,6 +268,9 @@
 
 - [ ] `neli` pinned at `0.6` (`crates/daemon/Cargo.toml`) — 0.7.4 available. Likely a breaking API change; needs migration of `crates/daemon/src/netlink.rs`.
 
+## Next batch: Phase 13f — Security Posture
+- [ ] When any auth flag (`--psk`, `--cert`, etc.) is provided, automatically harden config: suppress auto-negotiation and auto-routing. See `docs/tasks/13f-security-posture.md` for full spec. Depends on 13c/13d/13e (all done).
+
 ## CLI
 - [ ] `wallhack peers --json` — machine-readable output matching REST API shape, with `tun_name` field in `PeerInfo`. Non-slim feature (watch bloat). Needed by bench init.sh to discover TUN name dynamically instead of hardcoding FNV-1a hash.
 
