@@ -10,7 +10,6 @@ use tokio::io::AsyncWriteExt;
 
 use wallhack_core::{
     NodeRole,
-    client::client::ConnectResult,
     control::{metrics::Metrics, peers::Registry},
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     server::server::Server,
@@ -107,9 +106,22 @@ async fn run_exit_connector(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let ctx = Arc::clone(&ctx);
                         let pa = pa.clone();
-                        async move { run_exit_loop(connect_result, &pa, &ctx).await }
+                        async move {
+                            run_exit_loop_inner(
+                                e.transport,
+                                e.channels.instructions_rx,
+                                e.channels.responses_tx,
+                                e.channels.responses_rx,
+                                e.control_tx,
+                                e.tasks,
+                                &pa,
+                                &ctx,
+                            )
+                            .await
+                        }
                     },
                     RECONNECT_DELAY,
                 )
@@ -141,9 +153,22 @@ async fn run_exit_connector(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let ctx = Arc::clone(&ctx);
                         let pa = pa.clone();
-                        async move { run_exit_loop(connect_result, &pa, &ctx).await }
+                        async move {
+                            run_exit_loop_inner(
+                                e.transport,
+                                e.channels.instructions_rx,
+                                e.channels.responses_tx,
+                                e.channels.responses_rx,
+                                e.control_tx,
+                                e.tasks,
+                                &pa,
+                                &ctx,
+                            )
+                            .await
+                        }
                     },
                     RECONNECT_DELAY,
                 )
@@ -330,45 +355,6 @@ where
     Ok(())
 }
 
-/// Drive the exit node orchestrator with a connected peer.
-///
-/// Thin generic wrapper: extracts transport and channels, delegates to
-/// the non-generic inner function.
-async fn run_exit_loop<T>(
-    connect_result: ConnectResult<T>,
-    peer_addr: &str,
-    ctx: &ExitContext,
-) -> Result<(), NodeError>
-where
-    T: wallhack_core::transport::Transport + 'static,
-    T::SendStream: 'static,
-    T::RecvStream: 'static,
-    T::BiStream: 'static,
-{
-    use wallhack_core::server::server::DataChannels;
-
-    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
-    let (channels, mut tasks, control_tx) = connect_result.into_parts();
-    let disconnect_fut = tasks.wait_for_disconnect();
-    let DataChannels {
-        instructions_tx: _,
-        instructions_rx,
-        responses_tx,
-        responses_rx,
-    } = channels;
-    run_exit_loop_inner(
-        transport,
-        instructions_rx,
-        responses_tx,
-        responses_rx,
-        control_tx,
-        disconnect_fut,
-        peer_addr,
-        ctx,
-    )
-    .await
-}
-
 /// Non-generic exit loop: monomorphized once regardless of transport type.
 #[allow(clippy::too_many_arguments)]
 async fn run_exit_loop_inner(
@@ -377,7 +363,7 @@ async fn run_exit_loop_inner(
     responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
     _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    disconnect_fut: impl std::future::Future<Output = ()>,
+    mut tasks: wallhack_core::client::client::ConnectionTasks,
     peer_addr: &str,
     ctx: &ExitContext,
 ) -> Result<(), NodeError> {
@@ -413,9 +399,10 @@ async fn run_exit_loop_inner(
 
     let stream_fut = run_stream_listener(transport);
     tokio::pin!(stream_fut);
-    tokio::pin!(disconnect_fut);
     let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
     tokio::pin!(drive_fut);
+    let disconnect_fut = tasks.wait_for_disconnect();
+    tokio::pin!(disconnect_fut);
 
     tokio::select! {
         result = &mut drive_fut => {

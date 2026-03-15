@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
-use wallhack_transport::Transport;
+use wallhack_transport::{ErasedTransport, Transport};
 use wallhack_wire::{
     control::ControlMessage,
     data::{EntryNodeInstruction, ExitNodeResponse, Handshake},
@@ -60,7 +62,7 @@ pub struct AcceptResult<T: Transport> {
     metrics: SharedMetrics,
     /// The already-received peer `Handshake` (extracted from the control stream).
     peer_handshake: Option<Handshake>,
-    transport: std::sync::Arc<T>,
+    transport: Arc<T>,
     /// Channel for injecting messages into the control stream.
     control_tx: mpsc::Sender<ControlMessage>,
     /// Receiver for pong-derived latency measurements (milliseconds) from the
@@ -70,13 +72,46 @@ pub struct AcceptResult<T: Transport> {
     channel_binding: Option<[u8; crate::psk::CHANNEL_BINDING_LEN]>,
 }
 
+/// Object-safe version of [`AcceptResult`] for sync type-erasure.
+pub struct ErasedAcceptResult {
+    pub channels: DataChannels,
+    pub peer_addr: String,
+    pub metrics: SharedMetrics,
+    pub peer_handshake: Option<Handshake>,
+    pub transport: Arc<dyn ErasedTransport>,
+    pub control_tx: mpsc::Sender<ControlMessage>,
+    pub latency_rx: Option<mpsc::Receiver<f64>>,
+    pub channel_binding: Option<[u8; crate::psk::CHANNEL_BINDING_LEN]>,
+}
+
+impl<T: Transport + 'static> AcceptResult<T>
+where
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: Send + 'static,
+{
+    /// Sync type-erasure: extracts non-generic parts into [`ErasedAcceptResult`].
+    pub fn erase(mut self) -> ErasedAcceptResult {
+        ErasedAcceptResult {
+            channels: self.channels,
+            peer_addr: self.peer_addr,
+            metrics: self.metrics,
+            peer_handshake: self.peer_handshake.take(),
+            transport: self.transport as Arc<dyn ErasedTransport>,
+            control_tx: self.control_tx,
+            latency_rx: self.latency_rx.take(),
+            channel_binding: self.channel_binding,
+        }
+    }
+}
+
 impl<T: Transport> AcceptResult<T> {
     /// Creates a new accept result with an already-received peer `Handshake`
     /// and a latency receiver for pong-derived RTT measurements.
     #[must_use]
     #[allow(clippy::too_many_arguments)] // accept result construction; will be simplified when builder pattern is adopted
     pub fn with_handshake(
-        transport: std::sync::Arc<T>,
+        transport: Arc<T>,
         channels: DataChannels,
         peer_addr: String,
         metrics: SharedMetrics,

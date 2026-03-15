@@ -301,9 +301,21 @@ pub(crate) async fn run_entry_connect(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let m = Arc::clone(&metrics);
                         let pa = peer_addr.clone();
-                        async move { run_entry_connected(connect_result, &m, fast_mode, &pa).await }
+                        async move {
+                            run_entry_connected_inner(
+                                e.transport,
+                                e.channels.instructions_tx,
+                                e.channels.instructions_rx,
+                                e.channels.responses_rx,
+                                &m,
+                                fast_mode,
+                                &pa,
+                            )
+                            .await
+                        }
                     },
                     RECONNECT_DELAY,
                 )
@@ -331,9 +343,21 @@ pub(crate) async fn run_entry_connect(
                         }
                     },
                     |connect_result| {
+                        let e = connect_result.erase();
                         let m = Arc::clone(&metrics);
                         let pa = peer_addr.clone();
-                        async move { run_entry_connected(connect_result, &m, fast_mode, &pa).await }
+                        async move {
+                            run_entry_connected_inner(
+                                e.transport,
+                                e.channels.instructions_tx,
+                                e.channels.instructions_rx,
+                                e.channels.responses_rx,
+                                &m,
+                                fast_mode,
+                                &pa,
+                            )
+                            .await
+                        }
                     },
                     RECONNECT_DELAY,
                 )
@@ -359,44 +383,6 @@ fn entry_local_handshake(name: &str) -> wallhack_wire::data::Handshake {
         routes: Vec::new(),
         hint: None,
     }
-}
-
-/// Run the entry node session once connected.
-///
-/// Thin generic wrapper: extracts transport and channels from the generic
-/// `ConnectResult<T>`, then delegates to the non-generic inner function.
-pub(crate) async fn run_entry_connected<T>(
-    connect_result: wallhack_core::client::client::ConnectResult<T>,
-    metrics: &Arc<Metrics>,
-    fast_mode: bool,
-    peer_addr: &str,
-) -> Result<(), NodeError>
-where
-    T: wallhack_core::transport::Transport + 'static,
-    T::SendStream: 'static,
-    T::RecvStream: 'static,
-    T::BiStream: 'static,
-{
-    use wallhack_core::server::server::DataChannels;
-
-    let transport: Arc<dyn ErasedTransport> = connect_result.transport();
-    let (channels, _tasks, _control_tx) = connect_result.into_parts();
-    let DataChannels {
-        instructions_tx,
-        instructions_rx,
-        responses_tx: _responses_tx,
-        responses_rx,
-    } = channels;
-    run_entry_connected_inner(
-        transport,
-        instructions_tx,
-        instructions_rx,
-        responses_rx,
-        metrics,
-        fast_mode,
-        peer_addr,
-    )
-    .await
 }
 
 /// Non-generic inner: monomorphized once regardless of transport type.
@@ -467,7 +453,7 @@ where
     S::Transport: Send + Sync + 'static,
     <S::Transport as Transport>::SendStream: 'static,
     <S::Transport as Transport>::RecvStream: 'static,
-    <S::Transport as Transport>::BiStream: 'static,
+    <S::Transport as Transport>::BiStream: Send + 'static,
 {
     let EntryResources {
         metrics: _,
@@ -487,7 +473,7 @@ where
     // Main loop: handle incoming connections
     loop {
         match server.accept(NodeRole::Entry).await {
-            Ok(Some(mut accept_result)) => {
+            Ok(Some(accept_result)) => {
                 // Enforce max peers limit
                 let Ok(permit) = Arc::clone(&peer_semaphore).try_acquire_owned() else {
                     tracing::info!(
@@ -497,81 +483,23 @@ where
                     continue;
                 };
 
-                let conn_metrics = accept_result.metrics();
-                let conn_sessions = sessions.clone();
-                let conn_peers = Arc::clone(&peers);
-                let conn_routes = Arc::clone(&routes);
-                let peer_addr = accept_result.peer_addr().to_string();
-
-                // Validate handshake before spawning (keeps generic code minimal).
-                let peer = match validate_handshake(
-                    &mut accept_result,
-                    server_psk.as_ref().map(|s| s.as_str()),
-                    &conn_peers,
-                ) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        tracing::warn!("Handshake validation failed for {peer_addr}: {e}");
-                        continue;
-                    }
-                };
-
-                let peer_name = peer.as_deref().unwrap_or(&peer_addr).to_string();
-
-                // Register peer in the registry
-                conn_peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
-
-                // Create ping channel for this peer
-                #[allow(deprecated)] // TODO: replace with peer events
-                let mut ping_rx = conn_peers.register_ping_channel(&peer_name);
-
-                // Extract transport and channels from the generic AcceptResult before
-                // spawning so the spawned future is non-generic.
-                let transport: Arc<dyn ErasedTransport> = accept_result.transport();
-                let latency_rx = accept_result
-                    .take_latency_rx()
-                    .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
-                let (channels, control_tx) = accept_result.into_channels();
+                let erased = accept_result.erase();
+                let server_psk = server_psk.clone();
+                let peers = Arc::clone(&peers);
+                let routes = Arc::clone(&routes);
+                let sessions = sessions.clone();
 
                 // Spawn non-generic handler
                 tokio::spawn(async move {
                     // Hold the permit for the lifetime of this connection
                     let _permit = permit;
-                    let params = ConnectionParams {
-                        metrics: conn_metrics,
-                        transport,
-                        channels,
-                        control_tx,
-                        sessions: conn_sessions.clone(),
-                        peers: Arc::clone(&conn_peers),
-                        peer,
-                        fast_mode,
-                        peer_addr: peer_addr.clone(),
-                    };
-                    let result = params.run(&mut ping_rx, latency_rx).await;
-                    // Unregister peer when connection closes
-                    conn_peers.unregister(&peer_name);
-                    // Clean up routes for this peer
-                    let removed_routes = conn_routes.remove_by_peer(&peer_name);
-                    for entry in &removed_routes {
-                        if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_name) {
-                            let _ = remove_os_route(&entry.cidr.to_string(), &tun);
-                        }
-                    }
-                    if !removed_routes.is_empty() {
-                        tracing::info!(
-                            "Removed {} route(s) for disconnected peer {peer_name}",
-                            removed_routes.len()
-                        );
-                    }
-                    match result {
-                        Ok(_tun_name) => {
-                            tracing::info!("Peer disconnected: {peer_name}");
-                        }
-                        Err(e) => {
-                            tracing::debug!("Connection error for {}: {}", peer_name, e);
-                            tracing::warn!("Peer {peer_name} disconnected with error: {e}");
-                        }
+                    let psk_ref = server_psk.as_ref().map(|s| s.as_str());
+                    if let Err(e) = handle_connection_erased(
+                        erased, psk_ref, peers, routes, sessions, fast_mode,
+                    )
+                    .await
+                    {
+                        tracing::debug!("Connection finished with error: {e}");
                     }
                 });
             }
@@ -586,6 +514,86 @@ where
     }
 
     Ok(())
+}
+
+/// Non-generic handler for erased connection results.
+async fn handle_connection_erased(
+    mut erased: wallhack_core::server::server::ErasedAcceptResult,
+    server_psk: Option<&str>,
+    peers: Arc<Registry>,
+    routes: SharedRouteTable,
+    sessions: SessionManager,
+    fast_mode: bool,
+) -> Result<(), NodeError> {
+    let peer_addr = erased.peer_addr.clone();
+
+    // Validate handshake before spawning (keeps generic code minimal).
+    let peer = match validate_handshake_erased(&mut erased, server_psk, &peers) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("Handshake validation failed for {peer_addr}: {e}");
+            return Err(e);
+        }
+    };
+
+    let peer_name = peer.as_deref().unwrap_or(&peer_addr).to_string();
+
+    // Register peer in the registry
+    peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
+
+    // Create ping channel for this peer
+    #[allow(deprecated)] // TODO: replace with peer events
+    let mut ping_rx = peers.register_ping_channel(&peer_name);
+
+    let transport = erased.transport;
+    let latency_rx = erased
+        .latency_rx
+        .take()
+        .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+    let channels = erased.channels;
+    let control_tx = erased.control_tx;
+
+    let params = ConnectionParams {
+        metrics: erased.metrics,
+        transport,
+        channels,
+        control_tx,
+        sessions: sessions.clone(),
+        peers: Arc::clone(&peers),
+        peer,
+        fast_mode,
+        peer_addr: peer_addr.clone(),
+    };
+
+    let result = params.run(&mut ping_rx, latency_rx).await;
+
+    // Unregister peer when connection closes
+    peers.unregister(&peer_name);
+
+    // Clean up routes for this peer
+    let removed_routes = routes.remove_by_peer(&peer_name);
+    for entry in &removed_routes {
+        if let Some(tun) = sessions.get_tun_for_peer(&peer_name) {
+            let _ = remove_os_route(&entry.cidr.to_string(), &tun);
+        }
+    }
+    if !removed_routes.is_empty() {
+        tracing::info!(
+            "Removed {} route(s) for disconnected peer {peer_name}",
+            removed_routes.len()
+        );
+    }
+
+    match result {
+        Ok(_tun_name) => {
+            tracing::info!("Peer disconnected: {peer_name}");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("Peer {peer_name} disconnected with error: {e}");
+            Err(e)
+        }
+    }
 }
 
 /// Remove an OS-level route via `ip route del`.
@@ -625,13 +633,13 @@ struct ConnectionParams {
 }
 
 /// Validate the peer's handshake (PSK proof + identity).
-fn validate_handshake<T: wallhack_core::transport::Transport>(
-    accept_result: &mut wallhack_core::server::server::AcceptResult<T>,
+fn validate_handshake_erased(
+    accept_result: &mut wallhack_core::server::server::ErasedAcceptResult,
     server_psk: Option<&str>,
     peers: &Registry,
 ) -> Result<Option<String>, NodeError> {
-    let channel_binding = accept_result.channel_binding().copied();
-    let Some(hs) = accept_result.take_peer_handshake() else {
+    let channel_binding = accept_result.channel_binding;
+    let Some(hs) = accept_result.peer_handshake.take() else {
         tracing::debug!("No Handshake received, peer unidentified");
         return Ok(None);
     };
