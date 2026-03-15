@@ -91,6 +91,7 @@ where
     T::BiStream: Send + 'static,
 {
     /// Sync type-erasure: extracts non-generic parts into [`ErasedAcceptResult`].
+    #[must_use]
     pub fn erase(mut self) -> ErasedAcceptResult {
         ErasedAcceptResult {
             channels: self.channels,

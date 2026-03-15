@@ -120,6 +120,7 @@ where
     /// This is a **sync** operation — no async state machine is created —
     /// so calling it inside a closure before an `async move` block avoids
     /// capturing the generic `ConnectResult<T>` in the future's state machine.
+    #[must_use]
     pub fn erase(mut self) -> ErasedConnectResult {
         ErasedConnectResult {
             peer_handshake_rx: self.peer_handshake_rx.take(),
