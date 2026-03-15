@@ -37,6 +37,10 @@ The default transport is QUIC over UDP, which works on any open outbound port. I
 
 See [Transport Modes](/transport-modes) for details.
 
+## Route Announcement
+
+During the handshake, exit nodes advertise their local networks to the entry node. When the TUN interface comes up, those routes are installed automatically — no manual `ip route add` is required after connecting.
+
 ## When Both Sides Have CAP_NET_ADMIN
 
 If both nodes are TUN-capable and topology alone is ambiguous, negotiation lands in indeterminate — the connection is held open but no tunnel is established. Resolve it at runtime from the REPL on either side:
