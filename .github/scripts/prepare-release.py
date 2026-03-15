@@ -43,6 +43,7 @@ COMMIT_RE = re.compile(
 def parse_commits(raw: str) -> list[dict]:
     """Parse a JSON array of {sha, message} objects into structured commits."""
     import json as _json
+
     entries = _json.loads(raw)
     commits = []
     for entry in entries:
@@ -83,8 +84,13 @@ def parse_commits(raw: str) -> list[dict]:
 
 
 def determine_bump(commits: list[dict]) -> str | None:
-    # ci-, release-, and website-scoped commits don't warrant a CLI release.
-    releasable = [c for c in commits if c.get("scope") not in ("ci", "release", "website")]
+    # ci-, release-, website-, and range-scoped commits don't warrant a CLI release.
+    releasable = [
+        c
+        for c in commits
+        # TODO: extract this list out to at least a variable/constant
+        if c.get("scope") not in ("ci", "release", "website", "range")
+    ]
     if any(c["breaking"] for c in releasable):
         return "major"
     if any(c["type"] == "feat" for c in releasable):
@@ -122,7 +128,9 @@ def version_gt(a: str, b: str) -> bool:
 
 def _sanitise_desc(desc: str) -> str:
     # Escape markdown links anywhere in the description
-    desc = _MD_LINK.sub(lambda m: r"\[" + m.group(1) + r"\]" + m.group(0)[len(m.group(1))+2:], desc)
+    desc = _MD_LINK.sub(
+        lambda m: r"\[" + m.group(1) + r"\]" + m.group(0)[len(m.group(1)) + 2 :], desc
+    )
     # Escape # and - only at the start (prevents heading breakout and nested bullets)
     if desc.startswith("#"):
         desc = r"\#" + desc[1:]
@@ -141,7 +149,9 @@ def format_entry(c: dict, repo_url: str) -> str:
     return text
 
 
-def _bucket_commits(commits: list[dict], repo_url: str) -> tuple[dict[str, list[str]], list[str]]:
+def _bucket_commits(
+    commits: list[dict], repo_url: str
+) -> tuple[dict[str, list[str]], list[str]]:
     """Split commits into named sections and an 'other' list.
 
     Within each section, unscoped entries come first, then scoped entries
@@ -159,7 +169,8 @@ def _bucket_commits(commits: list[dict], repo_url: str) -> tuple[dict[str, list[
         scope = c.get("scope", "")
         if c["breaking"]:
             sections["Breaking Changes"].append((scope, entry))
-        _infra_scope = scope in ("ci", "release", "website")
+        # TODO: extract this list out to at least a variable/constant as mentioned above
+        _infra_scope = scope in ("ci", "release", "website", "range")
         if ctype == "feat" and not _infra_scope:
             sections["Features"].append((scope, entry))
         elif ctype in ("fix", "perf") and not _infra_scope:
@@ -187,7 +198,9 @@ def _render_sections(sections: dict[str, list[str]]) -> list[str]:
     return lines
 
 
-def generate_changelog(version: str, commits: list[dict], url: str = "", repo_url: str = "", date: str = "") -> str:
+def generate_changelog(
+    version: str, commits: list[dict], url: str = "", repo_url: str = "", date: str = ""
+) -> str:
     """User-facing changelog: named sections + 'x other changes' count."""
     today = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     sections, other = _bucket_commits(commits, repo_url)
@@ -203,7 +216,9 @@ def generate_changelog(version: str, commits: list[dict], url: str = "", repo_ur
     return "\n".join(lines)
 
 
-def generate_pr_body(version: str, commits: list[dict], url: str = "", repo_url: str = "", date: str = "") -> str:
+def generate_pr_body(
+    version: str, commits: list[dict], url: str = "", repo_url: str = "", date: str = ""
+) -> str:
     """PR body: named sections + full 'Other Changes' list for reviewer context."""
     today = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     sections, other = _bucket_commits(commits, repo_url)
@@ -241,6 +256,7 @@ def read_current_version(version_file: str) -> str:
 # Subcommands
 # ---------------------------------------------------------------------------
 
+
 def cmd_analyze(args: argparse.Namespace) -> None:
     """Parse commits and decide the release action."""
     latest_tag = args.latest_tag or None
@@ -251,7 +267,9 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     if latest_tag:
         tag_version = latest_tag.removeprefix(args.tag_prefix)
         if version_gt(current_version, tag_version):
-            log(f"file version {current_version} > tag version {tag_version} — needs tagging")
+            log(
+                f"file version {current_version} > tag version {tag_version} — needs tagging"
+            )
             result = {
                 "action": "tag",
                 "version": current_version,
@@ -296,7 +314,9 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         )
     else:
         url = ""
-    changelog = generate_changelog(new_version, commits, url=url, repo_url=args.repo_url)
+    changelog = generate_changelog(
+        new_version, commits, url=url, repo_url=args.repo_url
+    )
     pr_body = generate_pr_body(new_version, commits, url=url, repo_url=args.repo_url)
 
     result = {
@@ -404,23 +424,34 @@ def cmd_update_version(args: argparse.Namespace) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # analyze
-    p_analyze = sub.add_parser("analyze", help="Decide the release action from commits on stdin")
+    p_analyze = sub.add_parser(
+        "analyze", help="Decide the release action from commits on stdin"
+    )
     p_analyze.add_argument("--tag-prefix", required=True)
     p_analyze.add_argument("--version-file", required=True)
     p_analyze.add_argument("--package", required=True)
     p_analyze.add_argument("--latest-tag", default="")
-    p_analyze.add_argument("--repo-url", default="", help="GitHub repo URL for changelog links")
-    p_analyze.add_argument("--output", default="/tmp/prepare-result.json",
-                           help="Path to write the result JSON")
+    p_analyze.add_argument(
+        "--repo-url", default="", help="GitHub repo URL for changelog links"
+    )
+    p_analyze.add_argument(
+        "--output",
+        default="/tmp/prepare-result.json",
+        help="Path to write the result JSON",
+    )
 
     # emit-outputs
-    p_emit = sub.add_parser("emit-outputs", help="Emit KEY=VALUE lines from result JSON")
+    p_emit = sub.add_parser(
+        "emit-outputs", help="Emit KEY=VALUE lines from result JSON"
+    )
     p_emit.add_argument("--result-file", default="/tmp/prepare-result.json")
     p_emit.add_argument("--changelog-file", default="/tmp/changelog_section.md")
     p_emit.add_argument("--pr-body-file", default="/tmp/pr_body_section.md")
@@ -436,8 +467,10 @@ def main() -> None:
     p_ver.add_argument("--version", required=True)
 
     # has-releasable
-    sub.add_parser("has-releasable",
-                   help="Read commit subjects from stdin (one per line); exit 0 if any are releasable")
+    sub.add_parser(
+        "has-releasable",
+        help="Read commit subjects from stdin (one per line); exit 0 if any are releasable",
+    )
 
     args = parser.parse_args()
     {
