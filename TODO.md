@@ -64,6 +64,42 @@
 
 ## Bugs
 
+- [ ] **Auto-routing not implemented** — entry node does not inject kernel routes for the
+      exit peer's announced networks when a TUN is created. User must run
+      `ip route add <cidr> dev <tun>` manually after every connect. This should be
+      automatic and verified by the smoke test suite (add a smoke test that checks
+      routes exist after connect).
+- [ ] **`disconnect_peer` by address or connection ID** — `wallhack_disconnect_peer`
+      only accepts a peer name. Unnamed peers (relays that don't propagate names) are
+      impossible to disconnect. Need either address-based disconnect
+      (`disconnect --addr 10.99.1.10:43006`) or a short connection ID shown in
+      `wallhack peers` output that can be passed to `disconnect`.
+- [ ] **Stale peer not cleaned up after remote restart** — when a peer process is
+      killed and restarts (e.g. gateway-perimeter exit→relay), the old connection
+      lingers in `wallhack peers` as a second entry for the same host alongside the
+      new connection. Two peers for the same physical node is confusing and indicates
+      the old session wasn't properly torn down.
+- [ ] **`status=connected latency=— tun=false listen=false connect=false` is an
+      impossible state** — `wallhack peers` shows a connected peer with all capability
+      flags false and no latency. If `status=connected` then either `listen` or
+      `connect` must be true (something initiated the connection). The flags likely
+      reflect negotiated capabilities rather than connection direction; the display
+      should either fix the semantics or add a `side=accept|connect` field (using
+      wallhack's own terminology) so the state is not self-contradictory.
+- [ ] **Latency not measured on connect** — `latency=—` on all peers until a manual
+      `wallhack ping` is run. Latency should be sampled automatically on first connect
+      (a single ping immediately after handshake) so `wallhack peers` always shows a
+      real value. Ongoing periodic sampling (e.g. every 30s) would also help detect
+      degraded links.
+- [ ] **Relay peer name not propagated to entry** — when a relay node connects, the
+      entry node sees it as an unnamed address (e.g. `10.99.1.10:48535`) rather than
+      the relay's declared name. This breaks deterministic TUN naming
+      (`peer_name_to_iface`) so TUN gets a random name instead of `wh{hash}`.
+- [ ] **Relay peer role reported as `exit`** — `wallhack peers` shows relay peers
+      as `role=exit`. Should report `role=relay`.
+- [ ] **Stale TUN interfaces not cleaned up on disconnect** — when a peer disconnects
+      (or restarts with a different role), the old TUN interface remains on the entry
+      node and kernel routes pointing to it linger. Auto-cleanup on disconnect needed.
 - [ ] TUN EBUSY on rapid reconnect — `create_tun_with_retry` (entry) retries
       3× at 500ms but the previous `TunActor` hasn't been fully dropped before
       the new connection attempts to claim the same TUN name. Rapid
@@ -96,6 +132,20 @@
 
 ## UX
 
+- [ ] **`--fixed-role` naming** — `--fixed-role relay` is confusing; "fixed" implies
+      overriding something. Prefer `--role relay` (or just make role a positional
+      subcommand). `--fixed-role` is used in static range setups as the normal way
+      to set a role.
+- [ ] **Relay `--listen` address underdocumented** — relay mode accepts both `--connect`
+      (upstream) and `--listen` (for downstream peers) but neither the help text nor
+      any docs explain the relay topology model, which interface the listener binds to,
+      or how the chain is formed.
+- [ ] **No relay startup confirmation log** — relay mode emits no clear log line
+      like "relay listening on X, connected to Y via Z". Hard to know if startup
+      succeeded without polling `wallhack status` separately.
+- [ ] **No topology visibility** — from the entry node there is no way to see the
+      full relay chain or which nodes are downstream of a relay. Add
+      `wallhack topology` or `wallhack peers --recursive` to show the tree.
 - [ ] XDG config file (`~/.config/wallhack/config.toml` or similar) for
       persistent user preferences — e.g. `require_auth = true` to opt into
       enforced PSK/mTLS for users who always want auth and want a hard failure
@@ -109,6 +159,12 @@
 
 ## Build / Config
 
+- [ ] **Version display: include git hash + build timestamp** — `wallhack --version`
+      shows `0.6.2 (dev)` with no git SHA or build time. When running from initrds
+      built from a dirty tree it's impossible to tell which binary is deployed without
+      manual cross-referencing. Add short git SHA + ISO build timestamp (e.g.
+      `0.6.2-dev (a1b2c3d, 2026-03-14T14:00Z)`). Critical for multi-VM ranges where
+      different nodes may have different binary ages.
 - [ ] Release process: `feat:` commits trigger a minor (0.x.0) bump, which
       per semver pre-1.0 signals breaking changes. Make `feat:` a patch bump
       while pre-1.0, reserve minor bumps for genuinely breaking changes.
