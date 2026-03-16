@@ -266,7 +266,7 @@ fn print_help() {
     let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
     let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");
     let _ = writeln!(tw, "  role\tShow current role");
-    let _ = writeln!(tw, "  role <entry|exit|relay>\tSet fixed role");
+    let _ = writeln!(tw, "  role <entry|exit|relay>\tSet role hint");
     let _ = writeln!(
         tw,
         "  hint <prefer|exclude|fixed> <role>\tApply a role hint"
