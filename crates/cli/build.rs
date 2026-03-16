@@ -1,3 +1,5 @@
+// NOTE: This WallhackBuildEnv impl is duplicated in crates/mcp/build.rs.
+// build.rs files cannot share code via library crates.
 use std::collections::BTreeMap;
 
 use vergen_gitcl::{
