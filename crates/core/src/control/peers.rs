@@ -29,6 +29,24 @@ pub enum PeerEvent {
 /// Request to ping a peer, with a channel to send the result back.
 pub type PingRequest = oneshot::Sender<f64>;
 
+/// Which side initiated the connection from the local node's perspective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionSide {
+    /// The peer connected to us (we accepted the connection).
+    Accept,
+    /// We connected to the peer.
+    Connect,
+}
+
+impl std::fmt::Display for ConnectionSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionSide::Accept => write!(f, "accept"),
+            ConnectionSide::Connect => write!(f, "connect"),
+        }
+    }
+}
+
 /// Information about a connected peer.
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
@@ -40,6 +58,8 @@ pub struct PeerInfo {
     pub role: NodeRole,
     /// Advertised capabilities from the handshake.
     pub capabilities: Capabilities,
+    /// Which side initiated the connection.
+    pub side: ConnectionSide,
     /// When the peer connected.
     pub connected_at: Instant,
     /// Total bytes transferred through this peer.
@@ -48,6 +68,8 @@ pub struct PeerInfo {
     pub latency_ms: Option<f64>,
     /// When latency was last measured.
     pub latency_measured_at: Option<Instant>,
+    /// TUN interface name for this peer (entry-side only).
+    pub tun_name: Option<String>,
 }
 
 /// Shared peer registry.
@@ -100,7 +122,7 @@ impl Registry {
     }
 
     /// Register a new peer.
-    pub fn register(&self, id: String, addr: String, role: NodeRole) {
+    pub fn register(&self, id: String, addr: String, role: NodeRole, side: ConnectionSide) {
         // TOCTOU: another thread could register the same id between this
         // check and the rcu insert. Harmless — a duplicate Connected event
         // is better than a missed one, and callers don't race on the same id.
@@ -110,10 +132,12 @@ impl Registry {
             addr,
             role,
             capabilities: Capabilities::default(),
+            side,
             connected_at: Instant::now(),
             bytes_transferred: 0,
             latency_ms: None,
             latency_measured_at: None,
+            tun_name: None,
         };
         let event_addr = info.addr.clone();
         let event_role = info.role;
@@ -130,6 +154,18 @@ impl Registry {
                 role: event_role,
             });
         }
+    }
+
+    /// Set the TUN interface name for a peer.
+    pub fn set_tun_name(&self, id: &str, tun_name: &str) {
+        let tun_name = tun_name.to_string();
+        self.peers.rcu(|old| {
+            let mut new = (**old).clone();
+            if let Some(peer) = new.get_mut(id) {
+                peer.tun_name = Some(tun_name.clone());
+            }
+            new
+        });
     }
 
     /// Update capability fields for a peer from a received `Handshake` message.
@@ -327,7 +363,12 @@ mod tests {
     #[test]
     fn test_register_unregister() {
         let registry = Registry::new();
-        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         assert_eq!(registry.count(), 1);
         assert!(registry.get("peer1").is_some());
@@ -340,7 +381,12 @@ mod tests {
     #[test]
     fn test_update_latency() {
         let registry = Registry::new();
-        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         registry.update_latency("peer1", 42.5);
 
@@ -352,7 +398,12 @@ mod tests {
     #[test]
     fn test_add_bytes() {
         let registry = Registry::new();
-        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         registry.add_bytes("peer1", 100);
         registry.add_bytes("peer1", 50);
@@ -366,7 +417,12 @@ mod tests {
         let registry = Registry::new();
         let mut rx = registry.subscribe();
 
-        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         let event = rx.try_recv().unwrap();
         assert!(matches!(event, PeerEvent::Connected { ref name, .. } if name == "peer1"));
@@ -375,7 +431,12 @@ mod tests {
     #[test]
     fn test_unregister_emits_disconnected_event() {
         let registry = Registry::new();
-        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         let mut rx = registry.subscribe();
         registry.unregister("peer1");
@@ -387,10 +448,20 @@ mod tests {
     #[test]
     fn test_duplicate_register_does_not_emit() {
         let registry = Registry::new();
-        registry.register("peer1".into(), "1.2.3.4:5678".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         let mut rx = registry.subscribe();
-        registry.register("peer1".into(), "1.2.3.4:9999".into(), NodeRole::Exit);
+        registry.register(
+            "peer1".into(),
+            "1.2.3.4:9999".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
 
         assert!(rx.try_recv().is_err());
     }

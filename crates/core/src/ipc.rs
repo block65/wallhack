@@ -517,6 +517,15 @@ impl From<crate::node_api::PeerStatus> for management::PeerStatus {
     }
 }
 
+impl From<crate::control::peers::ConnectionSide> for management::ConnectionSide {
+    fn from(side: crate::control::peers::ConnectionSide) -> Self {
+        match side {
+            crate::control::peers::ConnectionSide::Accept => management::ConnectionSide::Accept,
+            crate::control::peers::ConnectionSide::Connect => management::ConnectionSide::Connect,
+        }
+    }
+}
+
 impl From<crate::node_api::PeerInfo> for management::PeerInfo {
     fn from(p: crate::node_api::PeerInfo) -> Self {
         management::PeerInfo {
@@ -530,6 +539,8 @@ impl From<crate::node_api::PeerInfo> for management::PeerInfo {
             listening: p.capabilities.listening,
             connecting: p.capabilities.connecting,
             role: management::NodeRole::from(p.role).into(),
+            side: management::ConnectionSide::from(p.side).into(),
+            tun_name: p.tun_name.unwrap_or_default(),
         }
     }
 }

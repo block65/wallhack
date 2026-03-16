@@ -314,6 +314,19 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         }),
         CtlCommand::Info(_) => management_request::Request::Status(StatusRequest {}),
         CtlCommand::Stats(_) => management_request::Request::Stats(StatsRequest {}),
+        CtlCommand::Peers(ref cmd) if cmd.json => {
+            // JSON output: make the request and short-circuit the standard response path.
+            let request = management_request::Request::Peers(PeersRequest {});
+            let resp = ipc::send_request(&mut stream, request).await?;
+            if let Some(wallhack_wire::management::management_response::Response::Peers(p)) =
+                resp.response
+            {
+                output::print_peers_json(&p.peers);
+            } else {
+                return Err(output::CtlError::EmptyResponse);
+            }
+            return Ok(());
+        }
         CtlCommand::Peers(_) => management_request::Request::Peers(PeersRequest {}),
         CtlCommand::Route(cmd) => match cmd.action {
             RouteAction::List(_) => management_request::Request::Routes(RoutesRequest {}),

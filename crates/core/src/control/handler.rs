@@ -387,10 +387,12 @@ impl crate::node_api::NodeApi for Handler {
                 addr: p.addr,
                 role: p.role,
                 capabilities: p.capabilities,
+                side: p.side,
                 status: crate::node_api::PeerStatus::Connected,
                 connected_at_secs: p.connected_at.elapsed().as_secs(),
                 bytes_transferred: p.bytes_transferred,
                 latency_ms: p.latency_ms,
+                tun_name: p.tun_name,
             })
             .collect()
     }

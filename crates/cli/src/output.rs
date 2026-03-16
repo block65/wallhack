@@ -1,9 +1,11 @@
 //! Output formatting for CLI responses.
 
-use std::io::Write;
+use std::{fmt::Write as FmtWrite, io::Write};
 
 use tabwriter::TabWriter;
-use wallhack_wire::management::{ManagementResponse, management_response};
+use wallhack_wire::management::{
+    ManagementResponse, PeerInfo as WirePeerInfo, management_response,
+};
 
 #[cfg(feature = "repl")]
 use {
@@ -32,6 +34,110 @@ fn format_uptime(ms: u64) -> String {
     let days = hours / 24;
     let hours = hours % 24;
     format!("{days}d {hours}h")
+}
+
+/// Escape a string for embedding in a JSON value.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Print the peers list as JSON to stdout.
+///
+/// Shape matches the REST API `/peers` response plus a `tun_name` field.
+pub fn print_peers_json(peers: &[WirePeerInfo]) {
+    use wallhack_wire::management::ConnectionSide;
+
+    let mut out = String::from("{\"peers\":[");
+    for (i, peer) in peers.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let role = peer.role();
+        let side = match peer.side() {
+            ConnectionSide::Accept => "accept",
+            ConnectionSide::Connect => "connect",
+            ConnectionSide::Unspecified => "unknown",
+        };
+        let latency = if peer.latency_ms > 0.0 {
+            format!("{}", peer.latency_ms)
+        } else {
+            "null".to_string()
+        };
+        let tun_name = if peer.tun_name.is_empty() {
+            "null".to_string()
+        } else {
+            json_str(&peer.tun_name)
+        };
+        out.push('{');
+        let _ = write!(
+            out,
+            "\"name\":{},\"addr\":{},\"role\":{},\"side\":{},\"connected_at_secs\":{},\"bytes_transferred\":{},\"latency_ms\":{},\"tun_name\":{}",
+            json_str(&peer.name),
+            json_str(&peer.addr),
+            json_str(&format!("{role}")),
+            json_str(side),
+            peer.connected_at_secs,
+            peer.bytes_transferred,
+            latency,
+            tun_name,
+        );
+        out.push('}');
+    }
+    out.push_str("]}");
+    println!("{out}");
+}
+
+/// Print the peers table to stdout.
+fn print_peers_table(peers: &[wallhack_wire::management::PeerInfo]) {
+    use wallhack_wire::management::ConnectionSide;
+
+    if peers.is_empty() {
+        println!("No connected peers.");
+        return;
+    }
+
+    let mut tw = TabWriter::new(std::io::stdout());
+    let _ = writeln!(tw, "NAME\tADDR\tROLE\tSIDE\tLATENCY\tTUN");
+    for peer in peers {
+        let role = peer.role();
+        let side = match peer.side() {
+            ConnectionSide::Accept => "accept",
+            ConnectionSide::Connect => "connect",
+            ConnectionSide::Unspecified => "?",
+        };
+        let latency = if peer.latency_ms > 0.0 {
+            format!("{:.1}ms", peer.latency_ms)
+        } else {
+            "\u{2014}".to_string()
+        };
+        let tun = if peer.tun_name.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            peer.tun_name.clone()
+        };
+        let _ = writeln!(
+            tw,
+            "{}\t{}\t{role}\t{side}\t{latency}\t{tun}",
+            peer.name, peer.addr,
+        );
+    }
+    let _ = tw.flush();
 }
 
 /// Print a management response to stdout.
@@ -68,37 +174,7 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
             let _ = tw.flush();
         }
         Some(management_response::Response::Peers(p)) => {
-            if p.peers.is_empty() {
-                println!("No connected peers.");
-            } else {
-                let mut tw = TabWriter::new(std::io::stdout());
-                let _ = writeln!(
-                    tw,
-                    "NAME\tADDR\tROLE\tSTATUS\tLATENCY\tTUN\tLISTEN\tCONNECT"
-                );
-                for peer in &p.peers {
-                    let status = peer.status();
-                    let role = peer.role();
-                    let latency = if peer.latency_ms > 0.0 {
-                        format!("{:.1}ms", peer.latency_ms)
-                    } else {
-                        "—".to_string()
-                    };
-                    let _ = writeln!(
-                        tw,
-                        "{}\t{}\t{:?}\t{}\t{}\t{}\t{}\t{}",
-                        peer.name,
-                        peer.addr,
-                        role,
-                        status,
-                        latency,
-                        if peer.tun_capable { "yes" } else { "no" },
-                        if peer.listening { "yes" } else { "no" },
-                        if peer.connecting { "yes" } else { "no" },
-                    );
-                }
-                let _ = tw.flush();
-            }
+            print_peers_table(&p.peers);
         }
         Some(management_response::Response::Routes(r)) => {
             if r.routes.is_empty() {
