@@ -1,6 +1,18 @@
 
 # Changelog
 
+## [0.8.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.1...wallhack-cli-v0.8.2) (2026-03-16)
+
+### Bug Fixes
+
+* **build:** strip unused vergen cargo/rustc features to reduce deps ([db7f1c8](https://github.com/block65/wallhack/commit/db7f1c883c9fef108e1c3c187edbdc39951057ba))
+* **build:** update bloat thresholds to reflect post-relay baseline ([c5c2be9](https://github.com/block65/wallhack/commit/c5c2be90b66ebe0c8997f708ea0954ec8cc31e5a))
+* **build:** feature-gate serde_json out of slim build ([170744f](https://github.com/block65/wallhack/commit/170744f4a4de0288c71498a2cf6da7c73be86979))
+* **build:** disable tracing default features, cap at debug level ([a0ad162](https://github.com/block65/wallhack/commit/a0ad162dd172987ae9c9c087be3ff73801b605a7))
+
+2 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.1...wallhack-cli-v0.8.2)
+
+
 ## [0.8.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.0...wallhack-cli-v0.8.1) (2026-03-16)
 
 ### Bug Fixes
