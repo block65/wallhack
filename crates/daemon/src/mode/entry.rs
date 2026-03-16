@@ -570,9 +570,9 @@ pub(crate) async fn run_entry_connected_inner(
     let manager_handle = tokio::spawn(async move { manager.run().await });
 
     match manager_handle.await {
-        Ok(Ok(())) => tracing::info!("Connection closed."),
-        Ok(Err(e)) => tracing::warn!("Connection error: {e}"),
-        Err(e) => tracing::warn!("Connection task failed: {e}"),
+        Ok(Ok(())) => tracing::debug!("Connection manager exited cleanly"),
+        Ok(Err(e)) => tracing::debug!("Connection manager error: {e}"),
+        Err(e) => tracing::debug!("Connection manager task failed: {e}"),
     }
 
     Ok(())
@@ -704,7 +704,6 @@ where
                             tracing::info!("Peer disconnected: {peer_name}");
                         }
                         Err(e) => {
-                            tracing::debug!("Connection error for {}: {}", peer_name, e);
                             tracing::warn!("Peer {peer_name} disconnected with error: {e}");
                         }
                     }

@@ -84,7 +84,7 @@ pub(crate) async fn run(
                 listen: listen.clone(),
                 accept_fingerprint: cfg.accept_fingerprint.clone(),
             };
-            super::relay::run(global, &relay_cfg, metrics, node_state).await
+            super::relay::run(global, &relay_cfg, metrics, peers, node_state).await
         }
         (Some(connect), None) => {
             run_auto_connector(
