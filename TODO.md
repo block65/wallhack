@@ -25,6 +25,14 @@
       enable Path MTU Discovery.
 - [ ] ICMP as an egress transport — encapsulate the tunnel inside ICMP Echo
       packets to bypass firewalls that block all outbound TCP/UDP.
+- [ ] **Multiple simultaneous listen addresses** — `--listen :4433 --listen :443/tcp`
+      lets a single daemon accept connections on multiple ports and transports
+      concurrently. Useful when the exit node is behind a firewall that blocks UDP
+      but allows 443/TCP: the exit picks whichever it can reach. Implementation:
+      `ConnectivitySpec::Listen(Vec<AddressSpec>)`, spawn one tokio listener task
+      per spec, `StatusResponse.listen_addr` → `repeated string listen_addrs` in
+      proto. CLI: argh `Vec<String>` for repeated `--listen`. No known tunnel tool
+      (e.g. ligolo) supports this.
 - [ ] HTTP/2 multiplexing
 - [ ] Domain fronting support
 - [ ] Deterministic TUN addresses based on peer identity

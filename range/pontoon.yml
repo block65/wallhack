@@ -46,7 +46,7 @@ services:
       svc.start: wallhack
       svc.wallhack.role: entry
       svc.wallhack.name: attacker
-      svc.wallhack.listen: ":4433"
+      svc.wallhack.listen: ":443"
 
   gateway-perimeter:
     memory: 128m
@@ -65,7 +65,7 @@ services:
       svc.start: wallhack
       svc.wallhack.role: exit
       svc.wallhack.name: gateway-perimeter
-      svc.wallhack.connect: "10.99.1.100:4433"
+      svc.wallhack.connect: "10.99.1.100:443"
 
   web-external:
     memory: 128m
@@ -78,6 +78,23 @@ services:
         ipv4_address: 10.99.1.80
     kernel_args:
       svc.start: web-external
+
+  web-filter:
+    memory: 64m
+    cpus: 1
+    deny_cp: true
+    layers:
+      - base
+      - egress-web-only
+      - wallhack
+    networks:
+      perimeter:
+        ipv4_address: 10.99.1.60
+    kernel_args:
+      svc.start: wallhack
+      svc.wallhack.role: exit
+      svc.wallhack.name: web-filter
+      svc.wallhack.connect: "10.99.1.100:443"
 
   ftp-server:
     memory: 64m
@@ -120,6 +137,35 @@ services:
   # ===========================================================================
   # OFFICE 10.99.2.0/24
   # ===========================================================================
+
+  ssh-bastion:
+    memory: 64m
+    cpus: 1
+    deny_cp: true
+    layers:
+      - base
+      - proxy-env
+      - egress-ssh-only
+      - ssh-bastion
+    networks:
+      office:
+        ipv4_address: 10.99.2.30
+        gateway: 10.99.2.2
+
+  loot:
+    memory: 128m
+    cpus: 1
+    deny_cp: true
+    deny_root: true
+    layers:
+      - base
+      - app-loot
+    networks:
+      office:
+        ipv4_address: 10.99.2.31
+        gateway: 10.99.2.30
+    kernel_args:
+      svc.start: app-loot
 
   gateway-office:
     memory: 128m
@@ -258,6 +304,25 @@ services:
     kernel_args:
       svc.start: memcached
 
+  udp-only:
+    memory: 64m
+    cpus: 1
+    deny_cp: true
+    layers:
+      - base
+      - egress-udp53-only
+      - wallhack
+    networks:
+      datacenter:
+        ipv4_address: 10.99.3.90
+        gateway: 10.99.3.2
+    kernel_args:
+      svc.start: wallhack
+      svc.wallhack.role: exit
+      svc.wallhack.name: udp-only
+      # connect address scheme for UDP/QUIC transport — requires attacker listening on :53
+      svc.wallhack.connect: "10.99.1.100:53"
+
   api-server:
     memory: 128m
     cpus: 1
@@ -306,6 +371,25 @@ services:
   # ===========================================================================
   # VAULT 10.99.5.0/24
   # ===========================================================================
+
+  reverse-target:
+    memory: 64m
+    cpus: 1
+    deny_cp: true
+    layers:
+      - base
+      - egress-none
+      - wallhack
+    networks:
+      vault:
+        ipv4_address: 10.99.5.50
+        gateway: 10.99.5.2
+    kernel_args:
+      svc.start: wallhack
+      svc.wallhack.role: exit
+      svc.wallhack.name: reverse-target
+      # exit listens; attacker (entry) must connect to 10.99.5.50:9000
+      svc.wallhack.listen: ":9000"
 
   backup-server:
     memory: 128m
