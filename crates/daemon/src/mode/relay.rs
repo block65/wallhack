@@ -14,6 +14,7 @@ use wallhack_core::{
     control::{
         handler::{HandlerConfig, SharedNodeState},
         metrics::Metrics,
+        peers::Registry,
     },
     server::server::{Server, ServerOptions},
     transport::Transport,
@@ -68,6 +69,7 @@ pub async fn run(
     global: &GlobalConfig,
     cfg: &RelayConfig,
     metrics: Arc<Metrics>,
+    peers: Arc<Registry>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     // Relay capabilities are known at startup.
@@ -115,6 +117,7 @@ pub async fn run(
                 );
                 let listen_spec = cfg.listen.clone();
                 let global = global.clone();
+                let peers_quic = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -129,16 +132,19 @@ pub async fn run(
                         let global = global.clone();
                         let listen_spec = listen_spec.clone();
                         let server_options = server_options.clone();
+                        let peers = Arc::clone(&peers_quic);
                         async move {
                             run_relay_loop_inner(
                                 e.peer_addr,
                                 e.transport,
                                 e.channels,
                                 e.tasks,
+                                e.control_tx,
                                 &global,
                                 &listen_spec,
                                 addr,
                                 server_options,
+                                peers,
                             )
                             .await
                         }
@@ -164,6 +170,7 @@ pub async fn run(
                 );
                 let listen_spec = cfg.listen.clone();
                 let global = global.clone();
+                let peers_ws = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -177,16 +184,19 @@ pub async fn run(
                         let global = global.clone();
                         let listen_spec = listen_spec.clone();
                         let server_options = server_options.clone();
+                        let peers = Arc::clone(&peers_ws);
                         async move {
                             run_relay_loop_inner(
                                 e.peer_addr,
                                 e.transport,
                                 e.channels,
                                 e.tasks,
+                                e.control_tx,
                                 &global,
                                 &listen_spec,
                                 addr,
                                 server_options,
+                                peers,
                             )
                             .await
                         }
@@ -214,10 +224,14 @@ async fn run_relay_loop_inner(
     transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     channels: wallhack_core::server::server::DataChannels,
     mut tasks: wallhack_core::client::client::ConnectionTasks,
+    // Retain control_tx for the full session lifetime — dropping it kills the
+    // control stream and causes the source to see the relay as disconnected.
+    _source_control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     global: &GlobalConfig,
     listen_spec: &AddressSpec,
     addr: std::net::SocketAddr,
     server_options: ServerOptions,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
     use wallhack_core::{server::server::DataChannels, transport::protocol::run_send_instructions};
 
@@ -260,6 +274,7 @@ async fn run_relay_loop_inner(
         server_options,
         source_instr_tx,
         fanout_register_tx,
+        peers,
     );
 
     tokio::pin!(listener_fut);
@@ -290,6 +305,7 @@ async fn run_listener(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     >,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
     match listen_spec.protocol {
         Protocol::Udp => {
@@ -301,6 +317,7 @@ async fn run_listener(
                     server_options,
                     source_instr_tx,
                     fanout_register_tx,
+                    peers,
                 )
                 .await
             }
@@ -318,6 +335,7 @@ async fn run_listener(
                     server_options,
                     source_instr_tx,
                     fanout_register_tx,
+                    peers,
                 )
                 .await
             }
@@ -338,6 +356,7 @@ async fn run_quic_listener(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     >,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
     let server_config =
         crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
@@ -345,7 +364,7 @@ async fn run_quic_listener(
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (QUIC)", server.local_addr()?);
 
-    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx).await
+    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx, peers).await
 }
 
 #[cfg(feature = "websocket")]
@@ -357,6 +376,7 @@ async fn run_ws_listener(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     >,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
     use wallhack_core::server::ws::WebSocketServer;
 
@@ -366,7 +386,7 @@ async fn run_ws_listener(
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
-    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx).await
+    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx, peers).await
 }
 
 /// Generic relay accept loop that works with any `Server` implementation.
@@ -376,6 +396,7 @@ async fn run_relay_accept_loop<S: Server>(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     >,
+    peers: Arc<Registry>,
 ) -> Result<(), NodeError>
 where
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -388,7 +409,12 @@ where
         match server.accept(NodeRole::Relay).await {
             Ok(Some(accept_result)) => {
                 let erased = accept_result.erase();
-                handle_relay_connection(erased, source_instr_tx.clone(), &fanout_register_tx);
+                handle_relay_connection(
+                    erased,
+                    source_instr_tx.clone(),
+                    &fanout_register_tx,
+                    &peers,
+                );
             }
             Ok(None) => {
                 tracing::info!("Server closed");
@@ -410,6 +436,7 @@ fn handle_relay_connection(
     fanout_register_tx: &tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     >,
+    peers: &Arc<Registry>,
 ) {
     use wallhack_core::{
         server::server::DataChannels,
@@ -425,6 +452,9 @@ fn handle_relay_connection(
         responses_tx,
         responses_rx,
     } = channels;
+
+    // Register the bridged peer so it appears in `wallhack peers`.
+    peers.register(peer_addr.clone(), peer_addr.clone(), NodeRole::Relay);
 
     // Incoming: accept uni stream from peer, dispatch data messages.
     let transport_in = std::sync::Arc::clone(&transport);
@@ -444,6 +474,8 @@ fn handle_relay_connection(
 
     // Outgoing: open uni stream to peer, send responses.
     let transport_out = transport;
+    let peer_addr_out = peer_addr.clone();
+    let peers_out = Arc::clone(peers);
     tokio::spawn(async move {
         match transport_out.open_uni_erased().await {
             Ok(mut send) => {
@@ -453,6 +485,8 @@ fn handle_relay_connection(
             }
             Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
         }
+        // Unregister peer when the outgoing stream closes (connection gone).
+        peers_out.unregister(&peer_addr_out);
     });
 
     crate::transport::bridge_channels(
