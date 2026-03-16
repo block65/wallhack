@@ -132,12 +132,6 @@ enum PeerStatus {
   PEER_STATUS_DISCONNECTED = 2;
 }
 
-// Which side initiated the connection, from the local node's perspective.
-enum ConnectionSide {
-  CONNECTION_SIDE_UNSPECIFIED = 0;
-  CONNECTION_SIDE_ACCEPT = 1;  // the peer connected to us
-  CONNECTION_SIDE_CONNECT = 2; // we connected to the peer
-}
 
 message PingResponse {
   uint64 uptime_ms = 1;
@@ -183,7 +177,6 @@ message PeerInfo {
   bool listening = 9;
   bool connecting = 10;
   NodeRole role = 11;             // peer's negotiated role
-  ConnectionSide side = 12;       // which side initiated the connection
   string tun_name = 13;           // TUN interface name (entry-side only, empty otherwise)
 }
 

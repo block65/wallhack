@@ -14,7 +14,7 @@ use wallhack_core::{
     control::{
         handler::{HandlerConfig, SharedNodeState},
         metrics::Metrics,
-        peers::Registry,
+        peers::{ConnectionSide, Registry},
     },
     server::server::{Server, ServerOptions},
     transport::Transport,
@@ -454,7 +454,12 @@ fn handle_relay_connection(
     } = channels;
 
     // Register the bridged peer so it appears in `wallhack peers`.
-    peers.register(peer_addr.clone(), peer_addr.clone(), NodeRole::Relay);
+    peers.register(
+        peer_addr.clone(),
+        peer_addr.clone(),
+        NodeRole::Relay,
+        ConnectionSide::Accept,
+    );
 
     // Incoming: accept uni stream from peer, dispatch data messages.
     let transport_in = std::sync::Arc::clone(&transport);
