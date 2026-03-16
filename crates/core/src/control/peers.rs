@@ -2,7 +2,10 @@
 
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -70,6 +73,8 @@ pub struct PeerInfo {
     pub latency_measured_at: Option<Instant>,
     /// TUN interface name for this peer (entry-side only).
     pub tun_name: Option<String>,
+    /// Unique identifier for this connection instance.
+    pub connection_id: u64,
 }
 
 /// Shared peer registry.
@@ -85,6 +90,8 @@ pub struct Registry {
     ping_channels: ArcSwap<HashMap<String, mpsc::Sender<PingRequest>>>,
     /// Broadcast channel for peer lifecycle events.
     events_tx: broadcast::Sender<PeerEvent>,
+    /// Monotonic counter for assigning unique connection IDs.
+    next_connection_id: AtomicU64,
 }
 
 impl Default for Registry {
@@ -94,6 +101,7 @@ impl Default for Registry {
             peers: ArcSwap::from_pointee(HashMap::new()),
             ping_channels: ArcSwap::from_pointee(HashMap::new()),
             events_tx,
+            next_connection_id: AtomicU64::new(0),
         }
     }
 }
@@ -122,7 +130,12 @@ impl Registry {
     }
 
     /// Register a new peer.
-    pub fn register(&self, id: String, addr: String, role: NodeRole, side: ConnectionSide) {
+    ///
+    /// Returns a connection ID that must be passed to
+    /// [`unregister_if_current`] to prevent a stale task from evicting
+    /// a newer connection that re-registered under the same name.
+    pub fn register(&self, id: String, addr: String, role: NodeRole, side: ConnectionSide) -> u64 {
+        let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed) + 1;
         // TOCTOU: another thread could register the same id between this
         // check and the rcu insert. Harmless — a duplicate Connected event
         // is better than a missed one, and callers don't race on the same id.
@@ -138,6 +151,7 @@ impl Registry {
             latency_ms: None,
             latency_measured_at: None,
             tun_name: None,
+            connection_id,
         };
         let event_addr = info.addr.clone();
         let event_role = info.role;
@@ -154,6 +168,7 @@ impl Registry {
                 role: event_role,
             });
         }
+        connection_id
     }
 
     /// Set the TUN interface name for a peer.
@@ -179,7 +194,7 @@ impl Registry {
         });
     }
 
-    /// Unregister a peer.
+    /// Unregister a peer unconditionally.
     pub fn unregister(&self, id: &str) -> Option<PeerInfo> {
         self.ping_channels.rcu(|old| {
             let mut new = (**old).clone();
@@ -198,6 +213,25 @@ impl Registry {
             });
         }
         removed
+    }
+
+    /// Unregister a peer only if its connection ID matches.
+    ///
+    /// Prevents a stale task from evicting a newer connection that
+    /// re-registered under the same name between the old task's exit
+    /// and its cleanup.
+    pub fn unregister_if_current(&self, id: &str, connection_id: u64) -> Option<PeerInfo> {
+        let current = self.peers.load().get(id).map(|p| p.connection_id);
+        if current != Some(connection_id) {
+            tracing::debug!(
+                peer = id,
+                current = ?current,
+                requested = connection_id,
+                "skipping stale unregister"
+            );
+            return None;
+        }
+        self.unregister(id)
     }
 
     /// Register a ping channel for a peer's connection handler.
@@ -474,5 +508,32 @@ mod tests {
         registry.unregister("ghost");
 
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_connection_id_prevents_stale_unregister() {
+        let registry = Registry::new();
+        let gen1 = registry.register(
+            "peer1".into(),
+            "1.2.3.4:5678".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
+        // Re-register same peer (new connection arrived before old task cleaned up).
+        let gen2 = registry.register(
+            "peer1".into(),
+            "1.2.3.4:9999".into(),
+            NodeRole::Exit,
+            ConnectionSide::Accept,
+        );
+        assert_ne!(gen1, gen2);
+
+        // Old task tries to unregister with stale connection_id — should be a no-op.
+        assert!(registry.unregister_if_current("peer1", gen1).is_none());
+        assert_eq!(registry.count(), 1);
+
+        // New task unregisters with current connection_id — should succeed.
+        assert!(registry.unregister_if_current("peer1", gen2).is_some());
+        assert_eq!(registry.count(), 0);
     }
 }
