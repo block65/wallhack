@@ -44,6 +44,8 @@ pub struct ConnectResult<T: wallhack_transport::Transport + ?Sized> {
     control_tx: mpsc::Sender<ControlMessage>,
     /// Receiver for the server's `Handshake` (delivered via the control loop).
     peer_handshake_rx: Option<oneshot::Receiver<Handshake>>,
+    /// Pong-derived latency measurements from the control loop (milliseconds).
+    latency_rx: Option<mpsc::Receiver<f64>>,
 }
 
 impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
@@ -55,6 +57,7 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
         tasks: ConnectionTasks,
         control_tx: mpsc::Sender<ControlMessage>,
         peer_handshake_rx: Option<oneshot::Receiver<Handshake>>,
+        latency_rx: Option<mpsc::Receiver<f64>>,
     ) -> Self {
         Self {
             channels,
@@ -63,6 +66,7 @@ impl<T: wallhack_transport::Transport + ?Sized> ConnectResult<T> {
             transport,
             control_tx,
             peer_handshake_rx,
+            latency_rx,
         }
     }
 
@@ -106,6 +110,8 @@ pub struct ErasedConnectResult {
     pub control_tx: mpsc::Sender<ControlMessage>,
     pub peer_handshake_rx: Option<oneshot::Receiver<Handshake>>,
     pub peer_addr: String,
+    /// Pong-derived latency measurements from the control loop (milliseconds).
+    pub latency_rx: Option<mpsc::Receiver<f64>>,
 }
 
 impl<T> ConnectResult<T>
@@ -129,6 +135,7 @@ where
             channels: self.channels,
             tasks: self.tasks,
             control_tx: self.control_tx,
+            latency_rx: self.latency_rx,
         }
     }
 }

@@ -233,48 +233,52 @@ async fn run_relay_loop_inner(
     server_options: ServerOptions,
     peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
-    use wallhack_core::{server::server::DataChannels, transport::protocol::run_send_instructions};
+    use wallhack_core::{server::server::DataChannels, transport::protocol::run_send_responses};
 
     tracing::info!("Connected to {peer_addr}");
 
+    // Register the source peer so it appears in `wallhack peers`.
+    peers.register(
+        peer_addr.clone(),
+        peer_addr.clone(),
+        NodeRole::Entry,
+        ConnectionSide::Connect,
+    );
+
     let DataChannels {
-        instructions_tx: source_instr_tx,
+        instructions_tx: _source_instr_tx,
         instructions_rx: source_instr_rx,
-        responses_tx: _source_resp_tx,
+        responses_tx: source_resp_tx,
         responses_rx: source_resp_rx,
     } = channels;
 
-    // Outgoing: open uni stream to source, send instructions (relay → source).
+    // Outgoing: open uni stream to source, send exit-peer responses (relay → entry).
+    // The connect() incoming task already handles entry→relay instructions via
+    // source_instr_tx; here we send the collected exit responses back to the entry.
     let transport_out = std::sync::Arc::clone(&transport);
     tokio::spawn(async move {
         match transport_out.open_uni_erased().await {
             Ok(mut send) => {
-                if let Err(e) = run_send_instructions(&mut send, source_instr_rx).await {
-                    tracing::debug!("Send-instructions to source finished: {e}");
+                if let Err(e) = run_send_responses(&mut send, source_resp_rx).await {
+                    tracing::debug!("Send-responses to source finished: {e}");
                 }
             }
             Err(e) => tracing::debug!("Failed to open send stream to source: {e}"),
         }
     });
 
-    // Outgoing: accept uni from source (source → relay → peers): this is
-    // handled by the client's incoming task spawned in connect(), which
-    // dispatches to instructions_tx/responses_tx on the source side.
-    // For the relay's own outgoing to source we use run_send_responses
-    // on the relay's response channel:
-    // NOTE: The incoming task in connect() already handles source→relay direction.
-
-    // Spawn the fan-out task: reads from source_resp_rx, forwards to each connected peer.
-    let fanout_register_tx = crate::transport::spawn_fanout_task(source_resp_rx);
+    // Spawn the instruction fan-out task: reads from source_instr_rx and
+    // forwards each instruction to all connected exit peers.
+    let fanout_register_tx = crate::transport::spawn_fanout_task(source_instr_rx);
 
     let listener_fut = run_listener(
         global,
         listen_spec,
         addr,
         server_options,
-        source_instr_tx,
+        source_resp_tx,
         fanout_register_tx,
-        peers,
+        Arc::clone(&peers),
     );
 
     tokio::pin!(listener_fut);
@@ -293,6 +297,8 @@ async fn run_relay_loop_inner(
         }
     }
 
+    peers.unregister(&peer_addr);
+
     Ok(())
 }
 
@@ -301,9 +307,9 @@ async fn run_listener(
     listen_spec: &AddressSpec,
     addr: std::net::SocketAddr,
     server_options: ServerOptions,
-    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
-        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+        tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
     peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
@@ -315,7 +321,7 @@ async fn run_listener(
                     global,
                     addr,
                     server_options,
-                    source_instr_tx,
+                    source_resp_tx,
                     fanout_register_tx,
                     peers,
                 )
@@ -333,7 +339,7 @@ async fn run_listener(
                     global,
                     addr,
                     server_options,
-                    source_instr_tx,
+                    source_resp_tx,
                     fanout_register_tx,
                     peers,
                 )
@@ -352,9 +358,9 @@ async fn run_quic_listener(
     global: &GlobalConfig,
     addr: std::net::SocketAddr,
     server_options: ServerOptions,
-    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
-        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+        tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
     peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
@@ -364,7 +370,7 @@ async fn run_quic_listener(
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (QUIC)", server.local_addr()?);
 
-    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx, peers).await
+    run_relay_accept_loop(server, source_resp_tx, fanout_register_tx, peers).await
 }
 
 #[cfg(feature = "websocket")]
@@ -372,9 +378,9 @@ async fn run_ws_listener(
     global: &GlobalConfig,
     addr: std::net::SocketAddr,
     server_options: ServerOptions,
-    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
-        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+        tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
     peers: Arc<Registry>,
 ) -> Result<(), NodeError> {
@@ -386,15 +392,15 @@ async fn run_ws_listener(
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
-    run_relay_accept_loop(server, source_instr_tx, fanout_register_tx, peers).await
+    run_relay_accept_loop(server, source_resp_tx, fanout_register_tx, peers).await
 }
 
 /// Generic relay accept loop that works with any `Server` implementation.
 async fn run_relay_accept_loop<S: Server>(
     mut server: S,
-    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
-        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+        tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
     peers: Arc<Registry>,
 ) -> Result<(), NodeError>
@@ -411,7 +417,7 @@ where
                 let erased = accept_result.erase();
                 handle_relay_connection(
                     erased,
-                    source_instr_tx.clone(),
+                    source_resp_tx.clone(),
                     &fanout_register_tx,
                     &peers,
                 );
@@ -432,15 +438,15 @@ where
 /// Non-generic handler for erased relay connection results.
 fn handle_relay_connection(
     erased: wallhack_core::server::server::ErasedAcceptResult,
-    source_instr_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: &tokio::sync::mpsc::UnboundedSender<
-        tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+        tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
     peers: &Arc<Registry>,
 ) {
     use wallhack_core::{
         server::server::DataChannels,
-        transport::protocol::{run_data_in, run_send_responses},
+        transport::protocol::{run_data_in, run_send_instructions},
     };
 
     let peer_addr = erased.peer_addr;
@@ -461,7 +467,8 @@ fn handle_relay_connection(
         ConnectionSide::Accept,
     );
 
-    // Incoming: accept uni stream from peer, dispatch data messages.
+    // Incoming: accept uni stream from exit peer, dispatch data messages.
+    // Exit peers send ExitNodeResponses which are dispatched via responses_tx.
     let transport_in = std::sync::Arc::clone(&transport);
     let instr_tx = instructions_tx.clone();
     let resp_tx = responses_tx.clone();
@@ -469,37 +476,38 @@ fn handle_relay_connection(
         match transport_in.accept_uni_erased().await {
             Ok(Some(mut recv)) => {
                 if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
-                    tracing::debug!("Relay peer data-in finished: {e}");
+                    tracing::debug!("Relay exit-peer data-in finished: {e}");
                 }
             }
-            Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
-            Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
+            Ok(None) => tracing::debug!("Relay exit-peer transport closed before data-in"),
+            Err(e) => tracing::debug!("Relay exit-peer failed to accept data-in: {e}"),
         }
     });
 
-    // Outgoing: open uni stream to peer, send responses.
+    // Outgoing: open uni stream to exit peer, send instructions from the entry.
+    // instructions_rx receives instructions distributed by the fan-out task.
     let transport_out = transport;
     let peer_addr_out = peer_addr.clone();
     let peers_out = Arc::clone(peers);
     tokio::spawn(async move {
         match transport_out.open_uni_erased().await {
             Ok(mut send) => {
-                if let Err(e) = run_send_responses(&mut send, responses_rx).await {
-                    tracing::debug!("Relay peer send-responses finished: {e}");
+                if let Err(e) = run_send_instructions(&mut send, instructions_rx).await {
+                    tracing::debug!("Relay exit-peer send-instructions finished: {e}");
                 }
             }
-            Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
+            Err(e) => tracing::debug!("Relay exit-peer failed to open send stream: {e}"),
         }
         // Unregister peer when the outgoing stream closes (connection gone).
         peers_out.unregister(&peer_addr_out);
     });
 
-    crate::transport::bridge_channels(
+    crate::transport::relay_bridge_channels(
         &peer_addr,
-        instructions_rx,
-        responses_tx,
+        instructions_tx,
+        responses_rx,
         control_tx,
-        source_instr_tx,
+        source_resp_tx,
         fanout_register_tx,
     );
 }

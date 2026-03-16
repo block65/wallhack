@@ -316,6 +316,7 @@ pub(crate) async fn run_entry_connect(
     }
 
     let peer_addr = endpoint.to_string();
+    let peers = Arc::clone(&res.peers);
     let security = SecurityParams {
         psk: global.psk.clone(),
         accept_fingerprint: None,
@@ -352,11 +353,12 @@ pub(crate) async fn run_entry_connect(
                     move |connect_result| {
                         let e = connect_result.erase();
                         let m = Arc::clone(&metrics);
+                        let p = Arc::clone(&peers);
                         let r = Arc::clone(&routes);
                         let ru = r_updates.resubscribe();
                         let pa = peer_addr.clone();
                         async move {
-                            run_entry_connected_erased(e, &m, &pa, Some(r), Some(ru)).await
+                            run_entry_connected_erased(e, &m, &pa, Some(p), Some(r), Some(ru)).await
                         }
                     },
                     RECONNECT_DELAY,
@@ -388,11 +390,12 @@ pub(crate) async fn run_entry_connect(
                     move |connect_result| {
                         let e = connect_result.erase();
                         let m = Arc::clone(&metrics);
+                        let p = Arc::clone(&peers);
                         let r = Arc::clone(&routes);
                         let ru = r_updates.resubscribe();
                         let pa = peer_addr.clone();
                         async move {
-                            run_entry_connected_erased(e, &m, &pa, Some(r), Some(ru)).await
+                            run_entry_connected_erased(e, &m, &pa, Some(p), Some(r), Some(ru)).await
                         }
                     },
                     RECONNECT_DELAY,
@@ -429,6 +432,7 @@ pub(crate) async fn run_entry_connected_erased(
     connect_result: wallhack_core::client::client::ErasedConnectResult,
     metrics: &Arc<Metrics>,
     peer_addr: &str,
+    peers: Option<Arc<Registry>>,
     routes: Option<SharedRouteTable>,
     route_updates: Option<
         tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
@@ -443,6 +447,7 @@ pub(crate) async fn run_entry_connected_erased(
         tasks: _tasks,
         control_tx,
         peer_addr: _,
+        latency_rx,
     } = connect_result;
 
     // Wait for the server's handshake to get the peer name
@@ -478,6 +483,8 @@ pub(crate) async fn run_entry_connected_erased(
         metrics,
         peer_addr,
         peer_name.as_deref(),
+        peers,
+        latency_rx,
         routes,
         route_updates,
     )
@@ -495,6 +502,8 @@ pub(crate) async fn run_entry_connected_inner(
     metrics: &Arc<Metrics>,
     peer_addr: &str,
     peer_name: Option<&str>,
+    peers: Option<Arc<Registry>>,
+    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     routes: Option<SharedRouteTable>,
     route_updates: Option<
         tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
@@ -572,6 +581,19 @@ pub(crate) async fn run_entry_connected_inner(
     // Fire an initial ping so latency is populated immediately after connect.
     if let Err(e) = send_ping(&control_tx).await {
         tracing::debug!("Initial ping failed: {e}");
+    }
+
+    // Consume latency measurements from the control loop and update the registry.
+    if let (Some(mut lat_rx), Some(reg)) = (latency_rx, &peers) {
+        let peer_id = peer_name.map(std::string::ToString::to_string);
+        let reg = Arc::clone(reg);
+        tokio::spawn(async move {
+            while let Some(ms) = lat_rx.recv().await {
+                if let Some(ref id) = peer_id {
+                    reg.update_latency(id, ms);
+                }
+            }
+        });
     }
 
     let manager_handle = tokio::spawn(async move { manager.run().await });
