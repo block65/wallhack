@@ -94,7 +94,14 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
             .await
         }
         ModeConfig::Relay(cfg) => {
-            relay::run(&config.global, cfg, resources.metrics, resources.node_state).await
+            relay::run(
+                &config.global,
+                cfg,
+                resources.metrics,
+                resources.peers,
+                resources.node_state,
+            )
+            .await
         }
         ModeConfig::Auto(cfg) => {
             auto::run(
