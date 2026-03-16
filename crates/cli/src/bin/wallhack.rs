@@ -309,6 +309,7 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         }),
         CtlCommand::Info(_) => management_request::Request::Status(StatusRequest {}),
         CtlCommand::Stats(_) => management_request::Request::Stats(StatsRequest {}),
+        #[cfg(feature = "json")]
         CtlCommand::Peers(ref cmd) if cmd.json => {
             // JSON output: make the request and short-circuit the standard response path.
             let request = management_request::Request::Peers(PeersRequest {});

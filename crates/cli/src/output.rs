@@ -3,9 +3,10 @@
 use std::io::Write;
 
 use tabwriter::TabWriter;
-use wallhack_wire::management::{
-    ManagementResponse, PeerInfo as WirePeerInfo, management_response,
-};
+use wallhack_wire::management::{ManagementResponse, management_response};
+
+#[cfg(feature = "json")]
+use wallhack_wire::management::PeerInfo as WirePeerInfo;
 
 #[cfg(feature = "repl")]
 use {
@@ -15,6 +16,7 @@ use {
 
 use crate::ipc::IpcError;
 
+#[cfg(feature = "json")]
 #[derive(serde::Serialize)]
 struct PeerJson<'a> {
     name: &'a str,
@@ -50,6 +52,7 @@ fn format_uptime(ms: u64) -> String {
 /// Print the peers list as JSON to stdout.
 ///
 /// Shape matches the REST API `/peers` response plus a `tun_name` field.
+#[cfg(feature = "json")]
 pub fn print_peers_json(peers: &[WirePeerInfo]) {
     let items: Vec<PeerJson<'_>> = peers
         .iter()
