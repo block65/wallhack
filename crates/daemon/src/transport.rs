@@ -151,21 +151,19 @@ pub(crate) fn relay_bridge_channels(
     });
 }
 
-/// Spawn the relay fan-out task for a source connection.
+/// Spawn the relay instruction fan-out task for a source connection.
 ///
-/// The fan-out task reads items from `source_rx` and forwards a clone of each
-/// to all currently-registered peer senders. Returns a registration channel:
-/// callers send a new `mpsc::Sender<T>` for each peer that connects.
-pub(crate) fn spawn_fanout_task<T>(
-    source_rx: mpsc::Receiver<T>,
-) -> mpsc::UnboundedSender<mpsc::Sender<T>>
-where
-    T: Clone + Send + 'static,
-{
-    let (register_tx, mut register_rx) = mpsc::unbounded_channel::<mpsc::Sender<T>>();
+/// Reads instructions from `source_rx` and forwards a clone of each to all
+/// currently-registered peer senders. Returns a registration channel: callers
+/// send a new `Sender` for each exit peer that connects.
+pub(crate) fn spawn_fanout_task(
+    source_rx: mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
+) -> mpsc::UnboundedSender<mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>> {
+    let (register_tx, mut register_rx) =
+        mpsc::unbounded_channel::<mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>>();
 
     tokio::spawn(async move {
-        let mut peers: Vec<mpsc::Sender<T>> = Vec::new();
+        let mut peers: Vec<mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>> = Vec::new();
         let mut source_rx = source_rx;
 
         loop {
