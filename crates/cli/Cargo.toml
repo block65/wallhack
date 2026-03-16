@@ -51,6 +51,7 @@ wallhackd = { path = "../daemon", default-features = false }
 zeroize = "1"
 
 [build-dependencies]
+anyhow = "1"
 vergen-gitcl = { version = "9.1", features = ["build"] }
 
 [lints]
