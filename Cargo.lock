@@ -3679,6 +3679,7 @@ dependencies = [
 name = "wallhack-cli"
 version = "0.8.1"
 dependencies = [
+ "anyhow",
  "argh",
  "nu-ansi-term",
  "prost",
@@ -3779,6 +3780,7 @@ dependencies = [
 name = "wallhack-mcp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "rmcp",
  "serde",
  "tokio",

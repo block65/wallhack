@@ -19,7 +19,10 @@ impl AddCustomEntries<&str, &str> for WallhackBuildEnv {
         _cargo_warning: &mut CargoWarning,
     ) -> anyhow::Result<()> {
         let profile = std::env::var("PROFILE").unwrap_or_else(|_| "unknown".to_string());
-        cargo_rustc_env_map.insert("WALLHACK_BUILD_PROFILE", Box::leak(profile.into_boxed_str()));
+        cargo_rustc_env_map.insert(
+            "WALLHACK_BUILD_PROFILE",
+            Box::leak(profile.into_boxed_str()),
+        );
         Ok(())
     }
 
