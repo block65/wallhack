@@ -2,7 +2,7 @@ version: "1"
 
 build:
   env:
-    WALLHACK_BINARY: ../target/musl/x86_64-unknown-linux-musl/release/wallhack
+    WALLHACK_BINARY: ../target/x86_64-unknown-linux-musl/release/wallhack
 
 defaults:
   kernel: ./vm/build/vmlinuz
@@ -34,6 +34,7 @@ services:
     cpus: 2
     layers:
       - base
+      - attacker
       - wallhack
     networks:
       perimeter:
@@ -208,7 +209,7 @@ services:
       svc.start: postgres
 
   db-mariadb:
-    memory: 512m
+    memory: 768m
     cpus: 1
     layers:
       - base

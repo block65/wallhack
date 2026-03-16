@@ -1,5 +1,5 @@
 # Wallhack layer — binary from cargo build, config via kernel args
-binary: target/musl/x86_64-unknown-linux-musl/release/wallhack -> /usr/local/bin/wallhack
+binary: target/x86_64-unknown-linux-musl/release/wallhack -> /usr/local/bin/wallhack
 start: |
   WH_CMD="wallhack daemon"
   [ -n "${WH_NAME:-}"    ] && WH_CMD="$WH_CMD --name $WH_NAME"

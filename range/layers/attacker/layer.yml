@@ -1,0 +1,4 @@
+packages:
+  - curl
+  - nmap
+  - nmap-scripts
