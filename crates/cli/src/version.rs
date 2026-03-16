@@ -17,7 +17,7 @@ pub fn version() -> String {
     };
     let ts = env!("VERGEN_BUILD_TIMESTAMP");
     // Compact ISO timestamp: 20260316T123456
-    let compact_ts = ts.get(..19).unwrap_or(ts).replace('-', "").replace(':', "");
+    let compact_ts = ts.get(..19).unwrap_or(ts).replace(['-', ':'], "");
     let profile = env!("WALLHACK_BUILD_PROFILE");
     format!(
         "{}+{}{}.{}.{}",

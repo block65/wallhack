@@ -176,7 +176,7 @@ impl rmcp::ServerHandler for WallhackServer {
             ""
         };
         let ts = env!("VERGEN_BUILD_TIMESTAMP");
-        let compact_ts = ts.get(..19).unwrap_or(ts).replace('-', "").replace(':', "");
+        let compact_ts = ts.get(..19).unwrap_or(ts).replace(['-', ':'], "");
         let profile = env!("WALLHACK_BUILD_PROFILE");
         let version = format!(
             "{}+{}{}.{}.{}",
