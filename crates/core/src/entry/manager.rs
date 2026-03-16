@@ -5,6 +5,7 @@ use smoltcp::phy::Device;
 use tokio::{
     io::unix::AsyncFd,
     sync::{Notify, mpsc},
+    task::JoinSet,
     time::Instant,
 };
 use wallhack_entry_stack::async_stack::{
@@ -61,7 +62,7 @@ pub struct ConnectionManager<D: Device + Send + 'static> {
     egress_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     /// Intercepted ICMP Echo Requests from the poll loop for tunnel forwarding.
     icmp_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
-    /// Unified data stream: send UDP instructions to the exit node.
+    /// Unified data stream: send instructions to the exit node.
     instructions_tx: mpsc::Sender<EntryNodeInstruction>,
     /// Unified data stream: receive responses from the exit node.
     responses_rx: mpsc::Receiver<ExitNodeResponse>,
@@ -116,7 +117,11 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
         let udp_timeout = Duration::from_secs(30);
         let mut udp_buf = vec![0u8; 65535];
 
-        loop {
+        // Legacy probe tasks (fallback bidi-stream probes) in a JoinSet so
+        // they are aborted on exit, releasing Arc<AsyncFd<Device>> clones.
+        let mut probe_tasks: JoinSet<()> = JoinSet::new();
+
+        let result = loop {
             tokio::select! {
                 stream = listener.accept() => {
                     let stream = stream?;
@@ -187,7 +192,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     };
                     if self.instructions_tx.send(instr).await.is_err() {
                         tracing::debug!("UDP: instructions channel closed, stopping");
-                        return Ok(());
+                        break Ok(());
                     }
                     self.metrics.inc_packets_out(1);
                     self.metrics.inc_bytes_out(size as u64);
@@ -197,7 +202,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                         self.handle_exit_response(&mut udp, response);
                     } else {
                         tracing::debug!("Responses channel closed, connection dead");
-                        return Ok(());
+                        break Ok(());
                     }
                 }
                 Some(held) = self.syn_rx.recv() => {
@@ -207,7 +212,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     let tun = Arc::clone(&self.tun_writer);
                     let wake = Arc::clone(&self.wake_notify);
                     let dst_addr = held.dst_addr;
-                    tokio::spawn(async move {
+                    probe_tasks.spawn(async move {
                         let Some(target_addr) = parse_syn_target(&held.packet) else {
                             tracing::debug!(%dst_addr, "SYN probe: failed to parse target");
                             state.mark_unreachable(dst_addr);
@@ -240,6 +245,12 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                         wake.notify_one();
                     });
                 }
+                // Reap completed probe tasks so the JoinSet doesn't grow unbounded.
+                Some(result) = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
+                    if let Err(e) = result {
+                        tracing::warn!("SYN probe task panicked: {e}");
+                    }
+                }
                 Some(icmp_packet) = self.egress_rx.recv() => {
                     // ICMP packets from the poll loop (cache-hit retransmits).
                     write_raw_to_tun(&self.tun_writer, &icmp_packet);
@@ -251,7 +262,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                         tracing::trace!(len = icmp_pkt.len(), "forwarding ICMP echo request to exit");
                         if self.instructions_tx.send(instr).await.is_err() {
                             tracing::debug!("ICMP: instructions channel closed, stopping");
-                            return Ok(());
+                            break Ok(());
                         }
                         self.metrics.inc_packets_out(1);
                         self.metrics.inc_bytes_out(icmp_pkt.len() as u64);
@@ -271,7 +282,15 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     });
                 }
             }
-        }
+        };
+
+        // Abort in-flight probe tasks and wait for cleanup so their
+        // Arc<AsyncFd<Device>> clones are dropped before the caller
+        // deletes the TUN interface.
+        probe_tasks.abort_all();
+        while probe_tasks.join_next().await.is_some() {}
+
+        result
     }
 
     #[allow(clippy::too_many_lines)]

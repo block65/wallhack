@@ -11,6 +11,22 @@
 - [ ] Reduce global lock contention in entry-stack
 - [x] ~~Broadcast → mpsc migration on data path~~ — done.
 
+## Relay
+
+- [ ] **Bidi stream bridging** — relay currently bridges uni streams only.
+      Bidi streams (used by SYN probes and TCP data sessions) go point-to-point
+      and are invisible to the relay. Entry's `probe_tcp_target` and
+      `run_tcp_session` both open bidi streams that hang when a relay is in
+      the path. Fix: relay accepts bidi from one side, opens matching bidi to
+      the other side, splices with `copy_bidirectional`. Unblocks SYN probes
+      and TCP data flow through relay chains without any entry/exit changes.
+- [ ] **Topology visibility** — entry has no visibility into peers behind a
+      relay. `wallhack peers` shows the relay but not the exit nodes connected
+      to it. Relay should forward downstream peer identity (name, capabilities,
+      routes) upstream via a peer announcement control message or augmented
+      handshake. Needed for topology observability, debugging, and multi-hop
+      route selection.
+
 ## Transports
 
 - [ ] DNS over tunnel — intercept DNS queries at the TUN interface on the exit
@@ -82,11 +98,8 @@
       impossible to disconnect. Need either address-based disconnect
       (`disconnect --addr 10.99.1.10:43006`) or a short connection ID shown in
       `wallhack peers` output that can be passed to `disconnect`.
-- [ ] **Stale peer not cleaned up after remote restart** — when a peer process is
-      killed and restarts (e.g. gateway-perimeter exit→relay), the old connection
-      lingers in `wallhack peers` as a second entry for the same host alongside the
-      new connection. Two peers for the same physical node is confusing and indicates
-      the old session wasn't properly torn down.
+- [x] ~~**Stale peer not cleaned up after remote restart**~~ — fixed by
+      connection ID–guarded `unregister_if_current` in PR #82.
 - [ ] **`status=connected latency=— tun=false listen=false connect=false` is an
       impossible state** — `wallhack peers` shows a connected peer with all capability
       flags false and no latency. If `status=connected` then either `listen` or
@@ -105,16 +118,12 @@
       (`peer_name_to_iface`) so TUN gets a random name instead of `wh{hash}`.
 - [ ] **Relay peer role reported as `exit`** — `wallhack peers` shows relay peers
       as `role=exit`. Should report `role=relay`.
-- [ ] **Stale TUN interfaces not cleaned up on disconnect** — when a peer disconnects
-      (or restarts with a different role), the old TUN interface remains on the entry
-      node and kernel routes pointing to it linger. Auto-cleanup on disconnect needed.
-- [ ] TUN EBUSY on rapid reconnect — `create_tun_with_retry` (entry) retries
-      3× at 500ms but the previous `TunActor` hasn't been fully dropped before
-      the new connection attempts to claim the same TUN name. Rapid
-      connect/disconnect cycles accumulate stale connections, eventually causing
-      resource exhaustion and process kill (OOM or SIGKILL). Needs proper TUN
-      lifecycle tracking — ensure the old actor is fully dropped before allowing
-      a new connection to reuse the name.
+- [x] ~~**Stale TUN interfaces not cleaned up on disconnect**~~ — fixed in PR #82:
+      `delete_tun` runs after manager task abort+join; kernel auto-removes routes.
+- [x] ~~TUN EBUSY on rapid reconnect~~ — fixed in PR #82:
+      `SessionManager.get_or_create` preemptively deletes stale TUN;
+      `run_connection_loop` aborts+joins manager task to release fd Arcs;
+      `TunDropGuard` for panic safety.
 - [x] ~~No color in `[+]` notification messages~~ — done, uses `nu-ansi-term`
       behind `repl` feature gate.
 - [ ] Log prefix inconsistency in REPL — mix of `warn:` prefix (from

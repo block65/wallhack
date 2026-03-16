@@ -33,6 +33,31 @@ use crate::{
     netlink::{add_os_route, delete_tun, remove_os_route},
 };
 
+/// Guard that deletes a TUN interface on drop for panic safety.
+///
+/// On normal exit the guard is disarmed via [`take`](TunDropGuard::take)
+/// so the caller can sequence deletion after route cleanup.
+struct TunDropGuard(Option<String>);
+
+impl TunDropGuard {
+    fn new(name: String) -> Self {
+        Self(Some(name))
+    }
+
+    /// Disarm the guard, returning the TUN name.
+    fn take(&mut self) -> Option<String> {
+        self.0.take()
+    }
+}
+
+impl Drop for TunDropGuard {
+    fn drop(&mut self) {
+        if let Some(ref name) = self.0 {
+            delete_tun(name);
+        }
+    }
+}
+
 /// Derive a stable, unique TUN interface name from a peer name.
 ///
 /// Uses FNV-1a (inline, no crate) to hash the peer name into an 8-char hex
@@ -70,14 +95,16 @@ pub(crate) struct SessionManager {
 impl SessionManager {
     /// Gets or creates a TUN adapter for the given exit node.
     ///
-    /// If the exit node has connected before, returns a clone of their existing
-    /// TUN. Otherwise creates a new TUN with a stable name derived from the
-    /// peer name via FNV-1a hash (fits IFNAMSIZ, unique per peer).
+    /// If the exit node has connected before, returns their existing TUN name
+    /// after deleting the stale interface. This handles the race where a new
+    /// connection arrives before the old task's cleanup runs — the old fd
+    /// becomes stale (harmless) and the name is freed for reuse.
     fn get_or_create(&self, name: &str) -> String {
         let mut sessions = self.sessions.lock();
 
         if let Some(existing) = sessions.get(name) {
-            tracing::info!("Reusing existing TUN for exit node {}", existing);
+            tracing::info!("Reusing TUN name {existing} for peer {name}, deleting stale interface");
+            delete_tun(existing);
             return existing.clone();
         }
 
@@ -596,6 +623,9 @@ pub(crate) async fn run_entry_connected_inner(
         });
     }
 
+    // Panic safety: delete TUN if we unwind before reaching explicit cleanup.
+    let tun_guard = TunDropGuard::new(name.clone());
+
     let manager_handle = tokio::spawn(async move { manager.run().await });
 
     match manager_handle.await {
@@ -604,8 +634,8 @@ pub(crate) async fn run_entry_connected_inner(
         Err(e) => tracing::debug!("Connection manager task failed: {e}"),
     }
 
-    // Best-effort TUN cleanup after disconnect.
-    delete_tun(&name);
+    // Best-effort TUN cleanup after disconnect — guard fires on drop.
+    drop(tun_guard);
 
     Ok(())
 }
@@ -684,7 +714,7 @@ where
                 let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
 
                 // Register peer in the registry and apply handshake capabilities.
-                conn_peers.register(
+                let connection_id = conn_peers.register(
                     peer_name.clone(),
                     peer_addr.clone(),
                     identity.role,
@@ -721,9 +751,13 @@ where
                         peer_addr: peer_addr.clone(),
                     };
                     let result = params.run(&mut ping_rx, latency_rx).await;
-                    // Unregister peer when connection closes
-                    conn_peers.unregister(&peer_name);
-                    // Clean up routes for this peer
+
+                    // Unregister peer — connection ID check prevents evicting a
+                    // newer connection that re-registered under the same name.
+                    conn_peers.unregister_if_current(&peer_name, connection_id);
+
+                    // Clean up routes BEFORE deleting the TUN so that
+                    // remove_os_route can still resolve the interface index.
                     let removed_routes = conn_routes.remove_by_peer(&peer_name);
                     for entry in &removed_routes {
                         if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_name) {
@@ -736,11 +770,14 @@ where
                             removed_routes.len()
                         );
                     }
+
+                    // TUN deletion after routes are cleaned up.
                     match result {
-                        Ok(_tun_name) => {
+                        Ok(ref tun_name) => {
+                            delete_tun(tun_name);
                             tracing::info!("Peer disconnected: {peer_name}");
                         }
-                        Err(e) => {
+                        Err(ref e) => {
                             tracing::warn!("Peer {peer_name} disconnected with error: {e}");
                         }
                     }
@@ -893,6 +930,10 @@ pub(crate) fn spawn_data_tasks(
 }
 
 /// Run the connection manager alongside ping/latency handling.
+///
+/// On exit (normal or error), the manager task is aborted and joined so
+/// the `ConnectionManager` (and its TUN fd Arcs) are dropped before the
+/// caller runs `delete_tun`.
 #[allow(clippy::too_many_arguments)]
 async fn run_connection_loop(
     mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
@@ -916,14 +957,15 @@ async fn run_connection_loop(
     // 30s after the initial ping, not immediately.
     heartbeat.tick().await;
 
+    let mut manager_result = Ok(());
     loop {
         tokio::select! {
             result = &mut manager_handle => {
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => return Err(e.into()),
-                    Err(e) => return Err(e.into())
-                }
+                manager_result = match result {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(e.into()),
+                    Err(e) => Err(e.into()),
+                };
                 break;
             }
             Some(ms) = latency_rx.recv() => {
@@ -973,7 +1015,15 @@ async fn run_connection_loop(
             }
         }
     }
-    Ok(())
+
+    // Abort and join the manager task so the ConnectionManager (and its
+    // TUN device fd Arcs) is fully dropped before the caller deletes the
+    // TUN interface. Without this, the spawned task survives and holds
+    // the fd open, causing EBUSY on the next create_tun_with_retry.
+    manager_handle.abort();
+    let _ = manager_handle.await;
+
+    manager_result
 }
 
 impl ConnectionParams {
@@ -1040,8 +1090,11 @@ impl ConnectionParams {
             responses_rx,
         );
 
+        // Panic safety: guard calls delete_tun if we unwind.
+        let mut tun_guard = TunDropGuard::new(name.clone());
+
         let manager_handle = tokio::spawn(async move { manager.run().await });
-        run_connection_loop(
+        let result = run_connection_loop(
             manager_handle,
             control_tx,
             latency_rx,
@@ -1051,11 +1104,17 @@ impl ConnectionParams {
             &peers,
             &name,
         )
-        .await?;
+        .await;
 
-        // Best-effort TUN cleanup after disconnect.
+        // run_connection_loop aborts and joins the manager task, so all
+        // TUN fd Arcs are dropped. Delete the TUN NOW — before returning —
+        // so a racing reconnect for the same peer name won't hit EBUSY.
+        // The kernel auto-removes routes when an interface is deleted, so
+        // the outer task's remove_os_route calls are harmless no-ops.
+        tun_guard.take();
         delete_tun(&name);
 
+        result?;
         Ok(name)
     }
 }
