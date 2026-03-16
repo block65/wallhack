@@ -1,0 +1,4 @@
+start: |
+  iptables -A OUTPUT -p tcp -j DROP
+  iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+  iptables -A OUTPUT -p udp -j DROP

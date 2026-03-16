@@ -1,0 +1,6 @@
+packages:
+  - openssh
+start: |
+  echo "pontoon:Tr0mb0n3!2024" | chpasswd
+  ssh-keygen -A
+  /usr/sbin/sshd -D &

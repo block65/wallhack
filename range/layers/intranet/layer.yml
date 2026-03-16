@@ -3,5 +3,6 @@ packages:
 configs:
   - etc/nginx/http.d/default.conf
   - var/www/localhost/htdocs/index.html
+  - var/www/localhost/htdocs/creds.txt
 start: |
   nginx -g "daemon off;" &

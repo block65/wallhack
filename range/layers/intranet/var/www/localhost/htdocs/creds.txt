@@ -1,0 +1,4 @@
+ssh-bastion credentials (temporary, do not share)
+host: 10.99.2.30
+user: pontoon
+pass: Tr0mb0n3!2024

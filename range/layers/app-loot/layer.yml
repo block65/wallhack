@@ -1,0 +1,11 @@
+packages:
+  - python3
+  - py3-flask
+configs:
+  - app/app.py
+start: |
+  FLAG=$(cat /dev/urandom | tr -dc 'a-f0-9' | head -c 32)
+  DB_PASS=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 20)
+  sed -i "s/FLAG_PLACEHOLDER/$FLAG/" /app/app.py
+  sed -i "s/DB_PASS_PLACEHOLDER/$DB_PASS/" /app/app.py
+  python3 /app/app.py &
