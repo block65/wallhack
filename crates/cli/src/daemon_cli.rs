@@ -454,7 +454,7 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
         dns_server: cli.dns.clone(),
         timeout: Duration::from_secs(cli.timeout),
         psk: resolve_psk(cli.psk.as_ref()).map(zeroize::Zeroizing::new),
-        version: wallhackd::version_string(Some(env!("CARGO_PKG_VERSION"))),
+        version: crate::version::version(),
     };
 
     let hint = resolve_hint(cli)?;

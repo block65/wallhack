@@ -1,10 +1,5 @@
 #![warn(unused_extern_crates)]
 
-pub mod built_info {
-    #![allow(clippy::needless_raw_string_hashes, clippy::doc_markdown)]
-    include!(concat!(env!("OUT_DIR"), "/built.rs"));
-}
-
 pub mod address_spec;
 pub mod daemon_config;
 pub mod dns;
@@ -49,27 +44,6 @@ use wallhack_core::{
 /// Starts the appropriate node, launches the IPC listener, and blocks
 /// until shutdown.
 ///
-/// # Errors
-///
-/// Returns [`NodeError`] for node failures.
-/// Build the canonical version string used everywhere: startup, IPC, handshake.
-///
-/// Format: `0.6.2 (abc1234-dirty, 2026-03-14T14:00:00Z)` or `0.6.2 (dev, ...)`.
-#[must_use]
-pub fn version_string(binary_version: Option<&str>) -> String {
-    let ver = binary_version.unwrap_or(built_info::PKG_VERSION);
-    let dirty = if built_info::GIT_DIRTY == Some(true) {
-        "-dirty"
-    } else {
-        ""
-    };
-    let ts = built_info::BUILT_TIME_UTC;
-    match built_info::GIT_COMMIT_HASH_SHORT {
-        Some(hash) => format!("{ver} ({hash}{dirty}, {ts})"),
-        None => format!("{ver} (dev{dirty}, {ts})"),
-    }
-}
-
 /// # Errors
 ///
 /// Returns [`NodeError`] if the node fails to start or the IPC listener errors.
