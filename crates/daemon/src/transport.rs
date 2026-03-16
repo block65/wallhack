@@ -107,44 +107,6 @@ where
     }
 }
 
-/// Bridge a peer connection's channels to source mpsc channels.
-///
-/// Forwards instructions from the peer to the source (fan-in: N peers → 1 source).
-/// Registers the peer's response sender with the fan-out task for the source.
-/// Holds the control channel sender alive for the lifetime of the bridged connection.
-///
-/// `fanout_register_tx` is a channel to the relay's fan-out task: each new
-/// peer sends its `responses_tx` there so the fan-out task can include it.
-pub(crate) fn bridge_channels(
-    peer_addr: &str,
-    peer_instructions_rx: mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
-    peer_responses_tx: mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
-    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    source_instr_tx: mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    fanout_register_tx: &mpsc::UnboundedSender<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>>,
-) {
-    tracing::debug!("Bridging peer connection: {peer_addr}");
-
-    // Register this peer's response sender with the fan-out task.
-    if fanout_register_tx.send(peer_responses_tx).is_err() {
-        tracing::warn!("Fan-out task closed, dropping peer {peer_addr}");
-        return;
-    }
-
-    // Forward peer instructions to source (fan-in).
-    // Also holds control_tx to keep the control stream alive.
-    let mut instructions_rx = peer_instructions_rx;
-    tokio::spawn(async move {
-        let _keep_alive = control_tx;
-        while let Some(instr) = instructions_rx.recv().await {
-            if source_instr_tx.send(instr).await.is_err() {
-                tracing::warn!("Source instruction channel closed");
-                break;
-            }
-        }
-    });
-}
-
 /// Bridge a relay exit-peer connection's channels to source mpsc channels.
 ///
 /// Registers the exit peer's instruction sender with the instruction fan-out
