@@ -1,6 +1,22 @@
 
 # Changelog
 
+## [0.8.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.7.0...wallhack-cli-v0.8.0) (2026-03-16)
+
+### Features
+
+* **cli:** \--role alias for --fixed-role, git SHA in version, consolidate reconnect logs ([dd04dd8](https://github.com/block65/wallhack/commit/dd04dd88fb320d8732ee1a520fad42b790462509))
+* **peers:** auto-ping on connect, fix display state, relay role, TUN cleanup, --json output ([5b68528](https://github.com/block65/wallhack/commit/5b685287618d3daceca40dced2847f2758eeaa9d))
+
+### Bug Fixes
+
+* **cli:** remove --fixed-role alias, rename FixedRole* error variants (#70) ([ac97d4a](https://github.com/block65/wallhack/commit/ac97d4ad9bbcc8104cbcc1554c2703f03ea2fe6f))
+* **peers:** serde_json for --json output, drop side field, remote_addr display label ([69bf610](https://github.com/block65/wallhack/commit/69bf610ba807694fcdacd57dd6b009cf63c9c62b))
+* **relay:** retain control_tx across relay session lifetime, register bridged peers ([d328144](https://github.com/block65/wallhack/commit/d328144045ea815cc83017d69a0791a4935da30b))
+
+3 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.7.0...wallhack-cli-v0.8.0)
+
+
 ## [0.7.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.6.3...wallhack-cli-v0.7.0) (2026-03-15)
 
 ### Features

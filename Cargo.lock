@@ -3609,7 +3609,7 @@ dependencies = [
 
 [[package]]
 name = "wallhack-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "argh",
  "built",
@@ -3617,6 +3617,8 @@ dependencies = [
  "prost",
  "rand 0.9.2",
  "reedline",
+ "serde",
+ "serde_json",
  "tabwriter",
  "thiserror 2.0.18",
  "tokio",
