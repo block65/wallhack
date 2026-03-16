@@ -169,6 +169,7 @@ impl Client for QuicClient {
 
         // Create oneshot for receiving server's Handshake via the control loop.
         let (handshake_tx, handshake_rx) = tokio::sync::oneshot::channel::<Handshake>();
+        let (latency_tx, latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
 
         // Spawn control stream task
         let transport_ctrl = Arc::clone(&transport);
@@ -176,8 +177,8 @@ impl Client for QuicClient {
             let mut channels = protocol::ControlChannels {
                 outgoing_rx: control_rx,
                 handshake_tx: Some(handshake_tx), // receive server's Handshake
-                latency_tx: None,                 // pong handled inline
-                control_response_tx: None,        // no ControlResponse channel needed now
+                latency_tx: Some(latency_tx),
+                control_response_tx: None,
                 role_transition_tx: None,
             };
             match protocol::run_control_stream_initiator(
@@ -230,6 +231,7 @@ impl Client for QuicClient {
             tasks,
             control_tx,
             Some(handshake_rx),
+            Some(latency_rx),
         ))
     }
 

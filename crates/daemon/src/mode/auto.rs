@@ -259,17 +259,8 @@ async fn run_auto_connector(
                         let r = Arc::clone(&routes);
                         let ru = ru.resubscribe();
                         async move {
-                            let peer_handshake_rx = e.peer_handshake_rx;
-                            let transport = e.transport;
-                            let channels = e.channels;
-                            let tasks = e.tasks;
-                            let control_tx = e.control_tx;
                             run_auto_connect_session_dispatch(
-                                peer_handshake_rx,
-                                transport,
-                                channels,
-                                tasks,
-                                control_tx,
+                                e,
                                 &lhs,
                                 &pa,
                                 metrics,
@@ -319,17 +310,8 @@ async fn run_auto_connector(
                         let r = Arc::clone(&routes);
                         let ru = ru.resubscribe();
                         async move {
-                            let peer_handshake_rx = e.peer_handshake_rx;
-                            let transport = e.transport;
-                            let channels = e.channels;
-                            let tasks = e.tasks;
-                            let control_tx = e.control_tx;
                             run_auto_connect_session_dispatch(
-                                peer_handshake_rx,
-                                transport,
-                                channels,
-                                tasks,
-                                control_tx,
+                                e,
                                 &lhs,
                                 &pa,
                                 metrics,
@@ -354,11 +336,7 @@ async fn run_auto_connector(
 /// Non-generic auto-connector dispatch: negotiates role and runs the session.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_connect_session_dispatch(
-    peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<Handshake>>,
-    transport: Arc<dyn ErasedTransport>,
-    channels: DataChannels,
-    tasks: wallhack_core::client::client::ConnectionTasks,
-    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    connect_result: wallhack_core::client::client::ErasedConnectResult,
     local_hs: &Handshake,
     peer_addr: &str,
     metrics: Arc<Metrics>,
@@ -369,6 +347,16 @@ async fn run_auto_connect_session_dispatch(
         tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     >,
 ) -> Result<(), NodeError> {
+    let wallhack_core::client::client::ErasedConnectResult {
+        peer_handshake_rx,
+        transport,
+        channels,
+        tasks,
+        control_tx,
+        peer_addr: _,
+        latency_rx,
+    } = connect_result;
+
     let DataChannels {
         instructions_tx,
         instructions_rx,
@@ -435,6 +423,8 @@ async fn run_auto_connect_session_dispatch(
                 &metrics,
                 peer_addr,
                 Some(peer_name),
+                Some(Arc::clone(&peers)),
+                latency_rx,
                 routes,
                 route_updates,
             )

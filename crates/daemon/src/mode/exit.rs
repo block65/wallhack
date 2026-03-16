@@ -416,9 +416,13 @@ async fn run_exit_loop_inner(
 
     tracing::info!("Connected to {peer_addr}");
 
-    // Resolve the peer's handshake name (delivered asynchronously via the
+    // Resolve the peer's handshake (delivered asynchronously via the
     // control loop). Fall back to the address if unavailable.
-    let peer_name = resolve_peer_name(peer_handshake_rx, peer_addr).await;
+    let peer_handshake = resolve_peer_handshake(peer_handshake_rx).await;
+    let peer_name = peer_handshake
+        .as_ref()
+        .filter(|h| !h.name.is_empty())
+        .map_or_else(|| peer_addr.to_string(), |h| h.name.clone());
 
     // We connected to the entry peer, so side=Connect.
     ctx.peers.register(
@@ -427,6 +431,14 @@ async fn run_exit_loop_inner(
         NodeRole::Entry,
         ConnectionSide::Connect,
     );
+
+    // Apply the peer's advertised capabilities from the handshake.
+    let peer_capabilities = peer_handshake
+        .as_ref()
+        .and_then(|h| h.capabilities)
+        .unwrap_or_default();
+    ctx.peers
+        .update_capabilities(&peer_name, &peer_capabilities);
 
     // Outgoing: open uni stream to entry peer, send responses.
     let transport_out = Arc::clone(&transport);
@@ -475,20 +487,18 @@ async fn run_exit_loop_inner(
     Ok(())
 }
 
-/// Await the peer's handshake name from a oneshot receiver (with timeout).
+/// Await the peer's handshake from a oneshot receiver (with timeout).
 ///
-/// Returns the handshake name if non-empty, otherwise falls back to the
-/// peer address.
-async fn resolve_peer_name(
+/// Returns the received `Handshake` if available within the timeout, or
+/// `None` if the receiver is absent, the sender dropped, or the timeout
+/// expires.
+async fn resolve_peer_handshake(
     rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
-    peer_addr: &str,
-) -> String {
-    let Some(rx) = rx else {
-        return peer_addr.to_string();
-    };
+) -> Option<wallhack_wire::data::Handshake> {
+    let rx = rx?;
     match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
-        Ok(Ok(hs)) if !hs.name.is_empty() => hs.name,
-        _ => peer_addr.to_string(),
+        Ok(Ok(hs)) => Some(hs),
+        _ => None,
     }
 }
 

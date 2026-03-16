@@ -107,38 +107,44 @@ where
     }
 }
 
-/// Bridge a peer connection's channels to source mpsc channels.
+/// Bridge a relay exit-peer connection's channels to source mpsc channels.
 ///
-/// Forwards instructions from the peer to the source (fan-in: N peers → 1 source).
-/// Registers the peer's response sender with the fan-out task for the source.
-/// Holds the control channel sender alive for the lifetime of the bridged connection.
+/// Registers the exit peer's instruction sender with the instruction fan-out
+/// so it receives instructions from the entry. Spawns a task that reads
+/// responses from the exit peer and forwards them to the entry via
+/// `source_resp_tx` (fan-in: N exits → 1 entry). Holds `control_tx` alive
+/// for the lifetime of the bridged connection.
 ///
-/// `fanout_register_tx` is a channel to the relay's fan-out task: each new
-/// peer sends its `responses_tx` there so the fan-out task can include it.
-pub(crate) fn bridge_channels(
+/// `fanout_register_tx` is the registration channel for the instruction
+/// fan-out task; sending a `Sender<EntryNodeInstruction>` enrolls the exit
+/// peer to receive instructions forwarded from the entry.
+pub(crate) fn relay_bridge_channels(
     peer_addr: &str,
-    peer_instructions_rx: mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
-    peer_responses_tx: mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+    peer_instructions_tx: mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    peer_responses_rx: mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    source_instr_tx: mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
-    fanout_register_tx: &mpsc::UnboundedSender<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>>,
+    source_resp_tx: mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
+    fanout_register_tx: &mpsc::UnboundedSender<
+        mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
+    >,
 ) {
-    tracing::debug!("Bridging peer connection: {peer_addr}");
+    tracing::debug!("Bridging relay exit-peer connection: {peer_addr}");
 
-    // Register this peer's response sender with the fan-out task.
-    if fanout_register_tx.send(peer_responses_tx).is_err() {
-        tracing::warn!("Fan-out task closed, dropping peer {peer_addr}");
+    // Enroll this exit peer in the instruction fan-out so it receives
+    // instructions forwarded from the entry.
+    if fanout_register_tx.send(peer_instructions_tx).is_err() {
+        tracing::warn!("Instruction fan-out task closed, dropping exit peer {peer_addr}");
         return;
     }
 
-    // Forward peer instructions to source (fan-in).
+    // Forward exit-peer responses to the entry (fan-in).
     // Also holds control_tx to keep the control stream alive.
-    let mut instructions_rx = peer_instructions_rx;
+    let mut responses_rx = peer_responses_rx;
     tokio::spawn(async move {
         let _keep_alive = control_tx;
-        while let Some(instr) = instructions_rx.recv().await {
-            if source_instr_tx.send(instr).await.is_err() {
-                tracing::warn!("Source instruction channel closed");
+        while let Some(resp) = responses_rx.recv().await {
+            if source_resp_tx.send(resp).await.is_err() {
+                tracing::warn!("Source response channel closed");
                 break;
             }
         }
@@ -147,18 +153,20 @@ pub(crate) fn bridge_channels(
 
 /// Spawn the relay fan-out task for a source connection.
 ///
-/// The fan-out task reads responses from `source_resp_rx` and forwards each
-/// to all currently-registered peer response senders. Returns a registration
-/// channel: callers send a new `mpsc::Sender` for each peer that connects.
-pub(crate) fn spawn_fanout_task(
-    source_resp_rx: mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
-) -> mpsc::UnboundedSender<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>> {
-    let (register_tx, mut register_rx) =
-        mpsc::unbounded_channel::<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>>();
+/// The fan-out task reads items from `source_rx` and forwards a clone of each
+/// to all currently-registered peer senders. Returns a registration channel:
+/// callers send a new `mpsc::Sender<T>` for each peer that connects.
+pub(crate) fn spawn_fanout_task<T>(
+    source_rx: mpsc::Receiver<T>,
+) -> mpsc::UnboundedSender<mpsc::Sender<T>>
+where
+    T: Clone + Send + 'static,
+{
+    let (register_tx, mut register_rx) = mpsc::unbounded_channel::<mpsc::Sender<T>>();
 
     tokio::spawn(async move {
-        let mut peers: Vec<mpsc::Sender<wallhack_wire::data::ExitNodeResponse>> = Vec::new();
-        let mut source_resp_rx = source_resp_rx;
+        let mut peers: Vec<mpsc::Sender<T>> = Vec::new();
+        let mut source_rx = source_rx;
 
         loop {
             tokio::select! {
@@ -166,17 +174,17 @@ pub(crate) fn spawn_fanout_task(
                 Some(peer_tx) = register_rx.recv() => {
                     peers.push(peer_tx);
                 }
-                // Response from source
-                result = source_resp_rx.recv() => {
-                    let Some(resp) = result else {
-                        tracing::debug!("Source response channel closed, fan-out task exiting");
+                // Item from source
+                result = source_rx.recv() => {
+                    let Some(item) = result else {
+                        tracing::debug!("Source channel closed, fan-out task exiting");
                         break;
                     };
                     peers.retain(|tx| {
-                        match tx.try_send(resp.clone()) {
+                        match tx.try_send(item.clone()) {
                             Ok(()) => true,
                             Err(mpsc::error::TrySendError::Full(_)) => {
-                                tracing::warn!("Fan-out: peer channel full, dropping response");
+                                tracing::warn!("Fan-out: peer channel full, dropping item");
                                 true
                             }
                             Err(mpsc::error::TrySendError::Closed(_)) => false,
