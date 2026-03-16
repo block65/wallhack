@@ -16,7 +16,7 @@ wallhack-ipc = { path = "../ipc", features = ["vsock"] }
 wallhack-wire = { path = "../wire" }
 
 [build-dependencies]
-vergen-gitcl = { version = "9.1", features = ["build", "cargo"] }
+vergen-gitcl = { version = "9.1", features = ["build"] }
 
 [lints.rust]
 unsafe_code = "deny"

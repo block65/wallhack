@@ -1,4 +1,4 @@
-use vergen_gitcl::{BuildBuilder, CargoBuilder, Emitter, GitclBuilder};
+use vergen_gitcl::{BuildBuilder, Emitter, GitclBuilder};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
@@ -8,7 +8,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Emitter::default()
         .add_instructions(&BuildBuilder::default().build_timestamp(true).build()?)?
         .add_instructions(&GitclBuilder::default().sha(true).dirty(true).build()?)?
-        .add_instructions(&CargoBuilder::default().target_triple(true).build()?)?
         .emit()?;
     Ok(())
 }
