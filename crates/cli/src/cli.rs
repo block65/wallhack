@@ -56,7 +56,11 @@ pub struct StatsCmd {}
 /// List connected peers.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "peers")]
-pub struct PeersCmd {}
+pub struct PeersCmd {
+    /// output as JSON
+    #[argh(switch, short = 'j')]
+    pub json: bool,
+}
 
 /// Manage routes.
 #[derive(FromArgs, Debug)]

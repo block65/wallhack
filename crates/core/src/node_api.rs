@@ -39,6 +39,8 @@ pub struct PeerInfo {
     pub role: NodeRole,
     /// Advertised capabilities from the handshake.
     pub capabilities: Capabilities,
+    /// Which side initiated the connection.
+    pub side: crate::control::peers::ConnectionSide,
     /// Connection status.
     pub status: PeerStatus,
     /// When the peer connected (seconds since epoch).
@@ -47,6 +49,8 @@ pub struct PeerInfo {
     pub bytes_transferred: u64,
     /// Latest measured latency in milliseconds.
     pub latency_ms: Option<f64>,
+    /// TUN interface name for this peer (entry-side only, `None` otherwise).
+    pub tun_name: Option<String>,
 }
 
 /// Route table entry mapping CIDR to peer.

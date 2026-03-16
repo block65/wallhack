@@ -32,3 +32,13 @@ impl fmt::Display for PeerStatus {
         }
     }
 }
+
+impl fmt::Display for ConnectionSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Accept => f.write_str("accept"),
+            Self::Connect => f.write_str("connect"),
+            Self::Unspecified => f.write_str("unknown"),
+        }
+    }
+}

@@ -30,7 +30,7 @@ use crate::{
     address_spec::{AddressSpec, ConnectivitySpec, Protocol},
     config::SecurityParams,
     daemon_config::{EntryConfig, GlobalConfig},
-    netlink::{add_os_route, remove_os_route},
+    netlink::{add_os_route, delete_tun, remove_os_route},
 };
 
 /// Derive a stable, unique TUN interface name from a peer name.
@@ -441,7 +441,7 @@ pub(crate) async fn run_entry_connected_erased(
         transport,
         channels,
         tasks: _tasks,
-        control_tx: _control_tx,
+        control_tx,
         peer_addr: _,
     } = connect_result;
 
@@ -474,6 +474,7 @@ pub(crate) async fn run_entry_connected_erased(
         instructions_tx,
         instructions_rx,
         responses_rx,
+        control_tx,
         metrics,
         peer_addr,
         peer_name.as_deref(),
@@ -490,6 +491,7 @@ pub(crate) async fn run_entry_connected_inner(
     instructions_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
     responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     metrics: &Arc<Metrics>,
     peer_addr: &str,
     peer_name: Option<&str>,
@@ -567,6 +569,11 @@ pub(crate) async fn run_entry_connected_inner(
         responses_rx,
     );
 
+    // Fire an initial ping so latency is populated immediately after connect.
+    if let Err(e) = send_ping(&control_tx).await {
+        tracing::debug!("Initial ping failed: {e}");
+    }
+
     let manager_handle = tokio::spawn(async move { manager.run().await });
 
     match manager_handle.await {
@@ -574,6 +581,9 @@ pub(crate) async fn run_entry_connected_inner(
         Ok(Err(e)) => tracing::warn!("Connection error: {e}"),
         Err(e) => tracing::warn!("Connection task failed: {e}"),
     }
+
+    // Best-effort TUN cleanup after disconnect.
+    delete_tun(&name);
 
     Ok(())
 }
@@ -652,7 +662,12 @@ where
                 let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
 
                 // Register peer in the registry and apply handshake capabilities.
-                conn_peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
+                conn_peers.register(
+                    peer_name.clone(),
+                    peer_addr.clone(),
+                    identity.role,
+                    wallhack_core::control::peers::ConnectionSide::Accept,
+                );
                 conn_peers.update_capabilities(&peer_name, &identity.capabilities);
 
                 // Create ping channel for this peer
@@ -737,10 +752,24 @@ struct ConnectionParams {
     peer_addr: String,
 }
 
-/// Validated handshake result containing the peer's name and capabilities.
+/// Validated handshake result containing the peer's name, capabilities, and role.
 struct PeerIdentity {
     name: Option<String>,
     capabilities: wallhack_wire::data::Capabilities,
+    /// Role inferred from the peer's advertised capabilities.
+    role: NodeRole,
+}
+
+/// Derive the peer's role from its advertised capabilities.
+///
+/// A peer that both listens and connects is a relay; otherwise it is an exit
+/// node (entry nodes do not connect to other entry nodes in this topology).
+fn role_from_capabilities(caps: wallhack_wire::data::Capabilities) -> NodeRole {
+    if caps.listening && caps.connecting {
+        NodeRole::Relay
+    } else {
+        NodeRole::Exit
+    }
 }
 
 /// Validate the peer's handshake (PSK proof + identity) for generic `AcceptResult`.
@@ -754,6 +783,7 @@ fn validate_handshake<T: wallhack_core::transport::Transport>(
         return Ok(PeerIdentity {
             name: None,
             capabilities: wallhack_wire::data::Capabilities::default(),
+            role: NodeRole::Exit,
         });
     };
 
@@ -767,18 +797,25 @@ fn validate_handshake<T: wallhack_core::transport::Transport>(
     }
 
     let capabilities = hs.capabilities.unwrap_or_default();
+    let role = role_from_capabilities(capabilities);
 
     if hs.name.is_empty() {
         tracing::debug!("Peer identified with empty name (v{})", hs.version);
         Ok(PeerIdentity {
             name: None,
             capabilities,
+            role,
         })
     } else {
-        tracing::debug!("Peer {} identified (v{})", hs.name, hs.version);
+        tracing::debug!(
+            "Peer {} identified (v{}) role={role:?}",
+            hs.name,
+            hs.version
+        );
         Ok(PeerIdentity {
             name: Some(hs.name),
             capabilities,
+            role,
         })
     }
 }
@@ -969,6 +1006,11 @@ impl ConnectionParams {
         let peer_display = peer.as_deref().unwrap_or(&peer_addr);
         tracing::info!("Peer connected: name={peer_display} addr={peer_addr} tun={name}");
 
+        // Record the TUN name in the registry so it is visible via `wallhack peers`.
+        if let Some(ref peer_name) = peer {
+            peers.set_tun_name(peer_name, &name);
+        }
+
         let (manager, _probe_cache) = ConnectionManager::new(
             actor,
             Arc::clone(&transport),
@@ -990,12 +1032,15 @@ impl ConnectionParams {
         )
         .await?;
 
+        // Best-effort TUN cleanup after disconnect.
+        delete_tun(&name);
+
         Ok(name)
     }
 }
 
 /// Inject a Ping message into the control stream.
-async fn send_ping(
+pub(crate) async fn send_ping(
     control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
 ) -> Result<(), NodeError> {
     use wallhack_wire::control::{ControlMessage, control_message};

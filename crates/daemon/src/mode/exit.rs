@@ -10,7 +10,11 @@ use tokio::io::AsyncWriteExt;
 
 use wallhack_core::{
     NodeRole,
-    control::{handler::SharedNodeState, metrics::Metrics, peers::Registry},
+    control::{
+        handler::SharedNodeState,
+        metrics::Metrics,
+        peers::{ConnectionSide, Registry},
+    },
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
     server::server::Server,
     transport::{
@@ -312,8 +316,13 @@ where
                     .filter(|h| !h.name.is_empty())
                     .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
                 tracing::info!("Peer connected: name={peer_name} addr={peer_addr}");
-                ctx.peers
-                    .register(peer_name.clone(), peer_addr, NodeRole::Entry);
+                // The entry peer connected to us (we accepted), so side=Accept.
+                ctx.peers.register(
+                    peer_name.clone(),
+                    peer_addr,
+                    NodeRole::Entry,
+                    ConnectionSide::Accept,
+                );
 
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
                 let adapter = SyscallExitAdapter::new();
@@ -411,8 +420,13 @@ async fn run_exit_loop_inner(
     // control loop). Fall back to the address if unavailable.
     let peer_name = resolve_peer_name(peer_handshake_rx, peer_addr).await;
 
-    ctx.peers
-        .register(peer_name.clone(), peer_addr.to_string(), NodeRole::Entry);
+    // We connected to the entry peer, so side=Connect.
+    ctx.peers.register(
+        peer_name.clone(),
+        peer_addr.to_string(),
+        NodeRole::Entry,
+        ConnectionSide::Connect,
+    );
 
     // Outgoing: open uni stream to entry peer, send responses.
     let transport_out = Arc::clone(&transport);

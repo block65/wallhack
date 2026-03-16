@@ -16,7 +16,10 @@ use std::{sync::Arc, time::Duration};
 use wallhack_core::{
     NodeRole,
     control::{
-        handler::SharedNodeState, metrics::Metrics, peers::Registry, routes::SharedRouteTable,
+        handler::SharedNodeState,
+        metrics::Metrics,
+        peers::{ConnectionSide, Registry},
+        routes::SharedRouteTable,
     },
     entry::manager::ConnectionManager,
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
@@ -423,12 +426,12 @@ async fn run_auto_connect_session_dispatch(
             }
 
             drop(tasks);
-            drop(control_tx);
             let result = super::entry::run_entry_connected_inner(
                 transport,
                 instructions_tx,
                 instructions_rx,
                 responses_rx,
+                control_tx,
                 &metrics,
                 peer_addr,
                 Some(peer_name),
@@ -537,6 +540,7 @@ async fn run_auto_exit_session_inner(
         peer_name.to_string(),
         peer_addr.to_string(),
         NodeRole::Entry,
+        ConnectionSide::Connect,
     );
 
     let adapter = SyscallExitAdapter::new();
@@ -914,13 +918,31 @@ async fn run_auto_accept_session_inner(
                 instructions_tx,
                 responses_rx,
             );
-            let _keep_alive = control_tx;
+            let keep_alive = control_tx;
             let peer_name = if peer_hs.name.is_empty() {
                 peer_addr.clone()
             } else {
                 peer_hs.name.clone()
             };
-            peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Exit);
+            // The peer connected to us (we accepted), so side=Accept.
+            // The peer is an exit/relay node — use role from their handshake capabilities.
+            let peer_caps = peer_hs.capabilities.as_ref();
+            let peer_role = if peer_caps.is_some_and(|c| c.listening && c.connecting) {
+                NodeRole::Relay
+            } else {
+                NodeRole::Exit
+            };
+            peers.register(
+                peer_name.clone(),
+                peer_addr.clone(),
+                peer_role,
+                ConnectionSide::Accept,
+            );
+
+            // Fire an initial ping so latency is populated immediately after accept.
+            if let Err(e) = super::entry::send_ping(&keep_alive).await {
+                tracing::debug!("Auto accept initial ping failed: {e}");
+            }
 
             let handle = tokio::spawn(async move { manager.run().await });
             match handle.await {
@@ -929,6 +951,9 @@ async fn run_auto_accept_session_inner(
                 Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
             }
             peers.unregister(&peer_name);
+
+            // Best-effort TUN cleanup after disconnect.
+            crate::netlink::delete_tun(&tun_name);
 
             // Remove auto-managed routes and their OS entries now that the
             // session has ended.
@@ -987,7 +1012,14 @@ async fn run_auto_accept_session_inner(
             } else {
                 peer_hs.name.clone()
             };
-            peers.register(peer_name.clone(), peer_addr.clone(), NodeRole::Entry);
+            // The peer connected to us (we accepted), so side=Accept.
+            // We are exit, so the peer that connected is entry.
+            peers.register(
+                peer_name.clone(),
+                peer_addr.clone(),
+                NodeRole::Entry,
+                ConnectionSide::Accept,
+            );
 
             let adapter = SyscallExitAdapter::new();
             let _reaper = adapter.start_reaper(

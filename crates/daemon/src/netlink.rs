@@ -162,6 +162,31 @@ pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
     }
 }
 
+/// Delete a TUN interface by name via `ip link delete`.
+///
+/// Best-effort: errors are logged but not propagated. Used for cleanup
+/// when a peer disconnects so stale TUN interfaces do not accumulate.
+pub(crate) fn delete_tun(name: &str) {
+    match std::process::Command::new("ip")
+        .args(["link", "delete", name])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            tracing::debug!("Deleted TUN interface {name}");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // "Cannot find device" means it was already gone — not an error.
+            if !stderr.contains("Cannot find device") {
+                tracing::warn!("Failed to delete TUN {name}: {stderr}");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to run 'ip link delete {name}': {e}");
+        }
+    }
+}
+
 /// Enumerate non-loopback, globally-routable CIDRs on local interfaces.
 ///
 /// Queries the kernel via `RTM_GETADDR` and returns network addresses in CIDR
