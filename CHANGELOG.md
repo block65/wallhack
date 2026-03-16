@@ -1,6 +1,17 @@
 
 # Changelog
 
+## [0.8.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.0...wallhack-cli-v0.8.1) (2026-03-16)
+
+### Bug Fixes
+
+* **relay:** correct data plane wiring and fix multiple peer management bugs ([b2f157f](https://github.com/block65/wallhack/commit/b2f157f6869afd8af5899f357478a477cfa2068f))
+* **relay:** remove unused bridge_channels to fix slim dead-code error ([7a3b309](https://github.com/block65/wallhack/commit/7a3b30919a1fc421e51c8a556cb12774ab4212c9))
+* **version:** restore semver+build-metadata format with seconds (#77) ([65111e5](https://github.com/block65/wallhack/commit/65111e559234401f23eabd0789bec0300e8d3c80))
+
+1 other change — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.0...wallhack-cli-v0.8.1)
+
+
 ## [0.8.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.7.0...wallhack-cli-v0.8.0) (2026-03-16)
 
 ### Features
