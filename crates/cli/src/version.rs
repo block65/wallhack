@@ -8,10 +8,24 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-/// Return short version string
+/// Return short version string with git SHA and build timestamp.
+///
+/// Format: `wallhack 0.7.0 (a1b2c3d, 2026-03-14T14:00:00Z)` or
+/// `wallhack 0.7.0 (dev, 2026-03-14T14:00:00Z)` when no git info is available.
 #[must_use]
 pub fn version_short() -> String {
-    format!("{} {}", built_info::PKG_NAME, built_info::PKG_VERSION)
+    let ver = built_info::PKG_VERSION;
+    let dirty = if built_info::GIT_DIRTY == Some(true) {
+        "-dirty"
+    } else {
+        ""
+    };
+    let ts = built_info::BUILT_TIME_UTC;
+    let meta = match built_info::GIT_COMMIT_HASH_SHORT {
+        Some(hash) => format!("{hash}{dirty}, {ts}"),
+        None => format!("dev{dirty}, {ts}"),
+    };
+    format!("{} {} ({meta})", built_info::PKG_NAME, ver)
 }
 
 /// Return full version information with build metadata.

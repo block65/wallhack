@@ -90,6 +90,10 @@ pub struct WallhackCli {
 
     /// fix the role during auto-negotiation (entry, exit, relay)
     #[argh(option)]
+    pub role: Option<String>,
+
+    /// fix the role during auto-negotiation (entry, exit, relay) — use --role instead
+    #[argh(option)]
     pub fixed_role: Option<String>,
 
     /// verbose output
@@ -293,14 +297,14 @@ pub struct CliError {
 /// Configuration build error.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ConfigError {
-    #[error("--prefer, --exclude-role, and --fixed-role are mutually exclusive")]
+    #[error("--prefer, --exclude-role, and --role are mutually exclusive")]
     HintFlagsConflict,
-    #[error("--fixed-role entry requires TUN capability (CAP_NET_ADMIN)")]
+    #[error("--role entry requires TUN capability (CAP_NET_ADMIN)")]
     FixedRoleEntryRequiresTun,
-    #[error("--fixed-role relay requires both --connect and --listen")]
+    #[error("--role relay requires both --connect and --listen")]
     FixedRoleRelayRequiresConnectAndListen,
     #[error(
-        "--prefer, --exclude-role, and --fixed-role are only valid in auto-negotiation mode (without a subcommand)"
+        "--prefer, --exclude-role, and --role are only valid in auto-negotiation mode (without a subcommand)"
     )]
     HintRequiresAutoMode,
     #[error("invalid role '{0}': expected 'entry', 'exit', or 'relay'")]
@@ -362,10 +366,12 @@ fn parse_role(s: &str) -> Result<ProtoNodeRole, ConfigError> {
 
 /// Build a `RoleHint` from the mutually-exclusive hint CLI flags.
 fn resolve_hint(cli: &WallhackCli) -> Result<Option<RoleHint>, ConfigError> {
+    // --role and --fixed-role are aliases; both set a Fixed hint.
+    let fixed_role = cli.role.as_deref().or(cli.fixed_role.as_deref());
     let hints: Vec<_> = [
         cli.prefer.as_deref().map(|s| (HintLevel::Prefer, s)),
         cli.exclude_role.as_deref().map(|s| (HintLevel::Exclude, s)),
-        cli.fixed_role.as_deref().map(|s| (HintLevel::Fixed, s)),
+        fixed_role.map(|s| (HintLevel::Fixed, s)),
     ]
     .into_iter()
     .flatten()
@@ -607,15 +613,7 @@ mod tests {
 
     #[test]
     fn mutually_exclusive_hint_flags() {
-        let c = cli(&[
-            "--prefer",
-            "entry",
-            "--fixed-role",
-            "exit",
-            "--listen",
-            ":6565",
-        ])
-        .unwrap();
+        let c = cli(&["--prefer", "entry", "--role", "exit", "--listen", ":6565"]).unwrap();
         assert_eq!(
             build_daemon_config(&c).unwrap_err(),
             ConfigError::HintFlagsConflict
@@ -626,7 +624,7 @@ mod tests {
     fn fixed_role_entry_requires_tun() {
         // Only testable on machines without CAP_NET_ADMIN.
         if !wallhackd::detect_tun_capable() {
-            let c = cli(&["--fixed-role", "entry", "--listen", ":6565"]).unwrap();
+            let c = cli(&["--role", "entry", "--listen", ":6565"]).unwrap();
             assert_eq!(
                 build_daemon_config(&c).unwrap_err(),
                 ConfigError::FixedRoleEntryRequiresTun
@@ -636,11 +634,29 @@ mod tests {
 
     #[test]
     fn fixed_role_relay_requires_connect_and_listen() {
-        let c = cli(&["--fixed-role", "relay", "--listen", ":6565"]).unwrap();
+        let c = cli(&["--role", "relay", "--listen", ":6565"]).unwrap();
         assert_eq!(
             build_daemon_config(&c).unwrap_err(),
             ConfigError::FixedRoleRelayRequiresConnectAndListen
         );
+    }
+
+    #[test]
+    fn fixed_role_alias_behaves_identically_to_role() {
+        let c_role = cli(&["--role", "exit", "--listen", ":6565"]).unwrap();
+        let c_alias = cli(&["--fixed-role", "exit", "--listen", ":6565"]).unwrap();
+        let config_role = build_daemon_config(&c_role).unwrap();
+        let config_alias = build_daemon_config(&c_alias).unwrap();
+        // Both should produce Auto mode with a Fixed/Exit hint.
+        match (&config_role.mode, &config_alias.mode) {
+            (ModeConfig::Auto(a), ModeConfig::Auto(b)) => {
+                assert_eq!(
+                    a.hint, b.hint,
+                    "--role and --fixed-role should produce identical hints"
+                );
+            }
+            _ => panic!("expected Auto mode for both"),
+        }
     }
 
     #[test]
