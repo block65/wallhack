@@ -1,0 +1,6 @@
+http_proxy=http://corp-proxy:3128
+https_proxy=http://corp-proxy:3128
+HTTP_PROXY=http://corp-proxy:3128
+HTTPS_PROXY=http://corp-proxy:3128
+no_proxy=localhost,127.0.0.1
+NO_PROXY=localhost,127.0.0.1

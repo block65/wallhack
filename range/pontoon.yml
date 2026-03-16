@@ -23,6 +23,9 @@ networks:
   vault:
     subnet: 10.99.5.0/24
     internal: true
+  proxy-vault:
+    subnet: 10.99.6.0/24
+    internal: true
 
 services:
   # ===========================================================================
@@ -30,7 +33,7 @@ services:
   # ===========================================================================
 
   attacker:
-    memory: 256m
+    memory: 512m
     cpus: 2
     layers:
       - base
@@ -51,6 +54,7 @@ services:
     layers:
       - base
       - wallhack
+      - perimeter-gw
     networks:
       perimeter:
         ipv4_address: 10.99.1.10
@@ -96,6 +100,8 @@ services:
     networks:
       perimeter:
         ipv4_address: 10.99.1.50
+      proxy-vault:
+        ipv4_address: 10.99.6.2
     kernel_args:
       svc.start: squid
 
@@ -132,6 +138,7 @@ services:
     cpus: 1
     layers:
       - base
+      - proxy-env
       - samba
     networks:
       office:
@@ -145,6 +152,7 @@ services:
     cpus: 1
     layers:
       - base
+      - proxy-env
       - intranet
     networks:
       office:
@@ -156,8 +164,10 @@ services:
   ssh-server:
     memory: 128m
     cpus: 1
+    deny_root: true
     layers:
       - base
+      - proxy-env
       - ssh-hardened
     networks:
       office:
@@ -171,6 +181,7 @@ services:
     cpus: 1
     layers:
       - base
+      - proxy-env
       - app-printer
     networks:
       office:
@@ -321,3 +332,22 @@ services:
         gateway: 10.99.5.2
     kernel_args:
       svc.start: app-gold
+
+  # ===========================================================================
+  # PROXY-VAULT 10.99.6.0/24 — hard mode: only reachable via proxy tunnel
+  # ===========================================================================
+
+  platinum:
+    memory: 128m
+    cpus: 1
+    deny_root: true
+    deny_cp: true
+    layers:
+      - base
+      - app-platinum
+    networks:
+      proxy-vault:
+        ipv4_address: 10.99.6.100
+        gateway: 10.99.6.2
+    kernel_args:
+      svc.start: app-platinum

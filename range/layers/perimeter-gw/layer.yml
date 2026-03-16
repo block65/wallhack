@@ -1,0 +1,2 @@
+start: |
+  ip route add 10.99.6.0/24 via 10.99.1.50

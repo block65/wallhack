@@ -1,0 +1,4 @@
+configs:
+  - etc/environment
+start: |
+  echo "10.99.1.50 corp-proxy" >> /etc/hosts
