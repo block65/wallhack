@@ -1,10 +1,5 @@
 //! MCP tool definitions — one per management protocol operation.
 
-mod built_info {
-    #![allow(clippy::needless_raw_string_hashes, clippy::doc_markdown)]
-    include!(concat!(env!("OUT_DIR"), "/built.rs"));
-}
-
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool};
 use wallhack_wire::management::{
     AddRouteRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest, ListenRequest,
@@ -174,23 +169,23 @@ impl WallhackServer {
 
 impl rmcp::ServerHandler for WallhackServer {
     fn get_info(&self) -> rmcp::model::ServerInfo {
-        let dirty = if built_info::GIT_DIRTY == Some(true) {
+        let sha = &env!("VERGEN_GIT_SHA")[..7];
+        let dirty = if env!("VERGEN_GIT_DIRTY") == "true" {
             "-dirty"
         } else {
             ""
         };
-        let version = match built_info::GIT_COMMIT_HASH_SHORT {
-            Some(hash) => format!(
-                "{} ({hash}{dirty}, built {})",
-                built_info::PKG_VERSION,
-                built_info::BUILT_TIME_UTC
-            ),
-            None => format!(
-                "{} (dev{dirty}, built {})",
-                built_info::PKG_VERSION,
-                built_info::BUILT_TIME_UTC
-            ),
-        };
+        let ts = env!("VERGEN_BUILD_TIMESTAMP");
+        let compact_ts = ts.get(..19).unwrap_or(ts).replace('-', "").replace(':', "");
+        let profile = env!("WALLHACK_BUILD_PROFILE");
+        let version = format!(
+            "{}+{}{}.{}.{}",
+            env!("CARGO_PKG_VERSION"),
+            sha,
+            dirty,
+            compact_ts,
+            profile
+        );
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()

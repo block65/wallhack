@@ -192,6 +192,17 @@
       has `proto_to_core_role()` even though `impl From<ProtoNodeRole> for
       NodeRole` already exists in `crates/core/src/types.rs`. Replace the free
       helper with `.into()` and remove the duplicate conversion logic.
+- [ ] **Field-threading anti-pattern** — six call sites thread individual fields
+      from `ErasedConnectResult`/`ErasedAcceptResult` instead of passing the
+      struct whole. The existing `ExitContext` in `exit.rs` is the correct
+      pattern to follow. Priority order (by param count reduction):
+      1. `auto::run_auto_accept_session_inner` 14 → ~3 (`ErasedAcceptResult` + `NodeResources` subset)
+      2. `auto::run_auto_connect_session_dispatch` 12 → ~3 (`ErasedConnectResult` + `NodeResources` subset)
+      3. `exit::run_exit_loop_inner` 9 → 3 (`ErasedConnectResult` + existing `ExitContext`)
+      4. `entry::run_entry_connected_inner` 9 → ~4 (or collapse via existing `run_entry_connected_erased`)
+      5. `relay::run_relay_loop_inner` 8 → ~3 (`ErasedConnectResult` + new `RelaySessionContext`)
+      6. `entry::start_api` 8 → ~3 (new `ApiStartParams` wrapping `ApiConfig` + shared resources)
+      Do after open PRs (#64/#65/#66) merge — those touch the same files.
 - [ ] `run_control_loop` parameter object — seven parameters (four of which are
       `Option<&Tx>`) in `crates/core/src/transport/bridge.rs`. Group the channel
       handles into a `ControlLoopHandles` struct to enforce all-or-nothing
@@ -254,6 +265,64 @@
 - [ ] Windows IPC not implemented — Unix socket only. A `TODO` comment in
       `crates/core/src/ipc.rs` notes the need for platform-agnostic named pipes.
       macOS works (Unix sockets).
+
+## Range UAT (2026-03-16)
+
+### Pontoon MCP / infrastructure findings
+
+- [ ] **`pontoon mcp` stale config** — MCP server snapshots `pontoon.yml` at startup; edits (e.g. memory bumps) are invisible until Claude Code is restarted. `mcp__pontoon__range_up` silently uses old values. Workaround: run `~/.local/bin/pontoon -f range/pontoon.yml down && up` from CLI after any `pontoon.yml` edit.
+- [ ] **MCP socket inode mismatch after `range_up`** — stale socket file from previous QEMU left on disk; new QEMU binds to a fresh inode, so filesystem path points to dead inode. `vm_exec` and `vm_console_stream` both return `Connection refused`. `lsof -p <qemu>` shows socket in LISTEN but connections refuse. Fix: CLI `pontoon down && up` fully clears `/tmp/pontoon/` state.
+- [ ] **`vm_exec_bg` wedges serial console** — long-running or hung commands (nmap to unreachable host, `vm_exec_bg`) consume the serial console; subsequent `vm_exec` calls time out. `vm_pkill` also times out. Only recovery is CLI `pontoon down && up`.
+- [ ] **`vm_restart` times out at 120 s** — reports failure but VM may actually be running; `range_status` shows it as alive with new PID while `vm_exec` refuses. Misleading. CLI restart is more reliable.
+- [ ] **Attacker VM memory was 256 m — OOM after ~5 min** — attacker, web-external, corp-proxy, corp-socks, ssh-server, gateway-datacenter, db-mariadb, gold, intranet, fileserver, printer all died. Fixed: bumped attacker to 512 m. Other small VMs (64–128 m) may still be marginal under load.
+- [x] ~~**`vm_exec` `cmd` vs `command` parameter**~~ — correct param is `command` (not `cmd`); documented.
+
+### Wallhack bugs confirmed in UAT
+
+- [ ] **Multi-hop pivot blocked by relay mode crash** — exit→relay pivot requires gateway-perimeter in relay mode (`--fixed-role relay --connect … --listen …`). Relay mode connects then immediately drops (`control_tx` dropped — see Bugs section above). Rapid reconnect then triggers TUN EBUSY storm on entry. Multi-hop pivot completely non-functional until relay mode is fixed.
+- [ ] **TUN EBUSY from relay reconnect storm** — gateway-perimeter relay crash caused ~10 rapid reconnects; each one found `wh7a66aeb7` busy. Required manual `ip link delete wh7a66aeb7` on attacker to recover. Auto-cleanup on disconnect (see Bugs) would prevent this.
+- [ ] **`punt!` TCP hang wedges console** — TCP to unreachable CIDR (10.99.3.x, 10.99.4.x, 10.99.5.x) blocks indefinitely (no RST). `nmap`/`nc` to mixed reachable+unreachable hosts hangs entire scan, wedging the pontoon console. **Never mix reachable and unreachable hosts in one nmap/nc call from attacker until punt! is fixed.**
+- [ ] **`latency=—` always** — no latency shown on any peer without manual `wallhack ping`. Auto-ping on connect needed (see Bugs section).
+- [ ] **`tun=false listen=false connect=false` with `status=connected`** — gateway-perimeter shows all capability flags false despite being a connected exit peer. Impossible/misleading state (see Bugs section).
+- [ ] **Relay peer role reported as `exit`** — confirmed: gateway-perimeter connecting as relay shows `role=exit` on entry side.
+
+### Wallhack UAT passes
+
+- [x] **Auto-route announcement** — gateway-perimeter announces `10.99.2.0/24` on connect; kernel route `10.99.2.0/24 dev wh7a66aeb7` auto-installed on attacker. ✓
+- [x] **`mcp__wallhack__status`** — role, version, uptime, listen addr, capabilities all correct. ✓
+- [x] **`mcp__wallhack__peers`** — shows connected peers with addr, role, status. ✓
+- [x] **`mcp__wallhack__routes`** — shows auto routes with peer name. ✓
+- [x] **Office network reachable via TUN** — nmap to 10.99.2.0/24 from attacker returns correct hosts/ports. ✓
+
+### Range recon (attacker → perimeter, direct)
+
+- Perimeter hosts found: 10.99.1.10 (gateway-perimeter), .21 (ftp/vsftpd 3.0.5), .50 (squid :3128), .51 (dante socks5 :1080), .80 (nginx :80)
+- web-external: HTML comment leaks `admin:admin123`
+- corp-proxy (squid): open relay, reaches office network but NOT datacenter
+- ftp-server: anonymous login untested (no `ftp` client on attacker)
+- `nmap --no-stylesheet` works; `nmap -sV` fails (nse_main.lua missing — **initrd not rebuilt after adding `nmap-scripts` to attacker layer**)
+- `curl` missing on attacker — **initrd not rebuilt after adding `curl` to attacker layer**
+- Need `pontoon build` to bake in curl + nmap-scripts
+
+### Range recon (attacker → office, via wallhack TUN)
+
+- Office hosts found: 10.99.2.22 (ssh/OpenSSH 9.9), .80 (nginx intranet), .100 (samba 139/445), .200 (printer Flask app :5000)
+- intranet: leaks `DB Host: 10.99.3.20`, creds `app / supersecret`
+- printer: stub Flask app (`/` and `/jobs` only, no RCE)
+- gateway-office (10.99.2.10): reachable, no open ports — router only
+- ICMP ping through TUN hangs (punt! bug — ICMP not forwarded)
+
+### Remaining UAT work
+
+- [ ] **Multi-hop pivot** — relay mode fix landed (`fix/relay-mode`); needs UAT validation. Topology: ssh-server exit → gateway-perimeter relay → attacker entry.
+- [ ] **Dynamic log levels** — `wallhack log <level>` REPL command + `POST /log-level` REST endpoint. Uses `tracing_subscriber::reload` Handle threaded into `EntryResources`. Key UAT value: flip to `debug` mid-session without restarting the daemon and losing the existing peer connection. Lets you inspect relay handshake, route announcement, and TUN lifecycle in real time.
+- [ ] **Unprivileged EXIT node** — verify wallhack EXIT works as non-root. Currently only tested as root.
+- [ ] **RSS check in `bench/check_bloat.sh`** — add slim EXIT RSS check (target: fits in 64 MB alongside a running service).
+- [ ] **64 MB OOM on `vm_cp`** — 5 MB binary copy OOM-kills service in 64 MB VM. Test curl streaming into tmpfs instead.
+- [ ] **Route persistence across restarts** — routes vanish on daemon restart; exit should re-announce on reconnect.
+- [ ] **Services run as root** — all range services run as root. Add `su -s /bin/sh <user>` to pontoon stdlib start scripts for realism.
+- [x] ~~**`pontoon build`**~~ — rebuilt initrds; curl + nmap-scripts baked into attacker layer. ✓
+- [ ] **wallhack MCP vsock not compiled into initrd binary** — `wallhack-mcp` connects via `vsock://3:4434` but the binary deployed in the attacker initrd doesn't listen on vsock (only Unix socket). Needs rebuild with vsock feature enabled and `pontoon build` + cycle.
 
 ## Dropper
 

@@ -38,7 +38,7 @@ fn main() {
         .to_string();
 
     if args.iter().any(|a| a == "--version") {
-        println!("{}", wallhack_cli::version::version_short());
+        println!("{}", wallhack_cli::version::version());
         std::process::exit(0);
     }
 
@@ -97,12 +97,7 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
     };
 
     if cli.version {
-        let message = if cli.verbose {
-            wallhack_cli::version::version_verbose()
-        } else {
-            wallhack_cli::version::version_short()
-        };
-        println!("{message}");
+        println!("{}", wallhack_cli::version::version());
         std::process::exit(0);
     }
 

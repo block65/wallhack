@@ -112,7 +112,7 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                 println!("{:<18} {}", "listen addr:", s.listen_addr);
             }
             println!("{:<18} {} {}", "version:", s.package_name, s.version);
-            println!("{:<18} wallhack {}", "cli:", env!("CARGO_PKG_VERSION"));
+            println!("{:<18} {}", "cli:", crate::version::version());
             println!("{:<18} {}", "uptime:", uptime);
         }
         Some(management_response::Response::Stats(s)) => {

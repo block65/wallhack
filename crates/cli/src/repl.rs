@@ -43,7 +43,7 @@ pub async fn run(
         .with_history(history)
         .with_external_printer(printer);
 
-    println!("{}", crate::version::version_short());
+    println!("{}", crate::version::version());
     println!("Type 'help' for available commands.");
 
     loop {
@@ -61,7 +61,7 @@ pub async fn run(
                         continue;
                     }
                     "version" => {
-                        println!("{}", crate::version::version_short());
+                        println!("{}", crate::version::version());
                         continue;
                     }
                     _ => {}

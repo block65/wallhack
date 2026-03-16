@@ -1,5 +1,7 @@
+# WARNING: This image is published publicly to ghcr.io (no auth required in CI).
+# Do NOT add secrets, credentials, or private keys to this file or any layer.
 FROM ghcr.io/cross-rs/x86_64-unknown-linux-musl:main
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends protobuf-compiler zlib1g-dev \
+  && apt-get install -y --no-install-recommends protobuf-compiler \
   && rm -rf /var/lib/apt/lists/*
