@@ -1,6 +1,6 @@
 //! Output formatting for CLI responses.
 
-use std::{fmt::Write as FmtWrite, io::Write};
+use std::io::Write;
 
 use tabwriter::TabWriter;
 use wallhack_wire::management::{
@@ -14,6 +14,17 @@ use {
 };
 
 use crate::ipc::IpcError;
+
+#[derive(serde::Serialize)]
+struct PeerJson<'a> {
+    name: &'a str,
+    remote_addr: &'a str,
+    role: String,
+    connected_at_secs: u64,
+    bytes_transferred: u64,
+    latency_ms: Option<f64>,
+    tun_name: Option<&'a str>,
+}
 
 /// Format an uptime duration in milliseconds into a human-readable string.
 fn format_uptime(ms: u64) -> String {
@@ -36,91 +47,37 @@ fn format_uptime(ms: u64) -> String {
     format!("{days}d {hours}h")
 }
 
-/// Escape a string for embedding in a JSON value.
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 /// Print the peers list as JSON to stdout.
 ///
 /// Shape matches the REST API `/peers` response plus a `tun_name` field.
 pub fn print_peers_json(peers: &[WirePeerInfo]) {
-    use wallhack_wire::management::ConnectionSide;
-
-    let mut out = String::from("{\"peers\":[");
-    for (i, peer) in peers.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        let role = peer.role();
-        let side = match peer.side() {
-            ConnectionSide::Accept => "accept",
-            ConnectionSide::Connect => "connect",
-            ConnectionSide::Unspecified => "unknown",
-        };
-        let latency = if peer.latency_ms > 0.0 {
-            format!("{}", peer.latency_ms)
-        } else {
-            "null".to_string()
-        };
-        let tun_name = if peer.tun_name.is_empty() {
-            "null".to_string()
-        } else {
-            json_str(&peer.tun_name)
-        };
-        out.push('{');
-        let _ = write!(
-            out,
-            "\"name\":{},\"addr\":{},\"role\":{},\"side\":{},\"connected_at_secs\":{},\"bytes_transferred\":{},\"latency_ms\":{},\"tun_name\":{}",
-            json_str(&peer.name),
-            json_str(&peer.addr),
-            json_str(&format!("{role}")),
-            json_str(side),
-            peer.connected_at_secs,
-            peer.bytes_transferred,
-            latency,
-            tun_name,
-        );
-        out.push('}');
-    }
-    out.push_str("]}");
+    let items: Vec<PeerJson<'_>> = peers
+        .iter()
+        .map(|peer| PeerJson {
+            name: &peer.name,
+            remote_addr: &peer.addr,
+            role: peer.role().to_string(),
+            connected_at_secs: peer.connected_at_secs,
+            bytes_transferred: peer.bytes_transferred,
+            latency_ms: (peer.latency_ms > 0.0).then_some(peer.latency_ms),
+            tun_name: (!peer.tun_name.is_empty()).then_some(peer.tun_name.as_str()),
+        })
+        .collect();
+    let out = serde_json::json!({ "peers": items });
     println!("{out}");
 }
 
 /// Print the peers table to stdout.
 fn print_peers_table(peers: &[wallhack_wire::management::PeerInfo]) {
-    use wallhack_wire::management::ConnectionSide;
-
     if peers.is_empty() {
         println!("No connected peers.");
         return;
     }
 
     let mut tw = TabWriter::new(std::io::stdout());
-    let _ = writeln!(tw, "NAME\tADDR\tROLE\tSIDE\tLATENCY\tTUN");
+    let _ = writeln!(tw, "NAME\tREMOTE_ADDR\tROLE\tLATENCY\tTUN");
     for peer in peers {
         let role = peer.role();
-        let side = match peer.side() {
-            ConnectionSide::Accept => "accept",
-            ConnectionSide::Connect => "connect",
-            ConnectionSide::Unspecified => "?",
-        };
         let latency = if peer.latency_ms > 0.0 {
             format!("{:.1}ms", peer.latency_ms)
         } else {
@@ -131,11 +88,7 @@ fn print_peers_table(peers: &[wallhack_wire::management::PeerInfo]) {
         } else {
             peer.tun_name.clone()
         };
-        let _ = writeln!(
-            tw,
-            "{}\t{}\t{role}\t{side}\t{latency}\t{tun}",
-            peer.name, peer.addr,
-        );
+        let _ = writeln!(tw, "{}\t{}\t{role}\t{latency}\t{tun}", peer.name, peer.addr);
     }
     let _ = tw.flush();
 }
