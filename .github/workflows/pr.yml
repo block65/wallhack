@@ -58,7 +58,7 @@ jobs:
       - name: Install cross
         run: |
           if ! command -v cross &>/dev/null; then
-            gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
+            gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp --clobber
             tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
           fi
         env:
@@ -90,7 +90,7 @@ jobs:
       - name: Install cross
         run: |
           if ! command -v cross &>/dev/null; then
-            gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp
+            gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp --clobber
             tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
           fi
         env:
