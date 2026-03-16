@@ -12,7 +12,8 @@ name = "wallhackctl"
 path = "src/bin/wallhack.rs"
 
 [features]
-default = ["quic", "websocket", "http-api", "repl"]
+default = ["quic", "websocket", "http-api", "repl", "json"]
+json = ["dep:serde_json"]
 slim = ["quic", "websocket"]
 
 # Transport features (forwarded to wallhackd)
@@ -30,7 +31,7 @@ repl = ["dep:reedline", "dep:nu-ansi-term"]
 argh = "0.1"
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", optional = true }
 wallhack-ipc = { path = "../ipc" }
 rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
 # Already a transitive dep via reedline — no additional binary cost.
@@ -51,7 +52,8 @@ wallhackd = { path = "../daemon", default-features = false }
 zeroize = "1"
 
 [build-dependencies]
-vergen-gitcl = { version = "9.1", features = ["build", "cargo", "rustc"] }
+anyhow = "1"
+vergen-gitcl = { version = "9.1", features = ["build"] }
 
 [lints]
 workspace = true

@@ -21,6 +21,7 @@ mkdir -p "$RESULTS_DIR"
 cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
+# DO NOT BUMP WITHOUT PERMISSION.
 # Updated: 2026-03-15, baseline: worktree-mcp-server
 # slim threshold = exactly 5MiB (5 * 1024 * 1024). Must stay "5MB slim".
 # default threshold = existing measured + ~1% headroom.
