@@ -22,16 +22,16 @@ cd "$ROOT_DIR"
 
 # --- Size thresholds (bytes) ---
 # DO NOT BUMP WITHOUT PERMISSION.
-# Updated: 2026-03-16, baseline: v0.8.1 + relay fix + vergen
-# Slim grew from auto-negotiation + relay monomorphization (see bench/results/bloat_20260301_analysis.txt).
-# Real fix requires core-level ErasedTransport refactor (tracked in TODO).
+# Updated: 2026-03-15, baseline: worktree-mcp-server
+# slim threshold = exactly 5MiB (5 * 1024 * 1024). Must stay "5MB slim".
+# default threshold = existing measured + ~1% headroom.
 declare -A THRESHOLDS=(
     # musl x86_64 — PRIMARY build target
-    ["slim-musl"]=5505024          # 5.25MiB; current: ~5.35M
-    ["default-musl"]=7500000       # current: ~7.1M (~5% headroom)
+    ["slim-musl"]=5242880          # 5 * 1024 * 1024; current: 5216712
+    ["default-musl"]=7210000       # current: 7136648 (~1% headroom)
     # glibc x86_64 — sanity check only
-    ["slim-glibc"]=5505024         # 5.25MiB; current: ~5.35M
-    ["default-glibc"]=7500000      # current: ~7.1M (~5% headroom)
+    ["slim-glibc"]=5242880         # 5 * 1024 * 1024; current: 5241936
+    ["default-glibc"]=7215000      # current: 7143368 (~1% headroom)
 )
 
 # --- Build definitions ---
