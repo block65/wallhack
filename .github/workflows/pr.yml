@@ -3,9 +3,16 @@ name: CI
 on:
   pull_request:
     branches: ["main"]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile.cross-musl"
+      - "bench/**"
+      - ".github/workflows/pr.yml"
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: pr-rust-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 env:
@@ -13,23 +20,6 @@ env:
   CROSS_VERSION: v0.2.5
 
 jobs:
-  lint-website:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: website/package.json
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: website
-
-      - name: Biome check
-        run: pnpm check
-        working-directory: website
-
   lint:
     runs-on: ubuntu-latest
     steps:
