@@ -38,16 +38,7 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-lint-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-lint-cargo-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -67,16 +58,10 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
-      - name: Cache cargo (musl)
-        uses: actions/cache@v5
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/musl/
-          key: ${{ runner.os }}-musl-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-musl-cargo-
+          shared-key: musl
+          workspaces: . -> target/musl
 
       - name: Cache cross binary
         id: cache-cross
@@ -117,16 +102,10 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
-      - name: Cache cargo (musl)
-        uses: actions/cache@v5
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/musl/
-          key: ${{ runner.os }}-musl-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-musl-cargo-
+          shared-key: musl
+          workspaces: . -> target/musl
 
       - name: Cache cross binary
         id: cache-cross
@@ -180,16 +159,9 @@ jobs:
           rustup show
           rustup target add x86_64-unknown-linux-gnu
 
-      - name: Cache cargo (glibc)
-        uses: actions/cache@v5
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-glibc-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-glibc-cargo-
+          shared-key: glibc
 
       - name: Test (glibc — sanity)
         run: cargo test --release --target x86_64-unknown-linux-gnu
@@ -205,16 +177,10 @@ jobs:
           rustup show
           rustup target add x86_64-unknown-linux-gnu
 
-      - name: Cache cargo (glibc)
-        uses: actions/cache@v5
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-glibc-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-glibc-cargo-
+          shared-key: glibc
+          save-if: "false"
 
       - name: Build slim (glibc — sanity)
         run: cargo build --release --target x86_64-unknown-linux-gnu -p wallhack-cli --no-default-features --features slim
