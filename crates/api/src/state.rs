@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
+use axum::http::{HeaderValue, Method};
 use tokio::sync::Mutex;
+use tower_http::cors::CorsLayer;
 use wallhack_ipc::client::IpcConnection;
 
 use super::auth::Auth;
@@ -26,29 +28,52 @@ impl Default for CorsPolicy {
 }
 
 impl CorsPolicy {
-    /// Check whether a request `Origin` header value is allowed.
-    #[must_use]
-    pub fn is_allowed(&self, origin: &str) -> bool {
+    /// Convert into a `tower_http::cors::CorsLayer`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`CorsPolicy::Origin`] contains a value that is not a valid HTTP header.
+    pub fn into_layer(self) -> CorsLayer {
+        let base = CorsLayer::new()
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+            ])
+            .max_age(std::time::Duration::from_hours(1));
+
         match self {
-            Self::Localhost => {
-                let lower = origin.to_ascii_lowercase();
-                for prefix in [
-                    "http://localhost:",
-                    "https://localhost:",
-                    "http://localhost",
-                    "https://localhost",
-                    "http://127.0.0.1:",
-                    "https://127.0.0.1:",
-                    "http://[::1]:",
-                    "https://[::1]:",
-                ] {
-                    if lower.starts_with(prefix) {
-                        return true;
-                    }
-                }
-                false
-            }
-            Self::Origin(allowed) => origin == allowed,
+            Self::Localhost => base.allow_origin(tower_http::cors::AllowOrigin::predicate(
+                |origin: &HeaderValue, _req: &axum::http::request::Parts| {
+                    let Ok(s) = origin.to_str() else {
+                        return false;
+                    };
+                    let lower = s.to_ascii_lowercase();
+                    [
+                        "http://localhost:",
+                        "https://localhost:",
+                        "http://localhost",
+                        "https://localhost",
+                        "http://127.0.0.1:",
+                        "https://127.0.0.1:",
+                        "http://[::1]:",
+                        "https://[::1]:",
+                    ]
+                    .iter()
+                    .any(|prefix| lower.starts_with(prefix))
+                },
+            )),
+            Self::Origin(origin) => base.allow_origin(
+                origin
+                    .parse::<HeaderValue>()
+                    .expect("configured CORS origin must be a valid header value"),
+            ),
         }
     }
 }

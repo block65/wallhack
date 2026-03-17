@@ -24,6 +24,7 @@ wallhack-transport = { path = "../transport", default-features = false }
 anyhow = "1"
 dashmap = "6"
 prost = { version = "0.13" }
+time = { version = "0.3", default-features = false, features = ["std"] }
 wallhack-wire = { path = "../wire" }
 wallhack-entry-stack = { path = "../entry-stack", features = ["async"] }
 arc-swap = { workspace = true }

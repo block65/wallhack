@@ -18,103 +18,37 @@ use std::net::SocketAddr;
 use axum::{
     Router,
     body::Body,
-    http::{HeaderValue, Request, StatusCode, header},
+    http::{HeaderValue, Request, header},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{delete, get},
 };
 
 pub use auth::Auth;
 pub use state::{CorsPolicy, State};
 
-/// Security middleware that adds protective headers, validates requests,
-/// and handles CORS (including preflight `OPTIONS`).
-async fn security_middleware(
-    axum::extract::State(state): axum::extract::State<State>,
-    req: Request<Body>,
-    next: Next,
-) -> Response {
-    // DNS rebinding protection: validate Host header
-    let host_valid = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| validation::validate_host(h).is_ok());
-
-    if !host_valid {
-        return (StatusCode::BAD_REQUEST, "Invalid Host header").into_response();
-    }
-
-    // Extract the request Origin for CORS validation.
-    let origin = req
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|h| h.to_str().ok())
-        .map(String::from);
-    let allowed_origin = origin
-        .as_deref()
-        .filter(|o| state.cors.is_allowed(o))
-        .and_then(|o| HeaderValue::from_str(o).ok());
-
-    // Handle CORS preflight (OPTIONS) — return early with headers only.
-    if req.method() == axum::http::Method::OPTIONS && allowed_origin.is_some() {
-        let mut response = StatusCode::NO_CONTENT.into_response();
-        let headers = response.headers_mut();
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            allowed_origin.clone().expect("checked above"),
-        );
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
-        );
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Authorization, Content-Type"),
-        );
-        headers.insert(
-            header::ACCESS_CONTROL_MAX_AGE,
-            HeaderValue::from_static("3600"),
-        );
-        return response;
-    }
-
+/// Security middleware that adds protective headers.
+async fn security_middleware(req: Request<Body>, next: Next) -> Response {
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
 
-    // CORS: reflect allowed origin if the request Origin matched the policy.
-    if let Some(allowed) = allowed_origin {
-        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allowed);
-    }
-
-    // Content Security Policy - strict, API only serves JSON
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
     );
-
-    // Prevent clickjacking
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-
-    // Prevent MIME sniffing
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-
-    // Disable caching for all API responses
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-store, no-cache, must-revalidate"),
     );
-
-    // Referrer policy
     headers.insert(
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
-
-    // Permissions policy - disable all features
     headers.insert(
         "Permissions-Policy",
         HeaderValue::from_static("geolocation=(), camera=(), microphone=()"),
@@ -142,14 +76,14 @@ pub fn router(state: State) -> Router {
             auth::middleware(auth, req, next)
         }));
 
+    let cors = state.cors.clone().into_layer();
+
     // Health endpoint is always public, security headers apply to all
     Router::new()
         .route("/health", get(handlers::health))
         .merge(protected_routes)
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            security_middleware,
-        ))
+        .layer(cors)
+        .layer(middleware::from_fn(security_middleware))
         .with_state(state)
 }
 
@@ -176,8 +110,7 @@ pub async fn serve(
         );
     }
 
-    // Use the same TLS setup as the main server
-    let (certs, key, _fingerprint) =
+    let (certs, key, fingerprint) =
         wallhack_core::server::tls::configure_crypto(tls_config).map_err(std::io::Error::other)?;
 
     let rustls_config = RustlsConfig::from_der(
@@ -188,6 +121,7 @@ pub async fn serve(
     .map_err(std::io::Error::other)?;
 
     tracing::info!("REST API listening on https://{addr}");
+    tracing::info!("REST API certificate: {fingerprint}");
     axum_server::bind_rustls(addr, rustls_config)
         .serve(router(state).into_make_service())
         .await

@@ -89,9 +89,20 @@ pub fn configure_crypto(
         (certs, key)
     } else {
         tracing::trace!("generating self-signed certificate");
-        let cert = rcgen::generate_simple_self_signed([env!("CARGO_PKG_NAME").into()])?;
-        let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
-        let cert_der = CertificateDer::from(cert.cert.der().to_vec());
+        // No SANs, no identifying CN — generic self-signed cert that doesn't
+        // leak tool identity to network observers or IDS.
+        let mut params = rcgen::CertificateParams::default();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        // Default validity runs to year 4096 — conspicuously unusual.
+        // 90 days matches Let's Encrypt's standard validity window.
+        let now = time::OffsetDateTime::now_utc();
+        let expiry = now + time::Duration::days(90);
+        params.not_before = now;
+        params.not_after = expiry;
+        let key_pair = rcgen::KeyPair::generate()?;
+        let cert = params.self_signed(&key_pair)?;
+        let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
+        let cert_der = CertificateDer::from(cert.der().to_vec());
         (vec![cert_der], key_der)
     };
 

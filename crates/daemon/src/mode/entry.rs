@@ -1169,9 +1169,8 @@ fn start_api(
         Arc::clone(routes),
         route_updates,
     );
-    tracing::info!("REST API listening on {api_addr}");
-    tracing::info!("  API username: {username}");
-    tracing::info!("  API secret:   {secret}");
+    tracing::info!("REST API username: {username}");
+    tracing::info!("REST API secret:   {secret}");
 
     // In-process IPC connection over DuplexStream — same pattern as REPL.
     let (api_client, api_server) = tokio::io::duplex(4096);

@@ -2,8 +2,6 @@
 //!
 //! Validates user input to prevent injection attacks and ensure data integrity.
 
-use std::net::IpAddr;
-
 use wallhack_core::{Cidr, CidrParseError};
 
 /// Maximum length for peer names.
@@ -11,10 +9,6 @@ const MAX_PEER_NAME_LEN: usize = 128;
 
 /// Maximum length for CIDR strings.
 const MAX_CIDR_LEN: usize = 64;
-
-/// Allowed Host header values to prevent DNS rebinding attacks.
-/// Only localhost variants are allowed by default.
-const ALLOWED_HOSTS: &[&str] = &["localhost", "127.0.0.1", "::1", "[::1]"];
 
 /// Validation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +23,6 @@ pub enum ValidationError {
     InvalidPrefixLength,
     /// Input is empty.
     Empty,
-    /// Host header is missing or invalid (DNS rebinding protection).
-    InvalidHost,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -43,71 +35,11 @@ impl std::fmt::Display for ValidationError {
             Self::InvalidCidr => write!(f, "invalid CIDR notation"),
             Self::InvalidPrefixLength => write!(f, "invalid prefix length for IP version"),
             Self::Empty => write!(f, "input cannot be empty"),
-            Self::InvalidHost => write!(f, "invalid or missing Host header"),
         }
     }
 }
 
 impl std::error::Error for ValidationError {}
-
-/// Validates the Host header to prevent DNS rebinding attacks.
-///
-/// Only allows:
-/// - localhost, 127.0.0.1, `::1` (with optional port)
-/// - Explicit IP addresses (no DNS resolution possible)
-///
-/// # Errors
-///
-/// Returns error if the host is not allowed.
-pub fn validate_host(host: &str) -> Result<(), ValidationError> {
-    // Handle IPv6 with port like [::1]:8080
-    let host_part = if host.starts_with('[') {
-        // IPv6 format: [addr]:port or [addr]
-        if let Some(bracket_end) = host.find(']') {
-            &host[..=bracket_end]
-        } else {
-            host
-        }
-    } else {
-        // Count colons to detect IPv6
-        let colon_count = host.chars().filter(|&c| c == ':').count();
-        if colon_count > 1 {
-            // IPv6 without brackets (e.g., ::1 or fe80::1)
-            host
-        } else if let Some(last_colon) = host.rfind(':') {
-            // Could be IPv4:port
-            let potential_port = &host[last_colon + 1..];
-            if potential_port.chars().all(|c| c.is_ascii_digit()) && !potential_port.is_empty() {
-                // Looks like a port number
-                &host[..last_colon]
-            } else {
-                host
-            }
-        } else {
-            host
-        }
-    };
-
-    let host_lower = host_part.to_lowercase();
-
-    // Check against allowed hosts
-    if ALLOWED_HOSTS.contains(&host_lower.as_str()) {
-        return Ok(());
-    }
-
-    // Also allow raw IP addresses (no DNS rebinding possible)
-    // Strip brackets for IPv6
-    let ip_str = host_part
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(host_part);
-
-    if ip_str.parse::<IpAddr>().is_ok() {
-        return Ok(());
-    }
-
-    Err(ValidationError::InvalidHost)
-}
 
 /// Validates a peer name.
 ///
@@ -183,37 +115,6 @@ pub fn validate_cidr(cidr: &str) -> Result<(), ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_valid_hosts() {
-        assert!(validate_host("localhost").is_ok());
-        assert!(validate_host("localhost:8080").is_ok());
-        assert!(validate_host("127.0.0.1").is_ok());
-        assert!(validate_host("127.0.0.1:6566").is_ok());
-        assert!(validate_host("192.168.1.1").is_ok());
-        assert!(validate_host("10.0.0.1:443").is_ok());
-        assert!(validate_host("[::1]").is_ok());
-        assert!(validate_host("[::1]:8080").is_ok());
-        assert!(validate_host("::1").is_ok());
-    }
-
-    #[test]
-    fn test_invalid_hosts() {
-        // DNS rebinding attempts
-        assert_eq!(validate_host("evil.com"), Err(ValidationError::InvalidHost));
-        assert_eq!(
-            validate_host("localhost.evil.com"),
-            Err(ValidationError::InvalidHost)
-        );
-        assert_eq!(
-            validate_host("evil.localhost"),
-            Err(ValidationError::InvalidHost)
-        );
-        assert_eq!(
-            validate_host("127.0.0.1.evil.com"),
-            Err(ValidationError::InvalidHost)
-        );
-    }
 
     #[test]
     fn test_valid_peer_names() {
