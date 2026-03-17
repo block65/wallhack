@@ -5,7 +5,13 @@ use icmp_send_instruction::IcmpMessage;
 use crate::helpers::{ConversionError, vec_to_sized_array};
 
 // Suppress clippy warnings from auto-generated prost code
-#[allow(clippy::doc_markdown, clippy::must_use_candidate)]
+#[allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    // REASON: Capabilities is a generated prost struct with four bool fields that
+    // directly mirror the proto definition; restructuring would diverge from the wire format.
+    clippy::struct_excessive_bools
+)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/wallhack.data.rs"));
 }

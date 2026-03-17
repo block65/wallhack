@@ -12,7 +12,12 @@ use crate::NodeRole;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum NegotiationResult {
     /// Role unambiguously determined.
-    Resolved(NodeRole),
+    Resolved {
+        /// The negotiated role.
+        role: NodeRole,
+        /// Human-readable explanation of why this role was selected.
+        reason: &'static str,
+    },
     /// Cannot determine role from current inputs alone.
     /// The node stays in `NodeRole::Indeterminate` and waits for a topology
     /// change or an operator hint (Phase 13d).
@@ -22,7 +27,7 @@ pub enum NegotiationResult {
 impl std::fmt::Display for NegotiationResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Resolved(role) => write!(f, "resolved({role:?})"),
+            Self::Resolved { role, reason } => write!(f, "resolved({role:?}, {reason})"),
             Self::Indeterminate { reason } => write!(f, "indeterminate({reason})"),
         }
     }
@@ -81,14 +86,17 @@ pub fn negotiate(local: &Handshake, peer: &Handshake) -> NegotiationResult {
                 reason: "both peers have fixed hints for the same role",
             };
         }
-        return NegotiationResult::Resolved(target);
+        return NegotiationResult::Resolved {
+            role: target,
+            reason: "local has a fixed role hint",
+        };
     }
 
     // 2. Capability-based rules.
     let cap_result = negotiate_from_capabilities(local, peer);
 
     // If capabilities gave a clear answer, return it.
-    if let NegotiationResult::Resolved(_) = &cap_result {
+    if let NegotiationResult::Resolved { .. } = &cap_result {
         return cap_result;
     }
 
@@ -132,26 +140,55 @@ fn negotiate_from_capabilities(local: &Handshake, peer: &Handshake) -> Negotiati
     // Relay is unambiguous: if local is both listening and connecting, it is
     // always relay regardless of peer capabilities or TUN status.
     if local_relay {
-        return NegotiationResult::Resolved(NodeRole::Relay);
+        return NegotiationResult::Resolved {
+            role: NodeRole::Relay,
+            reason: "local is relay (both listening and connecting)",
+        };
     }
 
     // Peer of a relay: resolve from local TUN capability alone.
     // The relay's presence signals the chain continues through it.
     if peer_relay {
         return if local_tun {
-            NegotiationResult::Resolved(NodeRole::Entry)
+            NegotiationResult::Resolved {
+                role: NodeRole::Entry,
+                reason: "peer is relay; local has TUN capability",
+            }
         } else {
-            NegotiationResult::Resolved(NodeRole::Exit)
+            NegotiationResult::Resolved {
+                role: NodeRole::Exit,
+                reason: "peer is relay; local lacks TUN",
+            }
         };
     }
 
     // Two non-relay nodes: entry/exit determined by TUN capability.
     match (local_tun, peer_tun) {
-        (true, false) => NegotiationResult::Resolved(NodeRole::Entry),
-        (false, true) => NegotiationResult::Resolved(NodeRole::Exit),
-        (true, true) => NegotiationResult::Indeterminate {
-            reason: "both peers are TUN-capable; set a preferred or fixed role to resolve",
+        (true, false) => NegotiationResult::Resolved {
+            role: NodeRole::Entry,
+            reason: "TUN capability asymmetry: local has TUN, peer does not",
         },
+        (false, true) => NegotiationResult::Resolved {
+            role: NodeRole::Exit,
+            reason: "TUN capability asymmetry: peer has TUN, local does not",
+        },
+        (true, true) => {
+            let local_interactive = local_caps.is_some_and(|c| c.interactive);
+            let peer_interactive = peer_caps.is_some_and(|c| c.interactive);
+            match (local_interactive, peer_interactive) {
+                (true, false) => NegotiationResult::Resolved {
+                    role: NodeRole::Entry,
+                    reason: "interactive terminal (human-in-the-loop)",
+                },
+                (false, true) => NegotiationResult::Resolved {
+                    role: NodeRole::Exit,
+                    reason: "peer has interactive terminal",
+                },
+                _ => NegotiationResult::Indeterminate {
+                    reason: "both peers are TUN-capable; set a preferred or fixed role to resolve",
+                },
+            }
+        }
         (false, false) => NegotiationResult::Indeterminate {
             reason: "neither peer has TUN capability",
         },
@@ -198,7 +235,10 @@ fn negotiate_with_exclude(
                 reason: "excluded entry for local, but peer also lacks TUN capability",
             };
         }
-        return NegotiationResult::Resolved(remaining);
+        return NegotiationResult::Resolved {
+            role: remaining,
+            reason: "exclude hint narrows to complement role",
+        };
     }
 
     // Excluding relay when local isn't a relay is a no-op for two-node
@@ -218,7 +258,10 @@ fn negotiate_with_prefer(
     // Peer prefers relay → signals the chain continues through them, so a
     // TUN-capable local resolves to entry.
     if peer_prefer == Some(NodeRole::Relay) && local_tun {
-        return NegotiationResult::Resolved(NodeRole::Entry);
+        return NegotiationResult::Resolved {
+            role: NodeRole::Entry,
+            reason: "peer prefers relay; local has TUN capability",
+        };
     }
 
     match (local_prefer, peer_prefer) {
@@ -227,13 +270,22 @@ fn negotiate_with_prefer(
             reason: "both peers prefer the same role",
         },
         // They prefer different roles → each gets what they want.
-        (Some(l), Some(_)) => NegotiationResult::Resolved(l),
+        (Some(role), Some(_)) => NegotiationResult::Resolved {
+            role,
+            reason: "local prefer hint resolved (peers prefer different roles)",
+        },
         // Only local prefers → local gets it.
-        (Some(target), None) => NegotiationResult::Resolved(target),
+        (Some(role), None) => NegotiationResult::Resolved {
+            role,
+            reason: "local prefer hint resolved (uncontested)",
+        },
         // Only peer prefers → local gets the complement.
         (None, Some(peer_target)) => {
-            if let Some(c) = complement(peer_target) {
-                NegotiationResult::Resolved(c)
+            if let Some(role) = complement(peer_target) {
+                NegotiationResult::Resolved {
+                    role,
+                    reason: "peer prefer hint; local takes complement role",
+                }
             } else {
                 negotiate_from_capabilities(local, peer)
             }
@@ -283,12 +335,44 @@ mod tests {
         }
     }
 
-    fn resolved(role: NodeRole) -> NegotiationResult {
-        NegotiationResult::Resolved(role)
+    fn assert_resolved(result: &NegotiationResult, expected_role: NodeRole) {
+        match result {
+            NegotiationResult::Resolved { role, .. } => assert_eq!(
+                *role, expected_role,
+                "expected {expected_role:?}, got {role:?}"
+            ),
+            NegotiationResult::Indeterminate { reason } => {
+                panic!("expected Resolved({expected_role:?}), got indeterminate({reason})");
+            }
+        }
     }
 
     fn is_indeterminate(r: &NegotiationResult) -> bool {
         matches!(r, NegotiationResult::Indeterminate { .. })
+    }
+
+    // REASON: This is a test helper that mirrors the Capabilities wire format; the
+    // bools are distinct flags, not a state machine. Only used in tests.
+    #[allow(clippy::fn_params_excessive_bools)]
+    fn hs_interactive(
+        tun_capable: bool,
+        listening: bool,
+        connecting: bool,
+        interactive: bool,
+    ) -> Handshake {
+        Handshake {
+            capabilities: Some(Capabilities {
+                tun_capable,
+                listening,
+                connecting,
+                interactive,
+            }),
+            name: String::new(),
+            version: String::new(),
+            psk_proof: vec![],
+            routes: vec![],
+            hint: None,
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -301,9 +385,9 @@ mod tests {
     fn tun_listen_vs_nontun_connect() {
         let local = hs(true, true, false);
         let peer = hs(false, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
         // symmetry: peer sees exit
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Exit);
     }
 
     /// non-TUN connector ↔ TUN-capable listener → exit / entry
@@ -311,8 +395,8 @@ mod tests {
     fn nontun_connect_vs_tun_listen() {
         let local = hs(false, false, true);
         let peer = hs(true, true, false);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Entry);
     }
 
     /// TUN-capable connector ↔ non-TUN listener → entry / exit
@@ -320,8 +404,8 @@ mod tests {
     fn tun_connect_vs_nontun_listen() {
         let local = hs(true, false, true);
         let peer = hs(false, true, false);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Exit);
     }
 
     /// non-TUN listener ↔ TUN-capable connector → exit / entry
@@ -329,8 +413,8 @@ mod tests {
     fn nontun_listen_vs_tun_connect() {
         let local = hs(false, true, false);
         let peer = hs(true, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Entry);
     }
 
     /// TUN-capable listener ↔ TUN-capable connector → indeterminate (symmetric)
@@ -374,22 +458,22 @@ mod tests {
     fn relay_vs_nontun_connector() {
         let local = hs(false, true, true); // relay
         let peer = hs(false, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Relay));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Relay);
     }
 
     #[test]
     fn relay_vs_tun_listener() {
         let local = hs(false, true, true); // relay
         let peer = hs(true, true, false);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Relay));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Relay);
     }
 
     #[test]
     fn relay_vs_relay() {
         let local = hs(false, true, true); // relay
         let peer = hs(false, true, true); // also relay
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Relay));
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Relay));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Relay);
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Relay);
     }
 
     /// TUN-capable node ↔ relay → entry
@@ -397,14 +481,14 @@ mod tests {
     fn tun_listen_vs_relay() {
         let local = hs(true, true, false);
         let peer = hs(false, true, true); // relay
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
     }
 
     #[test]
     fn tun_connect_vs_relay() {
         let local = hs(true, false, true);
         let peer = hs(false, true, true); // relay
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
     }
 
     /// non-TUN node ↔ relay → exit
@@ -412,14 +496,14 @@ mod tests {
     fn nontun_listen_vs_relay() {
         let local = hs(false, true, false);
         let peer = hs(false, true, true); // relay
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
     }
 
     #[test]
     fn nontun_connect_vs_relay() {
         let local = hs(false, false, true);
         let peer = hs(false, true, true); // relay
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
     }
 
     // -------------------------------------------------------------------------
@@ -441,8 +525,8 @@ mod tests {
     fn symmetry_entry_exit() {
         let a = hs(true, true, false);
         let b = hs(false, false, true);
-        assert_eq!(negotiate(&a, &b), resolved(NodeRole::Entry));
-        assert_eq!(negotiate(&b, &a), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&a, &b), NodeRole::Entry);
+        assert_resolved(&negotiate(&b, &a), NodeRole::Exit);
     }
 
     #[test]
@@ -466,7 +550,7 @@ mod tests {
         };
         let peer = hs(true, true, false);
         // local has no capabilities → non-TUN, not relay
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
     }
 
     // -------------------------------------------------------------------------
@@ -483,9 +567,9 @@ mod tests {
             Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
         );
         let peer = hs(true, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
         // Symmetry: peer sees exit.
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Exit);
     }
 
     /// PREFER ignored when topology is unambiguous.
@@ -499,7 +583,7 @@ mod tests {
             Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleExit)),
         );
         let peer = hs(false, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
     }
 
     /// Conflicting PREFER: both prefer entry → Indeterminate.
@@ -536,8 +620,8 @@ mod tests {
             true,
             Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleExit)),
         );
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Exit);
     }
 
     /// EXCLUDE removes a role from consideration.
@@ -551,7 +635,7 @@ mod tests {
             Some(role_hint(HintLevel::Exclude, ProtoNodeRole::RoleEntry)),
         );
         let peer = hs(true, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
     }
 
     /// EXCLUDE leaves no valid role → Indeterminate.
@@ -579,7 +663,7 @@ mod tests {
             Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleExit)),
         );
         let peer = hs(false, false, true);
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
     }
 
     /// FIXED + both fixed to same role → Indeterminate.
@@ -611,9 +695,9 @@ mod tests {
             true,
             Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleRelay)),
         );
-        assert_eq!(negotiate(&local, &peer), resolved(NodeRole::Entry));
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
         // Symmetry: peer prefers relay, so peer resolves to relay.
-        assert_eq!(negotiate(&peer, &local), resolved(NodeRole::Relay));
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Relay);
     }
 
     /// Symmetry verified for all hint scenarios.
@@ -626,8 +710,8 @@ mod tests {
             Some(role_hint(HintLevel::Prefer, ProtoNodeRole::RoleEntry)),
         );
         let b = hs(true, false, true);
-        assert_eq!(negotiate(&a, &b), resolved(NodeRole::Entry));
-        assert_eq!(negotiate(&b, &a), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&a, &b), NodeRole::Entry);
+        assert_resolved(&negotiate(&b, &a), NodeRole::Exit);
     }
 
     #[test]
@@ -644,7 +728,41 @@ mod tests {
             true,
             Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleExit)),
         );
-        assert_eq!(negotiate(&a, &b), resolved(NodeRole::Entry));
-        assert_eq!(negotiate(&b, &a), resolved(NodeRole::Exit));
+        assert_resolved(&negotiate(&a, &b), NodeRole::Entry);
+        assert_resolved(&negotiate(&b, &a), NodeRole::Exit);
+    }
+
+    // -------------------------------------------------------------------------
+    // Interactive tiebreaker tests
+    // -------------------------------------------------------------------------
+
+    /// One peer is interactive, the other is not; both are TUN-capable → resolves.
+    #[test]
+    fn interactive_breaks_tun_ambiguity() {
+        let local = hs_interactive(true, true, false, true); // interactive
+        let peer = hs_interactive(true, false, true, false); // not interactive
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
+        // Symmetry: peer sees exit.
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Exit);
+    }
+
+    /// Both peers are interactive and TUN-capable → still indeterminate.
+    #[test]
+    fn both_interactive_still_indeterminate() {
+        let local = hs_interactive(true, true, false, true);
+        let peer = hs_interactive(true, false, true, true);
+        assert!(is_indeterminate(&negotiate(&local, &peer)));
+        assert!(is_indeterminate(&negotiate(&peer, &local)));
+    }
+
+    /// Interactive flag has no effect when peers are not both TUN-capable.
+    #[test]
+    fn interactive_irrelevant_without_tun() {
+        // Local is interactive but not TUN-capable; peer is TUN-capable.
+        // TUN asymmetry should determine the role, not interactive.
+        let local = hs_interactive(false, true, false, true);
+        let peer = hs_interactive(true, false, true, false);
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
+        assert_resolved(&negotiate(&peer, &local), NodeRole::Entry);
     }
 }
