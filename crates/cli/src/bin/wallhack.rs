@@ -46,8 +46,8 @@ fn main() {
     let is_daemon = bin_name == DAEMON_BIN_NAME
         || (!is_ctl
             && args.get(1).is_some_and(|a| {
-                // Explicit role subcommands or daemon passthrough.
-                matches!(a.as_str(), "entry" | "exit" | "relay" | "daemon")
+                // "wallhack daemon" passthrough.
+                a == "daemon"
                 // Any flag argument: auto-negotiation or global daemon options.
                 // Control client commands are always bare words, never flags.
                 || a.starts_with('-')
@@ -73,6 +73,10 @@ fn main() {
 }
 
 fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
+    // "wallhack daemon ..." or "wallhackd ..." = explicit headless mode.
+    #[cfg(feature = "repl")]
+    let explicit_daemon = bin_name == DAEMON_BIN_NAME || args.get(1).is_some_and(|a| a == "daemon");
+
     // Strip "daemon" passthrough prefix if present, so argh sees the daemon CLI directly.
     let daemon_args: Vec<String> =
         if bin_name != DAEMON_BIN_NAME && args.get(1).is_some_and(|a| a == "daemon") {
@@ -109,10 +113,11 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
         }
     };
 
-    // When the repl feature is enabled and stdout is a TTY, launch the daemon
-    // with an interactive REPL attached instead of running headlessly.
+    // When the repl feature is enabled, stdout is a TTY, and the user
+    // did NOT explicitly invoke "wallhack daemon" or "wallhackd", attach
+    // the REPL. "wallhack daemon" means headless — the user opted out.
     #[cfg(feature = "repl")]
-    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) && !explicit_daemon {
         run_daemon_repl(&cli, &config);
     }
 
