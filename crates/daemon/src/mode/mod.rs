@@ -63,6 +63,22 @@ pub(crate) struct NodeResources {
     pub node_state: SharedNodeState,
 }
 
+/// Derive a peer's role from its advertised capabilities.
+///
+/// A peer that both listens and connects is a relay; a peer with TUN
+/// capability is an entry; otherwise it is an exit node.
+pub(crate) fn peer_role_from_capabilities(
+    caps: wallhack_wire::data::Capabilities,
+) -> wallhack_core::NodeRole {
+    if caps.listening && caps.connecting {
+        wallhack_core::NodeRole::Relay
+    } else if caps.tun_capable {
+        wallhack_core::NodeRole::Entry
+    } else {
+        wallhack_core::NodeRole::Exit
+    }
+}
+
 /// Inject a Ping message into the control stream.
 pub(crate) async fn send_ping(
     control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,

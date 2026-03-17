@@ -312,17 +312,19 @@ where
             Ok(Some(mut accept_result)) => {
                 let peer_addr = accept_result.peer_addr().to_string();
 
-                // Register the connecting peer using handshake name if available.
-                let peer_name = accept_result
-                    .peer_handshake()
+                // Register the connecting peer using handshake name and capabilities.
+                let peer_hs = accept_result.peer_handshake();
+                let peer_name = peer_hs
                     .filter(|h| !h.name.is_empty())
                     .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
+                let peer_role = peer_hs
+                    .and_then(|h| h.capabilities)
+                    .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
                 tracing::info!("Peer connected: name={peer_name} addr={peer_addr}");
-                // The entry peer connected to us (we accepted), so side=Accept.
                 ctx.peers.register(
                     peer_name.clone(),
                     peer_addr,
-                    NodeRole::Entry,
+                    peer_role,
                     ConnectionSide::Accept,
                 );
 
@@ -442,19 +444,18 @@ async fn run_exit_loop_inner(
         .filter(|h| !h.name.is_empty())
         .map_or_else(|| peer_addr.to_string(), |h| h.name.clone());
 
-    // We connected to the entry peer, so side=Connect.
-    ctx.peers.register(
-        peer_name.clone(),
-        peer_addr.to_string(),
-        NodeRole::Entry,
-        ConnectionSide::Connect,
-    );
-
-    // Apply the peer's advertised capabilities from the handshake.
+    // Derive peer role from capabilities, then register.
     let peer_capabilities = peer_handshake
         .as_ref()
         .and_then(|h| h.capabilities)
         .unwrap_or_default();
+    let peer_role = super::peer_role_from_capabilities(peer_capabilities);
+    ctx.peers.register(
+        peer_name.clone(),
+        peer_addr.to_string(),
+        peer_role,
+        ConnectionSide::Connect,
+    );
     ctx.peers
         .update_capabilities(&peer_name, &peer_capabilities);
 

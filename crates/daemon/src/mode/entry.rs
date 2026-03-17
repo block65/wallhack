@@ -805,17 +805,7 @@ struct PeerIdentity {
     role: NodeRole,
 }
 
-/// Derive the peer's role from its advertised capabilities.
-///
-/// A peer that both listens and connects is a relay; otherwise it is an exit
-/// node (entry nodes do not connect to other entry nodes in this topology).
-fn role_from_capabilities(caps: wallhack_wire::data::Capabilities) -> NodeRole {
-    if caps.listening && caps.connecting {
-        NodeRole::Relay
-    } else {
-        NodeRole::Exit
-    }
-}
+// Uses super::peer_role_from_capabilities
 
 /// Validate the peer's handshake (PSK proof + identity) for generic `AcceptResult`.
 fn validate_handshake<T: wallhack_core::transport::Transport>(
@@ -842,7 +832,7 @@ fn validate_handshake<T: wallhack_core::transport::Transport>(
     }
 
     let capabilities = hs.capabilities.unwrap_or_default();
-    let role = role_from_capabilities(capabilities);
+    let role = super::peer_role_from_capabilities(capabilities);
 
     if hs.name.is_empty() {
         tracing::debug!("Peer identified with empty name (v{})", hs.version);

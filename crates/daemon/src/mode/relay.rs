@@ -145,6 +145,7 @@ pub async fn run(
                                 e.channels,
                                 e.tasks,
                                 e.control_tx,
+                                e.peer_handshake_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -197,6 +198,7 @@ pub async fn run(
                                 e.channels,
                                 e.tasks,
                                 e.control_tx,
+                                e.peer_handshake_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -223,7 +225,7 @@ pub async fn run(
 /// Starts the listener, bridges channels, and returns `Ok(())` when the
 /// source peer disconnects so `connect_loop` reconnects.
 /// Non-generic relay loop: monomorphized once regardless of transport type.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_relay_loop_inner(
     peer_addr: String,
     transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
@@ -232,6 +234,7 @@ async fn run_relay_loop_inner(
     // Retain control_tx for the full session lifetime — dropping it kills the
     // control stream and causes the source to see the relay as disconnected.
     _source_control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
     global: &GlobalConfig,
     listen_spec: &AddressSpec,
     addr: std::net::SocketAddr,
@@ -244,11 +247,29 @@ async fn run_relay_loop_inner(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
 
+    // Resolve peer handshake for name and capabilities.
+    let peer_handshake = if let Some(rx) = peer_handshake_rx {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+            Ok(Ok(hs)) => Some(hs),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let peer_name = peer_handshake
+        .as_ref()
+        .filter(|h| !h.name.is_empty())
+        .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
+    let peer_role = peer_handshake
+        .as_ref()
+        .and_then(|h| h.capabilities)
+        .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+
     // Register the source peer so it appears in `wallhack peers`.
     peers.register(
+        peer_name.clone(),
         peer_addr.clone(),
-        peer_addr.clone(),
-        NodeRole::Entry,
+        peer_role,
         ConnectionSide::Connect,
     );
 
@@ -357,7 +378,7 @@ async fn run_relay_loop_inner(
     // Dropping shutdown_tx wakes all bridge tasks holding a shutdown_rx clone.
     drop(shutdown_tx);
 
-    peers.unregister(&peer_addr);
+    peers.unregister(&peer_name);
 
     Ok(())
 }

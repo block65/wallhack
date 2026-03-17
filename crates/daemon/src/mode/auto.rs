@@ -465,6 +465,9 @@ async fn run_auto_connect_session_dispatch(
                 peer_hs.name,
             );
             node_state.update_role(NodeRole::Exit);
+            let peer_role = peer_hs
+                .capabilities
+                .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
             let peer_name = if peer_hs.name.is_empty() {
                 peer_addr.to_string()
             } else {
@@ -495,6 +498,7 @@ async fn run_auto_connect_session_dispatch(
                 instructions_rx,
                 responses_tx,
                 heartbeat,
+                peer_role,
                 &peer_name,
                 peer_addr,
                 &metrics,
@@ -551,6 +555,7 @@ async fn run_auto_exit_session_inner(
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
     responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     _heartbeat: tokio::task::JoinHandle<()>,
+    peer_role: NodeRole,
     peer_name: &str,
     peer_addr: &str,
     metrics: &Arc<Metrics>,
@@ -559,7 +564,7 @@ async fn run_auto_exit_session_inner(
     peers.register(
         peer_name.to_string(),
         peer_addr.to_string(),
-        NodeRole::Entry,
+        peer_role,
         ConnectionSide::Connect,
     );
 
@@ -1037,12 +1042,15 @@ async fn run_auto_accept_session_inner(
             } else {
                 peer_hs.name.clone()
             };
-            // The peer connected to us (we accepted), so side=Accept.
-            // We are exit, so the peer that connected is entry.
+            let peer_role = peer_hs
+                .capabilities
+                .as_ref()
+                .copied()
+                .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
             peers.register(
                 peer_name.clone(),
                 peer_addr.clone(),
-                NodeRole::Entry,
+                peer_role,
                 ConnectionSide::Accept,
             );
 
