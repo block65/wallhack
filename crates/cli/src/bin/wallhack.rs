@@ -88,7 +88,7 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
             args
         };
 
-    let cli = match wallhack_cli::daemon_cli::parse_cli_from_args(daemon_args) {
+    let cli = match wallhack_cli::daemon_cli::parse_cli_from_args(&daemon_args) {
         Ok(cli) => cli,
         Err(e) => {
             if e.exit_code == 0 {
@@ -416,9 +416,8 @@ fn run_repl() -> ! {
         let _ = sender.send(format!("{tag}: {msg}"));
     });
 
-    let daemon_cli =
-        wallhack_cli::daemon_cli::parse_cli_from_args(vec![DAEMON_BIN_NAME.to_string()])
-            .expect("default daemon cli");
+    let daemon_cli = wallhack_cli::daemon_cli::parse_cli_from_args(&[DAEMON_BIN_NAME.to_string()])
+        .expect("default daemon cli");
     let config =
         wallhack_cli::daemon_cli::build_daemon_config(&daemon_cli).expect("default daemon config");
 
