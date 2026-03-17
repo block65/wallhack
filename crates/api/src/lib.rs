@@ -21,7 +21,7 @@ use axum::{
     http::{HeaderValue, Request, header},
     middleware::{self, Next},
     response::Response,
-    routing::{delete, get},
+    routing::{delete, get, post, put},
 };
 
 pub use auth::Auth;
@@ -62,7 +62,7 @@ pub fn router(state: State) -> Router {
     let auth = state.auth.clone();
 
     let protected_routes = Router::new()
-        .route("/status", get(handlers::status))
+        .route("/info", get(handlers::status))
         .route("/stats", get(handlers::stats))
         .route("/peers", get(handlers::peers))
         .route("/peers/{name}", delete(handlers::disconnect_peer))
@@ -72,6 +72,16 @@ pub fn router(state: State) -> Router {
         )
         .route("/routes/{cidr}", delete(handlers::delete_route))
         .route("/events", get(handlers::events))
+        .route("/connect", post(handlers::connect))
+        .route("/listen", post(handlers::listen))
+        .route("/disconnect", post(handlers::disconnect))
+        .route("/ping", get(handlers::ping))
+        .route("/ping/{peer}", get(handlers::ping_peer))
+        .route("/shutdown", post(handlers::shutdown))
+        .route(
+            "/hints",
+            put(handlers::set_hint).delete(handlers::clear_hints),
+        )
         .layer(middleware::from_fn(move |req, next| {
             let auth = auth.clone();
             auth::middleware(auth, req, next)

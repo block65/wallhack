@@ -10,8 +10,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use wallhack_wire::management::{
-    AddRouteRequest, DisconnectPeerRequest, PeersRequest, RemoveRouteRequest, RoutesRequest,
-    StatsRequest, StatusRequest, management_request, management_response,
+    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest,
+    HintLevel, ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest,
+    RoutesRequest, SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    management_request, management_response,
 };
 
 use super::{state::State as ApiState, validation};
@@ -94,6 +96,48 @@ pub struct SuccessResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+/// Connect request body.
+#[derive(Debug, Deserialize)]
+pub struct ConnectRequestBody {
+    pub addr: String,
+}
+
+/// Connect response.
+#[derive(Debug, Serialize)]
+pub struct ConnectResponse {
+    pub peer_addr: String,
+    pub protocol: String,
+}
+
+/// Listen request body.
+#[derive(Debug, Deserialize)]
+pub struct ListenRequestBody {
+    pub addr: String,
+}
+
+/// Listen response.
+#[derive(Debug, Serialize)]
+pub struct ListenResponse {
+    pub listen_addr: String,
+    pub protocol: String,
+    pub fingerprint: String,
+}
+
+/// Ping response.
+#[derive(Debug, Serialize)]
+pub struct PingResponseBody {
+    pub uptime_ms: u64,
+    pub version: String,
+    pub role: String,
+}
+
+/// Set hint request body.
+#[derive(Debug, Deserialize)]
+pub struct SetHintRequestBody {
+    pub level: String,
+    pub role: String,
 }
 
 pub async fn health() -> &'static str {
@@ -472,6 +516,311 @@ pub async fn list_routes(
                 .collect(),
         })),
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn connect(
+    State(state): State<ApiState>,
+    Json(req): Json<ConnectRequestBody>,
+) -> Result<Json<ConnectResponse>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Connect(ConnectRequest {
+            addr: req.addr,
+        }))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match resp.response {
+        Some(management_response::Response::Connect(c)) => Ok(Json(ConnectResponse {
+            peer_addr: c.peer_addr,
+            protocol: c.protocol,
+        })),
+        Some(management_response::Response::Error(e)) => {
+            tracing::warn!("Connect failed: {}", e.message);
+            Err(StatusCode::BAD_REQUEST)
+        }
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn listen(
+    State(state): State<ApiState>,
+    Json(req): Json<ListenRequestBody>,
+) -> Result<Json<ListenResponse>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Listen(ListenRequest {
+            addr: req.addr,
+        }))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match resp.response {
+        Some(management_response::Response::Listen(l)) => Ok(Json(ListenResponse {
+            listen_addr: l.listen_addr,
+            protocol: l.protocol,
+            fingerprint: l.fingerprint,
+        })),
+        Some(management_response::Response::Error(e)) => {
+            tracing::warn!("Listen failed: {}", e.message);
+            Err(StatusCode::BAD_REQUEST)
+        }
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn disconnect(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Disconnect(
+            DisconnectRequest {},
+        ))
+        .await;
+
+    match resp {
+        Ok(r) => match r.response {
+            Some(management_response::Response::Ok(_)) => (
+                StatusCode::OK,
+                Json(SuccessResponse {
+                    success: true,
+                    message: None,
+                }),
+            ),
+            Some(management_response::Response::Error(e)) => (
+                StatusCode::BAD_REQUEST,
+                Json(SuccessResponse {
+                    success: false,
+                    message: Some(e.message),
+                }),
+            ),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(SuccessResponse {
+                    success: false,
+                    message: None,
+                }),
+            ),
+        },
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(SuccessResponse {
+                success: false,
+                message: None,
+            }),
+        ),
+    }
+}
+
+pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponseBody>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Ping(PingRequest {
+            peer: String::new(),
+        }))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match resp.response {
+        Some(management_response::Response::Ping(p)) => {
+            let role = NodeRole::try_from(p.node_role).unwrap_or(NodeRole::Unspecified);
+            Ok(Json(PingResponseBody {
+                uptime_ms: p.uptime_ms,
+                version: p.version,
+                role: role.to_string(),
+            }))
+        }
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn ping_peer(
+    State(state): State<ApiState>,
+    Path(peer): Path<String>,
+) -> Result<Json<PingResponseBody>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Ping(PingRequest { peer }))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match resp.response {
+        Some(management_response::Response::Ping(p)) => {
+            let role = NodeRole::try_from(p.node_role).unwrap_or(NodeRole::Unspecified);
+            Ok(Json(PingResponseBody {
+                uptime_ms: p.uptime_ms,
+                version: p.version,
+                role: role.to_string(),
+            }))
+        }
+        Some(management_response::Response::Error(e)) => {
+            tracing::warn!("Ping peer failed: {}", e.message);
+            Err(StatusCode::NOT_FOUND)
+        }
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn shutdown(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Shutdown(ShutdownRequest {}))
+        .await;
+
+    match resp {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(SuccessResponse {
+                success: true,
+                message: None,
+            }),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(SuccessResponse {
+                success: false,
+                message: None,
+            }),
+        ),
+    }
+}
+
+pub async fn set_hint(
+    State(state): State<ApiState>,
+    Json(req): Json<SetHintRequestBody>,
+) -> (StatusCode, Json<SuccessResponse>) {
+    let level = match req.level.as_str() {
+        "prefer" => HintLevel::Prefer,
+        "exclude" => HintLevel::Exclude,
+        "fixed" => HintLevel::Fixed,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(SuccessResponse {
+                    success: false,
+                    message: Some(format!(
+                        "invalid hint level '{}' (expected: prefer, exclude, fixed)",
+                        req.level
+                    )),
+                }),
+            );
+        }
+    };
+    let role = match req.role.as_str() {
+        "entry" => NodeRole::Entry,
+        "exit" => NodeRole::Exit,
+        "relay" => NodeRole::Relay,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(SuccessResponse {
+                    success: false,
+                    message: Some(format!(
+                        "invalid role '{}' (expected: entry, exit, relay)",
+                        req.role
+                    )),
+                }),
+            );
+        }
+    };
+
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::SetHint(SetHintRequest {
+            level: level.into(),
+            role: role.into(),
+        }))
+        .await;
+
+    match resp {
+        Ok(r) => match r.response {
+            Some(management_response::Response::Ok(_)) => (
+                StatusCode::OK,
+                Json(SuccessResponse {
+                    success: true,
+                    message: None,
+                }),
+            ),
+            Some(management_response::Response::Error(e)) => (
+                StatusCode::BAD_REQUEST,
+                Json(SuccessResponse {
+                    success: false,
+                    message: Some(e.message),
+                }),
+            ),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(SuccessResponse {
+                    success: false,
+                    message: None,
+                }),
+            ),
+        },
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(SuccessResponse {
+                success: false,
+                message: None,
+            }),
+        ),
+    }
+}
+
+pub async fn clear_hints(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::ClearHints(
+            ClearHintsRequest {},
+        ))
+        .await;
+
+    match resp {
+        Ok(r) => match r.response {
+            Some(management_response::Response::Ok(_)) => (
+                StatusCode::OK,
+                Json(SuccessResponse {
+                    success: true,
+                    message: None,
+                }),
+            ),
+            Some(management_response::Response::Error(e)) => (
+                StatusCode::BAD_REQUEST,
+                Json(SuccessResponse {
+                    success: false,
+                    message: Some(e.message),
+                }),
+            ),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(SuccessResponse {
+                    success: false,
+                    message: None,
+                }),
+            ),
+        },
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(SuccessResponse {
+                success: false,
+                message: None,
+            }),
+        ),
     }
 }
 

@@ -2,7 +2,7 @@
 	"openapi": "3.1.0",
 	"info": {
 		"title": "wallhack REST API",
-		"version": "0.3.0",
+		"version": "0.4.0",
 		"description": "Headless control plane for wallhack nodes. All endpoints except /health require Basic authentication when --api-user and --api-secret are configured."
 	},
 	"servers": [
@@ -224,6 +224,93 @@
 						"description": "Optional detail providing context for success or failure."
 					}
 				}
+			},
+			"ConnectRequest": {
+				"type": "object",
+				"required": ["addr"],
+				"properties": {
+					"addr": {
+						"type": "string",
+						"description": "Remote peer address to connect to (e.g., quic://1.2.3.4:4433)."
+					}
+				}
+			},
+			"ConnectResponse": {
+				"type": "object",
+				"required": ["peer_addr", "protocol"],
+				"properties": {
+					"peer_addr": {
+						"type": "string",
+						"description": "Resolved remote peer address."
+					},
+					"protocol": {
+						"type": "string",
+						"description": "Transport protocol used (QUIC or WebSocket)."
+					}
+				}
+			},
+			"ListenRequest": {
+				"type": "object",
+				"required": ["addr"],
+				"properties": {
+					"addr": {
+						"type": "string",
+						"description": "Address to listen on (e.g., quic://0.0.0.0:4433)."
+					}
+				}
+			},
+			"ListenResponse": {
+				"type": "object",
+				"required": ["listen_addr", "protocol", "fingerprint"],
+				"properties": {
+					"listen_addr": {
+						"type": "string",
+						"description": "Actual bound address (important if port was 0)."
+					},
+					"protocol": {
+						"type": "string",
+						"description": "Transport protocol used (QUIC or WebSocket)."
+					},
+					"fingerprint": {
+						"type": "string",
+						"description": "Certificate fingerprint (SHA-256) for peer verification."
+					}
+				}
+			},
+			"PingResponse": {
+				"type": "object",
+				"required": ["uptime_ms", "version", "role"],
+				"properties": {
+					"uptime_ms": {
+						"type": "integer",
+						"description": "Node uptime in milliseconds."
+					},
+					"version": {
+						"type": "string",
+						"description": "Binary version string."
+					},
+					"role": {
+						"type": "string",
+						"enum": ["entry", "exit", "relay", "indeterminate", "unknown"],
+						"description": "Current operational role of the node or peer."
+					}
+				}
+			},
+			"SetHintRequest": {
+				"type": "object",
+				"required": ["level", "role"],
+				"properties": {
+					"level": {
+						"type": "string",
+						"enum": ["prefer", "exclude", "fixed"],
+						"description": "Hint strength: prefer (soft), exclude (medium), fixed (hard)."
+					},
+					"role": {
+						"type": "string",
+						"enum": ["entry", "exit", "relay"],
+						"description": "Role to apply the hint to."
+					}
+				}
 			}
 		}
 	},
@@ -244,15 +331,15 @@
 				}
 			}
 		},
-		"/status": {
+		"/info": {
 			"get": {
-				"summary": "Node status",
+				"summary": "Node info",
 				"description": "Retrieves node identity, role, capabilities, and uptime.",
-				"operationId": "status",
+				"operationId": "getInfo",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
-						"description": "Status retrieved.",
+						"description": "Info retrieved.",
 						"content": {
 							"application/json": {
 								"schema": { "$ref": "#/components/schemas/StatusResponse" }
@@ -424,6 +511,194 @@
 					"400": { "description": "Invalid CIDR format." },
 					"401": { "description": "Unauthorized." },
 					"404": { "description": "Specified route does not exist." }
+				}
+			}
+		},
+		"/connect": {
+			"post": {
+				"summary": "Connect to peer",
+				"description": "Initiates an outbound connection to a remote peer.",
+				"operationId": "connect",
+				"security": [{ "basicAuth": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/ConnectRequest" }
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Connection initiated.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/ConnectResponse" }
+							}
+						}
+					},
+					"400": { "description": "Invalid address or connection refused." },
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/listen": {
+			"post": {
+				"summary": "Start listener",
+				"description": "Begins accepting inbound peer connections on the given address.",
+				"operationId": "listen",
+				"security": [{ "basicAuth": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/ListenRequest" }
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Listener started.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/ListenResponse" }
+							}
+						}
+					},
+					"400": { "description": "Invalid address or already listening." },
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/disconnect": {
+			"post": {
+				"summary": "Disconnect transport",
+				"description": "Tears down the active transport session (both connect and listen).",
+				"operationId": "disconnect",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Transport disconnected.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"400": { "description": "Not connected." },
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/ping": {
+			"get": {
+				"summary": "Ping daemon",
+				"description": "Retrieves daemon liveness info: uptime, version, and role.",
+				"operationId": "ping",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Daemon is alive.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/PingResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/ping/{peer}": {
+			"get": {
+				"summary": "Ping peer",
+				"description": "Pings a specific connected peer by name or prefix.",
+				"operationId": "pingPeer",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "peer",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string" },
+						"description": "Peer name or unambiguous prefix."
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Peer responded.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/PingResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." },
+					"404": { "description": "Peer not found." }
+				}
+			}
+		},
+		"/shutdown": {
+			"post": {
+				"summary": "Shutdown daemon",
+				"description": "Initiates graceful shutdown of the daemon process.",
+				"operationId": "shutdown",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Shutdown initiated.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/hints": {
+			"put": {
+				"summary": "Set role hint",
+				"description": "Configures a negotiation hint to influence auto-role resolution.",
+				"operationId": "setHint",
+				"security": [{ "basicAuth": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/SetHintRequest" }
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Hint applied.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"400": { "description": "Invalid hint level or role." },
+					"401": { "description": "Unauthorized." }
+				}
+			},
+			"delete": {
+				"summary": "Clear hints",
+				"description": "Removes all role hints, returning to pure capability-based negotiation.",
+				"operationId": "clearHints",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Hints cleared.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
 				}
 			}
 		}
