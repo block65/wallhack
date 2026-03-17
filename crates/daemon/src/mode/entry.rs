@@ -1132,7 +1132,8 @@ fn start_api(
 
     let ipc_conn = IpcConnection::new(api_client);
     let auth = Auth::new(username, secret);
-    let state = ApiState::new(ipc_conn, auth);
+    let peer_events = peers.events_sender();
+    let state = ApiState::new(ipc_conn, auth, peer_events);
 
     tokio::spawn(async move {
         if let Err(e) = wallhack_api::serve(api_addr, state, tls_config).await {
@@ -1148,6 +1149,7 @@ fn start_api(
 pub(crate) fn start_api_standalone(
     api_cfg: crate::daemon_config::ApiConfig,
     api: std::sync::Arc<dyn wallhack_core::node_api::NodeApi>,
+    peer_events: tokio::sync::broadcast::Sender<wallhack_core::control::peers::PeerEvent>,
     global: &crate::daemon_config::GlobalConfig,
 ) {
     use wallhack_api::{Auth, State as ApiState};
@@ -1166,7 +1168,7 @@ pub(crate) fn start_api_standalone(
 
     let ipc_conn = IpcConnection::new(api_client);
     let auth = Auth::new(api_cfg.user, api_cfg.secret);
-    let state = ApiState::new(ipc_conn, auth);
+    let state = ApiState::new(ipc_conn, auth, peer_events);
 
     tokio::spawn(async move {
         if let Err(e) = wallhack_api::serve(api_cfg.addr, state, tls_config).await {

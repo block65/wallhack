@@ -84,16 +84,23 @@ pub struct State {
     pub(super) ipc: Arc<Mutex<IpcConnection>>,
     pub(super) auth: Auth,
     pub(super) cors: CorsPolicy,
+    pub(super) peer_events:
+        tokio::sync::broadcast::Sender<wallhack_core::control::peers::PeerEvent>,
 }
 
 impl State {
     /// Create API state with an IPC connection and optional auth.
     #[must_use]
-    pub fn new(ipc: IpcConnection, auth: Auth) -> Self {
+    pub fn new(
+        ipc: IpcConnection,
+        auth: Auth,
+        peer_events: tokio::sync::broadcast::Sender<wallhack_core::control::peers::PeerEvent>,
+    ) -> Self {
         Self {
             ipc: Arc::new(Mutex::new(ipc)),
             auth,
             cors: CorsPolicy::default(),
+            peer_events,
         }
     }
 

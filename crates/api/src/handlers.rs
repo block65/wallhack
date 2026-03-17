@@ -6,6 +6,7 @@ use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
+    response::sse::{Event, Sse},
 };
 use serde::{Deserialize, Serialize};
 use wallhack_wire::management::{
@@ -97,6 +98,45 @@ pub struct SuccessResponse {
 
 pub async fn health() -> &'static str {
     "ok"
+}
+
+pub async fn events(
+    State(state): State<ApiState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    use tokio_stream::{StreamExt as _, wrappers::BroadcastStream};
+    use wallhack_core::control::peers::PeerEvent;
+
+    let stream = BroadcastStream::new(state.peer_events.subscribe()).filter_map(|result| {
+        match result {
+            Ok(PeerEvent::Connected { name, addr, role }) => {
+                let data = serde_json::json!({
+                    "type": "peer_connected",
+                    "name": name,
+                    "addr": addr,
+                    "role": format!("{role:?}").to_ascii_lowercase(),
+                });
+                Some(Ok(Event::default()
+                    .event("peer_connected")
+                    .data(data.to_string())))
+            }
+            Ok(PeerEvent::Disconnected { name }) => {
+                let data = serde_json::json!({
+                    "type": "peer_disconnected",
+                    "name": name,
+                });
+                Some(Ok(Event::default()
+                    .event("peer_disconnected")
+                    .data(data.to_string())))
+            }
+            Err(_) => None, // lagged — skip
+        }
+    });
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("\u{1f9f1}"),
+    )
 }
 
 pub async fn status(State(state): State<ApiState>) -> Result<Json<StatusResponse>, StatusCode> {

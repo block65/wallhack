@@ -80,7 +80,12 @@ pub async fn run_daemon_engine(
             _ => None,
         };
         if let Some(api_cfg) = api_cfg {
-            mode::entry::start_api_standalone(api_cfg, handle.api_arc(), &config.global);
+            mode::entry::start_api_standalone(
+                api_cfg,
+                handle.api_arc(),
+                handle.peer_events_sender(),
+                &config.global,
+            );
         }
     }
 

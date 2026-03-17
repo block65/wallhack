@@ -24,6 +24,7 @@ tracing = { workspace = true }
 urlencoding = "2"
 base64 = "0.22"
 subtle = "2"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [lints]
 workspace = true

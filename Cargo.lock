@@ -3305,6 +3305,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3732,6 +3733,7 @@ dependencies = [
  "subtle",
  "time",
  "tokio",
+ "tokio-stream",
  "tower-http",
  "tracing",
  "urlencoding",

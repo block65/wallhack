@@ -71,6 +71,7 @@ pub fn router(state: State) -> Router {
             get(handlers::list_routes).post(handlers::add_route),
         )
         .route("/routes/{cidr}", delete(handlers::delete_route))
+        .route("/events", get(handlers::events))
         .layer(middleware::from_fn(move |req, next| {
             let auth = auth.clone();
             auth::middleware(auth, req, next)
