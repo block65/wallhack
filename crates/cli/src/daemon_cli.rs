@@ -499,6 +499,9 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
 
         match command {
             Command::Entry(cmd) => {
+                if !wallhackd::detect_tun_capable() {
+                    return Err(ConfigError::RoleEntryRequiresTun);
+                }
                 let connectivity = resolve_entry_transport(&cmd)?;
                 let api = resolve_api_config(&cmd);
                 ModeConfig::Entry(EntryConfig {

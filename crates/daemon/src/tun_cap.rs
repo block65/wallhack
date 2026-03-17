@@ -10,12 +10,11 @@
 
 /// Detect whether this process can create a TUN interface.
 ///
-/// **Linux:** Opens `/dev/net/tun` with read+write access and immediately
-/// closes it. This is one syscall and gives the actual kernel answer.
+/// **Linux:** Checks for `CAP_NET_ADMIN` in the effective capability set
+/// via `/proc/self/status`. Opening `/dev/net/tun` alone is insufficient —
+/// the `TUNSETIFF` ioctl requires `CAP_NET_ADMIN`.
 ///
-/// **macOS:** Returns `false` pending proper `utun` probing via
-/// `socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL)`. Conservative default
-/// until macOS TUN support is implemented.
+/// **macOS:** Returns `false` pending proper `utun` probing.
 ///
 /// **All other platforms:** Returns `false`.
 #[must_use]
@@ -25,11 +24,29 @@ pub fn detect_tun_capable() -> bool {
 
 #[cfg(target_os = "linux")]
 fn detect_tun_capable_impl() -> bool {
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/net/tun")
-        .is_ok()
+    // Opening /dev/net/tun succeeds for most users — the actual TUNSETIFF
+    // ioctl that creates the interface requires CAP_NET_ADMIN. Check for
+    // the capability directly so negotiation gets the real answer.
+    has_cap_net_admin()
+}
+
+/// Check if the current process has `CAP_NET_ADMIN` in its effective set.
+///
+/// Reads `/proc/self/status` for the `CapEff` bitmask and tests bit 12.
+#[cfg(target_os = "linux")]
+fn has_cap_net_admin() -> bool {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    for line in status.lines() {
+        if let Some(hex) = line.strip_prefix("CapEff:\t") {
+            let Ok(caps) = u64::from_str_radix(hex.trim(), 16) else {
+                return false;
+            };
+            return caps & (1 << 12) != 0;
+        }
+    }
+    false
 }
 
 #[cfg(not(target_os = "linux"))]
