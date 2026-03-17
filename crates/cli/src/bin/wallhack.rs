@@ -22,9 +22,10 @@ use wallhack_cli::{
     ipc, output,
 };
 use wallhack_wire::management::{
-    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectRequest, HintLevel,
-    ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest, RoutesRequest,
-    SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest, management_request,
+    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest,
+    HintLevel, ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest,
+    RoutesRequest, SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    management_request,
 };
 
 const DAEMON_BIN_NAME: &str = "wallhackd";
@@ -349,6 +350,12 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
             management_request::Request::Listen(ListenRequest { addr: cmd.addr })
         }
         CtlCommand::Disconnect(_) => management_request::Request::Disconnect(DisconnectRequest {}),
+        CtlCommand::DisconnectPeer(cmd) => {
+            management_request::Request::DisconnectPeer(DisconnectPeerRequest {
+                peer: cmd.peer,
+                exact: false,
+            })
+        }
         CtlCommand::Role(cmd) => {
             if let Some(target) = cmd.target {
                 let role = parse_ctl_role(&target);
