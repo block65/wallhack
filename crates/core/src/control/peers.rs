@@ -149,15 +149,17 @@ impl Registry {
     ) -> (String, u64) {
         let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed) + 1;
 
-        // Disambiguate duplicate names using the unique connection ID.
-        let peers = self.peers.load();
-        let peer_id = if peers.contains_key(&id) {
-            let disambiguated = format!("{id}#{connection_id}");
-            tracing::info!("Peer name {id:?} already registered, using {disambiguated:?}");
-            disambiguated
-        } else {
-            id.clone()
-        };
+        // If a peer with the same name already exists, evict it — the new
+        // connection supersedes the old one (reconnect scenario). Send a
+        // Disconnect so the old transport closes cleanly.
+        if self.peers.load().contains_key(&id) {
+            tracing::info!("Peer {id:?} reconnected, replacing existing entry");
+            self.send_disconnect(&id, "superseded by new connection");
+            // Remove from peers map; the old session task will notice its
+            // control channel closed and clean up.
+            self.unregister(&id);
+        }
+        let peer_id = id.clone();
 
         let info = PeerInfo {
             id: peer_id.clone(),
@@ -503,21 +505,16 @@ mod tests {
         );
         assert_eq!(id1, "peer1");
 
+        // Re-register same name — old entry is evicted, new one takes the name.
         let (id2, _) = registry.register(
             "peer1".into(),
             "1.2.3.4:9999".into(),
             NodeRole::Exit,
             ConnectionSide::Accept,
         );
-        assert!(
-            id2.starts_with("peer1#"),
-            "expected disambiguated id, got {id2}"
-        );
-        assert_eq!(registry.count(), 2);
+        assert_eq!(id2, "peer1", "reconnect should reuse the name");
+        assert_eq!(registry.count(), 1, "old entry should be evicted");
 
-        // Both are independently unregisterable.
-        registry.unregister(&id1);
-        assert_eq!(registry.count(), 1);
         registry.unregister(&id2);
         assert_eq!(registry.count(), 0);
     }
@@ -542,19 +539,20 @@ mod tests {
             ConnectionSide::Accept,
         );
         assert_eq!(peer_id1, "peer1");
-        // Re-register same peer — now disambiguated as "peer1#N".
+        // Re-register same peer — old entry is evicted, new one takes the name.
         let (peer_id2, gen2) = registry.register(
             "peer1".into(),
             "1.2.3.4:9999".into(),
             NodeRole::Exit,
             ConnectionSide::Accept,
         );
+        assert_eq!(peer_id2, "peer1");
         assert_ne!(gen1, gen2);
-        assert_eq!(registry.count(), 2);
+        assert_eq!(registry.count(), 1);
 
-        // Old task unregisters with stale connection_id on the original key — should succeed
-        // since the original "peer1" entry still exists.
-        assert!(registry.unregister_if_current(&peer_id1, gen1).is_some());
+        // Old task tries to unregister with stale connection_id — should be a no-op
+        // since the entry now belongs to the new connection.
+        assert!(registry.unregister_if_current(&peer_id1, gen1).is_none());
         assert_eq!(registry.count(), 1);
 
         // New task unregisters with current connection_id — should succeed.
