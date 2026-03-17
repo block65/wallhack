@@ -43,5 +43,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_instructions(&GitclBuilder::default().sha(true).dirty(true).build()?)?
         .add_custom_instructions(&WallhackBuildEnv)?
         .emit()?;
+
+    // vergen emits cargo:rerun-if-changed=.git/HEAD so the build script
+    // only reruns on git state changes. Force it to always rerun so the
+    // build timestamp reflects the actual compilation time.
+    println!("cargo:rerun-if-changed=.build_timestamp_force");
+    //
+    let ts = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !ts.is_empty() {
+        println!("cargo:rustc-env=VERGEN_BUILD_TIMESTAMP={ts}");
+    }
+
     Ok(())
 }
