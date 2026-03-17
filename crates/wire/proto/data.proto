@@ -222,6 +222,7 @@ message Capabilities {
   bool tun_capable = 1;  // Whether this node can create TUN interfaces
   bool listening = 2;    // Can accept incoming connections
   bool connecting = 3;   // Can initiate outgoing connections
+  bool interactive = 4;  // Human at terminal — tiebreaker for auto-negotiation
 }
 
 // Handshake message exchanged bidirectionally after transport connects.

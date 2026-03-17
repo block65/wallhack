@@ -138,6 +138,7 @@ impl Client for QuicClient {
                     tun_capable: false,
                     listening: false,
                     connecting: true,
+                    interactive: false,
                 }),
                 name: self.name.clone().unwrap_or_default(),
                 version: env!("CARGO_PKG_VERSION").to_string(),

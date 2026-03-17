@@ -266,6 +266,7 @@ mod tests {
                 tun_capable,
                 listening,
                 connecting,
+                interactive: false,
             }),
             name: String::new(),
             version: String::new(),

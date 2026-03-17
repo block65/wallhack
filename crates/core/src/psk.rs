@@ -83,6 +83,7 @@ mod tests {
                 tun_capable: true,
                 listening: true,
                 connecting: false,
+                interactive: false,
             }),
             name: "test-node".to_string(),
             version: "0.1.0".to_string(),
