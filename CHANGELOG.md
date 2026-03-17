@@ -1,6 +1,32 @@
 
 # Changelog
 
+## [0.10.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.9.0...wallhack-cli-v0.10.0) (2026-03-17)
+
+### Features
+
+* **api:** rename /ping to /status, expose full node info ([53439c1](https://github.com/block65/wallhack/commit/53439c150de19194ea91ce4cb4057f0b67af7c4a))
+* **api:** disconnect_peer sends Disconnect over control channel ([ae3b63e](https://github.com/block65/wallhack/commit/ae3b63e3a9bc210168149386347d6063c90375e2))
+* **api:** SSE /events endpoint for real-time peer lifecycle ([f674e73](https://github.com/block65/wallhack/commit/f674e73289348a59f36834bc131cc0e445d3c004))
+* **daemon:** initial ping + 30s heartbeat on all connection paths ([c664eb2](https://github.com/block65/wallhack/commit/c664eb244c5d9795b7b672f76eca08f448fc22f0))
+
+### Bug Fixes
+
+* **api:** resolve disconnect_peer TOCTOU race returning spurious 404 ([7de616a](https://github.com/block65/wallhack/commit/7de616a88632fed7b8d57fa328d7b39e2753c542))
+* **api:** upgrade axum 0.7→0.8, axum-server 0.7→0.8 ([0b3042f](https://github.com/block65/wallhack/commit/0b3042f5429dae3c0d0cd8351d4e2116cd4b36f3))
+* **api:** exact id match for REST disconnect, prefix match for REPL/CLI ([63e0247](https://github.com/block65/wallhack/commit/63e02470f46107501509ce6cc0b545f704036adb))
+* **api:** use ASCII keep-alive text in SSE stream ([d10e889](https://github.com/block65/wallhack/commit/d10e889c3d5dd5b383c3561a99218aad3715198b))
+* **build:** force build timestamp to refresh on every compilation ([d40ef26](https://github.com/block65/wallhack/commit/d40ef267b0e29762c1ce9f308d7cb119a470fca1))
+* **cli:** show node name in info output, add /events to OpenAPI spec ([f7b1c9e](https://github.com/block65/wallhack/commit/f7b1c9e5251dc955993d3ea1c44d79f39d90d60c))
+* **cli:** peer notification wording — "connected with" / "disconnected from" ([767ae74](https://github.com/block65/wallhack/commit/767ae74f577dba52361a4af16da633036d77400c))
+* **cli,mcp:** parity — show name, connected, capabilities in status output ([c051ae0](https://github.com/block65/wallhack/commit/c051ae07f52bf5bc65b2b60a6acca88f61ac12a4))
+* **peers:** disambiguate duplicate peer names, expose id field ([2ba6d6f](https://github.com/block65/wallhack/commit/2ba6d6f6a30a883ffd333cf922a0997b8ad02c21))
+* **peers:** reconnecting peer evicts old entry instead of duplicating ([8824fc2](https://github.com/block65/wallhack/commit/8824fc2d2f96962e55fdfb1951be3344e9fbd2f6))
+* **peers:** derive peer role from capabilities instead of hardcoding Entry ([b0408be](https://github.com/block65/wallhack/commit/b0408be5e1b138e8aeeb5c07ef03fd3041aaa792))
+
+2 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.9.0...wallhack-cli-v0.10.0)
+
+
 ## [0.9.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.3...wallhack-cli-v0.9.0) (2026-03-17)
 
 ### Features
