@@ -64,9 +64,9 @@ pub struct PeerInfo {
     /// Which side initiated the connection.
     pub side: ConnectionSide,
     /// When the peer connected (monotonic, for uptime/latency calculations).
-    pub connected_at: Instant,
+    pub connect_time: Instant,
     /// When the peer connected (wall clock, seconds since epoch).
-    pub connected_at_epoch: u64,
+    pub connect_time_epoch: u64,
     /// Total bytes transferred through this peer.
     pub bytes_transferred: u64,
     /// Latest measured latency in milliseconds.
@@ -148,8 +148,8 @@ impl Registry {
             role,
             capabilities: Capabilities::default(),
             side,
-            connected_at: Instant::now(),
-            connected_at_epoch: std::time::SystemTime::now()
+            connect_time: Instant::now(),
+            connect_time_epoch: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),

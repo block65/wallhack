@@ -63,7 +63,7 @@ pub struct RouteAddRequest {
 pub struct RouteResponse {
     pub cidr: String,
     pub peer: String,
-    pub added_at_secs: u64,
+    pub create_time: String,
 }
 
 /// Routes list response.
@@ -149,7 +149,7 @@ pub async fn peers(State(state): State<ApiState>) -> Result<Json<PeersResponse>,
                         name: peer.name,
                         addr: peer.addr,
                         role: role.to_string(),
-                        connect_time: epoch_to_iso8601(peer.connected_at_secs),
+                        connect_time: epoch_to_iso8601(peer.connect_time),
                         bytes_transferred: peer.bytes_transferred,
                         latency_ms: if peer.latency_ms > 0.0 {
                             Some(peer.latency_ms)
@@ -389,7 +389,7 @@ pub async fn list_routes(
                 .map(|route| RouteResponse {
                     cidr: route.cidr,
                     peer: route.peer,
-                    added_at_secs: route.added_at_secs,
+                    create_time: epoch_to_iso8601(route.create_time),
                 })
                 .collect(),
         })),

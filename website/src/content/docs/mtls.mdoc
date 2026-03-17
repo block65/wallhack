@@ -36,9 +36,9 @@ openssl x509 -req -in node-req.pem -days 365 \
 
 Pass the certificate, key, and CA to both nodes using `--cert`, `--key`, and `--ca`. Each node presents its certificate and verifies the other against the shared CA.
 
-{% codeblock code="wallhack --cert node-cert.pem --key node-key.pem --ca ca-cert.pem entry --listen :443" title="Entry node" /%}
+{% codeblock code="wallhack --cert node-cert.pem --key node-key.pem --ca ca-cert.pem --role entry --listen :443" title="Entry node" /%}
 
-{% codeblock code="wallhack --cert node-cert.pem --key node-key.pem --ca ca-cert.pem exit --connect ENTRY:443" title="Exit node" /%}
+{% codeblock code="wallhack --cert node-cert.pem --key node-key.pem --ca ca-cert.pem --role exit --connect ENTRY:443" title="Exit node" /%}
 
 {% callout type="tip" %}
 Issue unique certificates per node rather than sharing one. This lets you revoke a single node without regenerating the entire chain.

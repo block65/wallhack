@@ -58,7 +58,7 @@ message PeerInfo {
   string name = 1;
   string addr = 2;
   wallhack.data.NodeRole role = 3;
-  uint64 connected_at = 4;
+  uint64 connect_time = 4;
   uint64 bytes_transferred = 5;
   double latency_ms = 6;
 }
@@ -95,7 +95,7 @@ message RouteListResponse {
 message RouteInfo {
   string cidr = 1;
   string peer = 2;
-  uint64 added_at_secs = 3;
+  uint64 create_time = 3;
 }
 
 message ErrorResponse {

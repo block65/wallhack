@@ -2,13 +2,13 @@
 	"openapi": "3.1.0",
 	"info": {
 		"title": "wallhack REST API",
-		"version": "0.1.2",
-		"description": "Headless control plane for wallhack entry nodes. All endpoints except /health require Basic authentication when --api-user and --api-pass are configured."
+		"version": "0.2.0",
+		"description": "Headless control plane for wallhack nodes. All endpoints except /health require Basic authentication when --api-user and --api-secret are configured."
 	},
 	"servers": [
 		{
-			"url": "https://127.0.0.1:6566",
-			"description": "Local entry node (default port)"
+			"url": "https://127.0.0.1:6564",
+			"description": "Local node (default port)"
 		}
 	],
 	"components": {
@@ -34,7 +34,7 @@
 					},
 					"node_role": {
 						"type": "string",
-						"description": "Operational role of this node (e.g., Entry, Relay, Exit)."
+						"description": "Operational role of this node (e.g., entry, relay, exit, indeterminate)."
 					}
 				}
 			},
@@ -81,7 +81,7 @@
 					"name",
 					"addr",
 					"role",
-					"connected_at",
+					"connect_time",
 					"bytes_transferred"
 				],
 				"properties": {
@@ -95,12 +95,13 @@
 					},
 					"role": {
 						"type": "string",
-						"enum": ["exit", "relay"],
-						"description": "Functional role of the connected peer."
+						"enum": ["entry", "exit", "relay", "indeterminate", "unknown"],
+						"description": "Negotiated role of the connected peer."
 					},
-					"connected_at": {
-						"type": "integer",
-						"description": "Unix timestamp (seconds) when the connection was established."
+					"connect_time": {
+						"type": "string",
+						"format": "date-time",
+						"description": "ISO 8601 UTC timestamp when the connection was established."
 					},
 					"bytes_transferred": {
 						"type": "integer",
@@ -140,7 +141,7 @@
 			},
 			"RouteResponse": {
 				"type": "object",
-				"required": ["cidr", "peer", "added_at_secs"],
+				"required": ["cidr", "peer", "create_time"],
 				"properties": {
 					"cidr": {
 						"type": "string",
@@ -150,9 +151,10 @@
 						"type": "string",
 						"description": "Name of the peer responsible for this route."
 					},
-					"added_at_secs": {
-						"type": "integer",
-						"description": "Unix timestamp when the route was established."
+					"create_time": {
+						"type": "string",
+						"format": "date-time",
+						"description": "ISO 8601 UTC timestamp when the route was established."
 					}
 				}
 			},
@@ -178,28 +180,6 @@
 					"message": {
 						"type": "string",
 						"description": "Optional detail providing context for success or failure."
-					}
-				}
-			},
-			"Event": {
-				"type": "object",
-				"description": "SSE event notification.",
-				"required": ["type", "data"],
-				"properties": {
-					"type": {
-						"type": "string",
-						"enum": [
-							"PeerConnected",
-							"PeerDisconnected",
-							"PeerLatency",
-							"StatsUpdate",
-							"Error"
-						],
-						"description": "The category of the event."
-					},
-					"data": {
-						"type": "object",
-						"description": "Event-specific payload data."
 					}
 				}
 			}
@@ -383,25 +363,6 @@
 					"400": { "description": "Invalid CIDR format." },
 					"401": { "description": "Unauthorized." },
 					"404": { "description": "Specified route does not exist." }
-				}
-			}
-		},
-		"/events": {
-			"get": {
-				"summary": "Live event stream",
-				"description": "Subscribes to real-time node events (peer lifecycle, latency, stats) via Server-Sent Events (SSE).",
-				"operationId": "events",
-				"security": [{ "basicAuth": [] }],
-				"responses": {
-					"200": {
-						"description": "SSE stream established.",
-						"content": {
-							"text/event-stream": {
-								"schema": { "$ref": "#/components/schemas/Event" }
-							}
-						}
-					},
-					"401": { "description": "Unauthorized." }
 				}
 			}
 		}

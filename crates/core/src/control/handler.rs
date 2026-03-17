@@ -238,12 +238,12 @@ impl Handler {
             .list()
             .into_iter()
             .map(|p| {
-                let connected_at = p.connected_at.elapsed();
+                let connect_time = p.connect_time.elapsed();
                 PeerInfo {
                     name: p.name,
                     addr: p.addr,
                     role: ProtoNodeRole::from(p.role).into(),
-                    connected_at: connected_at.as_secs(),
+                    connect_time: connect_time.as_secs(),
                     bytes_transferred: p.bytes_transferred,
                     latency_ms: p.latency_ms.unwrap_or(0.0),
                 }
@@ -357,7 +357,7 @@ impl Handler {
             .map(|entry| RouteInfo {
                 cidr: entry.cidr.to_string(),
                 peer: entry.peer,
-                added_at_secs: entry.added_at.elapsed().as_secs(),
+                create_time: entry.create_time.elapsed().as_secs(),
             })
             .collect();
 
@@ -389,7 +389,7 @@ impl crate::node_api::NodeApi for Handler {
                 capabilities: p.capabilities,
                 side: p.side,
                 status: crate::node_api::PeerStatus::Connected,
-                connected_at_secs: p.connected_at_epoch,
+                connect_time: p.connect_time_epoch,
                 bytes_transferred: p.bytes_transferred,
                 latency_ms: p.latency_ms,
                 tun_name: p.tun_name,
@@ -405,7 +405,7 @@ impl crate::node_api::NodeApi for Handler {
             .map(|r| crate::node_api::RouteEntry {
                 cidr: r.cidr,
                 peer: r.peer,
-                added_at: r.added_at,
+                create_time: r.create_time,
                 auto_managed: r.auto_managed,
             })
             .collect())

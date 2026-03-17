@@ -170,7 +170,7 @@ message PeerInfo {
   reserved 3;
   reserved "capability";
   PeerStatus status = 4;
-  uint64 connected_at_secs = 5;
+  uint64 connect_time = 5;
   uint64 bytes_transferred = 6;
   double latency_ms = 7;
   bool tun_capable = 8;
@@ -187,7 +187,7 @@ message PeersResponse {
 message RouteEntry {
   string cidr = 1;
   string peer = 2;
-  uint64 added_at_secs = 3;
+  uint64 create_time = 3;
   bool auto_managed = 4; // installed from peer's Handshake.routes advertisement
 }
 
