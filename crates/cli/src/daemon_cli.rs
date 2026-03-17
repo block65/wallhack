@@ -80,6 +80,22 @@ pub struct WallhackCli {
     #[argh(option)]
     pub accept_fingerprint: Option<String>,
 
+    /// REST API listen address (e.g. "127.0.0.1:6564")
+    #[argh(option)]
+    pub api: Option<String>,
+
+    /// REST API username for basic auth (default: admin)
+    #[argh(option)]
+    pub api_user: Option<String>,
+
+    /// REST API secret for basic auth (default: auto-generated)
+    #[argh(option)]
+    pub api_secret: Option<String>,
+
+    /// maximum number of concurrent peer connections
+    #[argh(option)]
+    pub max_peers: Option<usize>,
+
     /// prefer a role during auto-negotiation (entry, exit, relay)
     #[argh(option)]
     pub prefer_role: Option<String>,
@@ -391,15 +407,19 @@ fn resolve_psk(psk: Option<&String>) -> Option<String> {
 }
 
 /// Resolve API credentials, generating a random secret if not provided.
-fn resolve_api_config(cmd: &EntryCommand) -> Option<ApiConfig> {
-    let api_str = cmd.api.as_ref()?;
+fn resolve_api_config(
+    api: Option<&String>,
+    api_user: Option<&String>,
+    api_secret: Option<&String>,
+) -> Option<ApiConfig> {
+    let api_str = api?;
     let addr = api_str
         .parse()
         .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 6564)));
 
-    let user = cmd.api_user.clone().unwrap_or_else(|| "admin".to_string());
+    let user = api_user.cloned().unwrap_or_else(|| "admin".to_string());
 
-    let secret = if let Some(s) = &cmd.api_secret {
+    let secret = if let Some(s) = api_secret {
         s.clone()
     } else {
         use rand::Rng;
@@ -489,6 +509,12 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
             listen,
             accept_fingerprint: cli.accept_fingerprint.clone(),
             hint,
+            api: resolve_api_config(
+                cli.api.as_ref(),
+                cli.api_user.as_ref(),
+                cli.api_secret.as_ref(),
+            ),
+            max_peers: cli.max_peers,
         })
     } else {
         if hint.is_some() {
@@ -503,12 +529,16 @@ pub fn build_daemon_config(cli: &WallhackCli) -> Result<DaemonConfig, ConfigErro
                     return Err(ConfigError::RoleEntryRequiresTun);
                 }
                 let connectivity = resolve_entry_transport(&cmd)?;
-                let api = resolve_api_config(&cmd);
+                let api = resolve_api_config(
+                    cmd.api.as_ref().or(cli.api.as_ref()),
+                    cmd.api_user.as_ref().or(cli.api_user.as_ref()),
+                    cmd.api_secret.as_ref().or(cli.api_secret.as_ref()),
+                );
                 ModeConfig::Entry(EntryConfig {
                     name: cmd.name.unwrap_or_else(generate_node_name),
                     connectivity,
                     api,
-                    max_peers: cmd.max_peers,
+                    max_peers: cmd.max_peers.or(cli.max_peers),
                 })
             }
             Command::Exit(cmd) => {
