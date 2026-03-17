@@ -76,19 +76,19 @@ pub struct WallhackCli {
     #[argh(option, short = 'n')]
     pub name: Option<String>,
 
-    /// accept server certificate by fingerprint for auto-negotiated mode
+    /// accept server certificate by fingerprint
     #[argh(option)]
     pub accept_fingerprint: Option<String>,
 
     /// prefer a role during auto-negotiation (entry, exit, relay)
     #[argh(option)]
-    pub prefer: Option<String>,
+    pub prefer_role: Option<String>,
 
     /// exclude a role during auto-negotiation (entry, exit, relay)
     #[argh(option)]
     pub exclude_role: Option<String>,
 
-    /// fix the role during auto-negotiation (entry, exit, relay)
+    /// override the negotiated role (entry, exit, relay)
     #[argh(option)]
     pub role: Option<String>,
 
@@ -163,7 +163,7 @@ pub struct EntryCommand {
     #[argh(option, short = 'c')]
     pub connect: Option<String>,
 
-    /// REST API address (e.g. "127.0.0.1:6566")
+    /// REST API address (e.g. "127.0.0.1:6564")
     #[argh(option)]
     pub api: Option<String>,
 
@@ -363,7 +363,7 @@ fn parse_role(s: &str) -> Result<ProtoNodeRole, ConfigError> {
 /// Build a `RoleHint` from the mutually-exclusive hint CLI flags.
 fn resolve_hint(cli: &WallhackCli) -> Result<Option<RoleHint>, ConfigError> {
     let hints: Vec<_> = [
-        cli.prefer.as_deref().map(|s| (HintLevel::Prefer, s)),
+        cli.prefer_role.as_deref().map(|s| (HintLevel::Prefer, s)),
         cli.exclude_role.as_deref().map(|s| (HintLevel::Exclude, s)),
         cli.role.as_deref().map(|s| (HintLevel::Fixed, s)),
     ]
@@ -395,7 +395,7 @@ fn resolve_api_config(cmd: &EntryCommand) -> Option<ApiConfig> {
     let api_str = cmd.api.as_ref()?;
     let addr = api_str
         .parse()
-        .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 6566)));
+        .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 6564)));
 
     let user = cmd.api_user.clone().unwrap_or_else(|| "admin".to_string());
 
@@ -607,7 +607,15 @@ mod tests {
 
     #[test]
     fn mutually_exclusive_hint_flags() {
-        let c = cli(&["--prefer", "entry", "--role", "exit", "--listen", ":6565"]).unwrap();
+        let c = cli(&[
+            "--prefer-role",
+            "entry",
+            "--role",
+            "exit",
+            "--listen",
+            ":6565",
+        ])
+        .unwrap();
         assert_eq!(
             build_daemon_config(&c).unwrap_err(),
             ConfigError::HintFlagsConflict
@@ -637,7 +645,7 @@ mod tests {
 
     #[test]
     fn hint_flags_rejected_with_subcommand() {
-        let c = cli(&["--prefer", "entry", "entry", "--listen", ":6565"]).unwrap();
+        let c = cli(&["--prefer-role", "entry", "entry", "--listen", ":6565"]).unwrap();
         assert_eq!(
             build_daemon_config(&c).unwrap_err(),
             ConfigError::HintRequiresAutoMode
@@ -646,7 +654,7 @@ mod tests {
 
     #[test]
     fn valid_prefer_hint_produces_auto_config() {
-        let c = cli(&["--prefer", "entry", "--listen", ":6565"]).unwrap();
+        let c = cli(&["--prefer-role", "entry", "--listen", ":6565"]).unwrap();
         let config = build_daemon_config(&c).unwrap();
         match &config.mode {
             ModeConfig::Auto(auto) => {
@@ -660,7 +668,7 @@ mod tests {
 
     #[test]
     fn invalid_role_string_rejected() {
-        let c = cli(&["--prefer", "bogus", "--listen", ":6565"]).unwrap();
+        let c = cli(&["--prefer-role", "bogus", "--listen", ":6565"]).unwrap();
         assert_eq!(
             build_daemon_config(&c).unwrap_err(),
             ConfigError::InvalidRole("bogus".to_string())
