@@ -717,10 +717,6 @@ where
                 );
                 conn_peers.update_capabilities(&peer_name, &identity.capabilities);
 
-                // Create ping channel for this peer
-                #[allow(deprecated)] // TODO: replace with peer events
-                let mut ping_rx = conn_peers.register_ping_channel(&peer_name);
-
                 // Extract transport and channels from the generic AcceptResult before
                 // spawning so the spawned future is non-generic.
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
@@ -745,7 +741,7 @@ where
                         peer: identity.name,
                         peer_addr: peer_addr.clone(),
                     };
-                    let result = params.run(&mut ping_rx, latency_rx).await;
+                    let result = params.run(latency_rx).await;
 
                     // Unregister peer — connection ID check prevents evicting a
                     // newer connection that re-registered under the same name.
@@ -934,13 +930,11 @@ async fn run_connection_loop(
     mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     mut latency_rx: tokio::sync::mpsc::Receiver<f64>,
-    ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
     mut route_updates: tokio::sync::broadcast::Receiver<RouteUpdate>,
     peer: Option<&str>,
     peers: &Arc<Registry>,
     tun_name: &str,
 ) -> Result<(), NodeError> {
-    let mut pending_ping: Option<tokio::sync::oneshot::Sender<f64>> = None;
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -966,20 +960,6 @@ async fn run_connection_loop(
             Some(ms) = latency_rx.recv() => {
                 if let Some(id) = peer {
                     peers.update_latency(id, ms);
-                }
-                if let Some(tx) = pending_ping.take() {
-                    let _ = tx.send(ms);
-                }
-            }
-            Some(result_tx) = ping_rx.recv() => {
-                match super::send_ping(&control_tx).await {
-                    Ok(()) => {
-                        pending_ping = Some(result_tx);
-                    }
-                    Err(e) => {
-                        tracing::debug!("Ping failed: {e}");
-                        drop(result_tx);
-                    }
                 }
             }
             _ = heartbeat.tick() => {
@@ -1025,7 +1005,6 @@ impl ConnectionParams {
     /// Main entry point for the non-generic connection handler.
     pub async fn run(
         self,
-        ping_rx: &mut tokio::sync::mpsc::Receiver<wallhack_core::control::peers::PingRequest>,
         latency_rx: tokio::sync::mpsc::Receiver<f64>,
     ) -> Result<String, NodeError> {
         use wallhack_core::server::server::DataChannels;
@@ -1093,7 +1072,6 @@ impl ConnectionParams {
             manager_handle,
             control_tx,
             latency_rx,
-            ping_rx,
             route_updates,
             peer.as_deref(),
             &peers,

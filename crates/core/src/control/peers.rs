@@ -10,7 +10,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc};
 
 use wallhack_wire::data::Capabilities;
 
@@ -28,9 +28,6 @@ pub enum PeerEvent {
         name: String,
     },
 }
-
-/// Request to ping a peer, with a channel to send the result back.
-pub type PingRequest = oneshot::Sender<f64>;
 
 /// Which side initiated the connection from the local node's perspective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,8 +85,10 @@ pub type SharedRegistry = Arc<Registry>;
 #[derive(Debug)]
 pub struct Registry {
     peers: ArcSwap<HashMap<String, PeerInfo>>,
-    /// Channels to request pings from connection handlers.
-    ping_channels: ArcSwap<HashMap<String, mpsc::Sender<PingRequest>>>,
+    /// Per-peer control channel senders. Used for heartbeat pings,
+    /// API-initiated disconnect, and any future per-peer commands.
+    control_channels:
+        ArcSwap<HashMap<String, mpsc::Sender<wallhack_wire::control::ControlMessage>>>,
     /// Broadcast channel for peer lifecycle events.
     events_tx: broadcast::Sender<PeerEvent>,
     /// Monotonic counter for assigning unique connection IDs.
@@ -101,7 +100,7 @@ impl Default for Registry {
         let (events_tx, _) = broadcast::channel(64);
         Self {
             peers: ArcSwap::from_pointee(HashMap::new()),
-            ping_channels: ArcSwap::from_pointee(HashMap::new()),
+            control_channels: ArcSwap::from_pointee(HashMap::new()),
             events_tx,
             next_connection_id: AtomicU64::new(0),
         }
@@ -202,7 +201,7 @@ impl Registry {
 
     /// Unregister a peer unconditionally.
     pub fn unregister(&self, id: &str) -> Option<PeerInfo> {
-        self.ping_channels.rcu(|old| {
+        self.control_channels.rcu(|old| {
             let mut new = (**old).clone();
             new.remove(id);
             new
@@ -240,49 +239,40 @@ impl Registry {
         self.unregister(id)
     }
 
-    /// Register a ping channel for a peer's connection handler.
+    /// Register a control channel for a peer.
     ///
-    /// Returns the receiver that the connection handler should listen on.
-    #[deprecated(note = "will be replaced by peer events")]
-    pub fn register_ping_channel(&self, id: &str) -> mpsc::Receiver<PingRequest> {
-        let (tx, rx) = mpsc::channel(1);
-        self.ping_channels.rcu(|old| {
+    /// Stores a clone of the peer's `control_tx` so the registry can send
+    /// control messages (e.g. `Disconnect`) to the peer's connection task.
+    pub fn register_control(
+        &self,
+        id: &str,
+        tx: &mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    ) {
+        let tx = tx.clone();
+        self.control_channels.rcu(|old| {
             let mut new = (**old).clone();
             new.insert(id.to_string(), tx.clone());
             new
         });
-        rx
     }
 
-    /// Ping a peer and return latency in milliseconds.
+    /// Send a Disconnect message to a peer's connection task.
     ///
-    /// Sends a request to the peer's connection handler, which performs the
-    /// actual ping/pong exchange over the tunnel transport.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if the peer doesn't exist or ping fails.
-    #[deprecated(note = "will be replaced by peer events")]
-    pub async fn ping_peer(
-        &self,
-        id: &str,
-    ) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
-        let tx = {
-            let channels = self.ping_channels.load();
-            channels
-                .get(id)
-                .ok_or_else(|| format!("No ping channel for peer: {id}"))?
-                .clone()
+    /// Returns `true` if the message was queued, `false` if no control
+    /// channel is registered for this peer (already disconnected).
+    pub fn send_disconnect(&self, id: &str, reason: &str) -> bool {
+        use wallhack_wire::control::{ControlMessage, Disconnect, control_message};
+
+        let channels = self.control_channels.load();
+        let Some(tx) = channels.get(id) else {
+            return false;
         };
-
-        let (result_tx, result_rx) = oneshot::channel();
-        tx.send(result_tx)
-            .await
-            .map_err(|_| "Peer connection closed")?;
-
-        let latency = result_rx.await.map_err(|_| "Ping timed out")?;
-        self.update_latency(id, latency);
-        Ok(latency)
+        let msg = ControlMessage {
+            message: Some(control_message::Message::Disconnect(Disconnect {
+                reason: reason.to_string(),
+            })),
+        };
+        tx.try_send(msg).is_ok()
     }
 
     /// Update bytes transferred for a peer.

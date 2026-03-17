@@ -99,6 +99,9 @@ pub(crate) fn spawn_heartbeat(
     peer_name: String,
     peers: Arc<Registry>,
 ) -> tokio::task::JoinHandle<()> {
+    // Register control channel so disconnect_peer can send messages to this peer.
+    peers.register_control(&peer_name, &control_tx);
+
     tokio::spawn(async move {
         // Initial ping so latency is populated immediately after connect.
         if let Err(e) = send_ping(&control_tx).await {

@@ -473,17 +473,8 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
-        let all_peers: Vec<_> = self.peers.list().iter().map(|p| p.name.clone()).collect();
-        tracing::debug!(
-            requested = %peer,
-            registered = ?all_peers,
-            count = all_peers.len(),
-            "disconnect_peer: lookup"
-        );
-
         // Try name prefix first, then fall back to exact address match.
         let peer_info = self.peers.find_by_prefix(&peer).or_else(|e| {
-            tracing::debug!(requested = %peer, error = %e, "disconnect_peer: find_by_prefix failed, trying find_by_addr");
             if matches!(e, crate::node_api::NodeApiError::PeerNotFound(_)) {
                 self.peers.find_by_addr(&peer)
             } else {
@@ -491,13 +482,13 @@ impl crate::node_api::NodeApi for Handler {
             }
         })?;
 
-        tracing::debug!(
-            found = %peer_info.name,
-            "disconnect_peer: found peer, unregistering"
-        );
+        // Send a Disconnect control message so the peer's transport closes
+        // cleanly and the remote side detects the disconnect.
+        self.peers
+            .send_disconnect(&peer_info.name, "disconnected by API");
 
-        // Peer was found; unregister may return None if concurrently removed
-        // by the session task — that still counts as a successful disconnect.
+        // Remove from registry. May return None if the session task already
+        // cleaned up in response to the control channel closing — still OK.
         let _ = self.peers.unregister(&peer_info.name);
         Ok(())
     }
