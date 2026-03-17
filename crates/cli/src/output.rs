@@ -227,14 +227,14 @@ fn format_notification(notif: &DaemonNotification) -> Option<String> {
         Some(daemon_notification::Event::PeerConnected(pc)) => {
             let peer = pc.peer.as_ref()?;
             Some(format!(
-                "{} peer \"{}\" connected ({})",
+                "{} connected with \"{}\" ({})",
                 Color::Green.paint("[+]"),
                 peer.name,
                 peer.addr
             ))
         }
         Some(daemon_notification::Event::PeerDisconnected(pd)) => Some(format!(
-            "{} peer \"{}\" disconnected",
+            "{} disconnected from \"{}\"",
             Color::Red.paint("[-]"),
             pd.name
         )),
