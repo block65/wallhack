@@ -149,6 +149,7 @@ pub async fn run(
                                 e.tasks,
                                 e.control_tx,
                                 e.peer_handshake_rx,
+                                e.latency_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -202,6 +203,7 @@ pub async fn run(
                                 e.tasks,
                                 e.control_tx,
                                 e.peer_handshake_rx,
+                                e.latency_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -234,10 +236,9 @@ async fn run_relay_loop_inner(
     transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     channels: wallhack_core::server::server::DataChannels,
     mut tasks: wallhack_core::client::client::ConnectionTasks,
-    // Retain control_tx for the full session lifetime — dropping it kills the
-    // control stream and causes the source to see the relay as disconnected.
-    _source_control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    source_control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
+    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     global: &GlobalConfig,
     listen_spec: &AddressSpec,
     addr: std::net::SocketAddr,
@@ -274,6 +275,13 @@ async fn run_relay_loop_inner(
         peer_addr.clone(),
         peer_role,
         ConnectionSide::Connect,
+    );
+
+    let _source_heartbeat = super::spawn_heartbeat(
+        source_control_tx,
+        latency_rx,
+        peer_name.clone(),
+        Arc::clone(&peers),
     );
 
     let DataChannels {
@@ -593,6 +601,7 @@ fn handle_relay_connection(
     let peer_addr = erased.peer_addr;
     let transport = erased.transport;
     let peer_handshake = erased.peer_handshake;
+    let latency_rx = erased.latency_rx;
     let (channels, control_tx) = (erased.channels, erased.control_tx);
     let DataChannels {
         instructions_tx,
@@ -616,6 +625,14 @@ fn handle_relay_connection(
         peer_addr.clone(),
         peer_role,
         ConnectionSide::Accept,
+    );
+
+    let heartbeat_control_tx = control_tx.clone();
+    let _accepted_heartbeat = super::spawn_heartbeat(
+        heartbeat_control_tx,
+        latency_rx,
+        peer_name.clone(),
+        Arc::clone(peers),
     );
 
     // Incoming: accept uni stream from exit peer, dispatch data messages.
