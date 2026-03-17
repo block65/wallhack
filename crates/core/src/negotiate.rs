@@ -153,7 +153,7 @@ fn negotiate_from_capabilities(local: &Handshake, peer: &Handshake) -> Negotiati
             reason: "both peers are TUN-capable; set a preferred or fixed role to resolve",
         },
         (false, false) => NegotiationResult::Indeterminate {
-            reason: "neither peer is TUN-capable; no node can create a TUN interface",
+            reason: "neither peer has TUN capability",
         },
     }
 }

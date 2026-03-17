@@ -503,8 +503,21 @@ async fn run_auto_connect_session_dispatch(
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
         | NegotiationResult::Indeterminate { .. } => {
-            tracing::error!("Role negotiation failed: {result}");
-            Err(NodeError::Config(result.to_string()))
+            tracing::warn!("Role negotiated: {result}");
+            let name = if peer_hs.name.is_empty() {
+                peer_addr.to_string()
+            } else {
+                peer_hs.name.clone()
+            };
+            peers.register(
+                name.clone(),
+                peer_addr.to_string(),
+                NodeRole::Indeterminate,
+                wallhack_core::control::peers::ConnectionSide::Connect,
+            );
+            hold_until_disconnect(tasks, control_tx, node_state).await;
+            peers.unregister(&name);
+            Ok(())
         }
     }
 }
@@ -1052,8 +1065,25 @@ async fn run_auto_accept_session_inner(
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
         | NegotiationResult::Indeterminate { .. } => {
-            tracing::info!("Auto listener {peer_addr}: role is indeterminate: {result}");
-            let _keep_alive = control_tx;
+            tracing::warn!("Role negotiated: {result}");
+            let name = if peer_hs.name.is_empty() {
+                peer_addr.clone()
+            } else {
+                peer_hs.name.clone()
+            };
+            peers.register(
+                name.clone(),
+                peer_addr.clone(),
+                NodeRole::Indeterminate,
+                wallhack_core::control::peers::ConnectionSide::Accept,
+            );
+            // Hold transport and control alive; wait for the peer to disconnect
+            // by draining the instructions channel (closes when transport dies).
+            let _keep_transport = transport;
+            let _keep_control = control_tx;
+            let mut rx = instructions_rx;
+            while rx.recv().await.is_some() {}
+            peers.unregister(&name);
         }
     }
 
