@@ -69,6 +69,18 @@ pub(crate) async fn run(
         "Capabilities: tun={tun_capable}, connect={connect_display}, listen={listen_display}",
     );
 
+    let has_connect = cfg.connect.is_some();
+    let has_listen = cfg.listen.is_some();
+    let mut eligible = Vec::new();
+    if tun_capable {
+        eligible.push("entry");
+    }
+    eligible.push("exit");
+    if has_connect && has_listen {
+        eligible.push("relay");
+    }
+    tracing::info!("Eligible roles: {}", eligible.join(", "));
+
     // Set initial capabilities; role stays Indeterminate until negotiation.
     node_state.update_capabilities(Capabilities {
         tun_capable,
