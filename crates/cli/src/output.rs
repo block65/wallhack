@@ -109,12 +109,17 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
 
             println!("{:<18} {}", "name:", s.package_name);
             println!("{:<18} {}", "role:", role);
+            println!("{:<18} {}", "connected:", s.connected);
             if !s.peer_addr.is_empty() {
                 println!("{:<18} {}", "peer addr:", s.peer_addr);
             }
             if !s.listen_addr.is_empty() {
                 println!("{:<18} {}", "listen addr:", s.listen_addr);
             }
+            println!(
+                "{:<18} tun={} listen={} connect={}",
+                "capabilities:", s.tun_capable, s.listening, s.connecting
+            );
             println!("{:<18} {}", "version:", s.version);
             println!("{:<18} {}", "cli:", crate::version::version());
             println!("{:<18} {}", "uptime:", uptime);

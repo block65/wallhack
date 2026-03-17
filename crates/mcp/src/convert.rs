@@ -8,26 +8,28 @@ use wallhack_wire::management::{ManagementResponse, management_response};
 pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
     match &resp.response {
         Some(management_response::Response::Status(s)) => {
-            let role = format!("{:?}", s.role()).to_lowercase();
+            let role = s.role().to_string();
             let mut out = String::new();
+            let _ = writeln!(out, "name: {}", s.package_name);
             let _ = writeln!(out, "role: {role}");
+            let _ = writeln!(out, "connected: {}", s.connected);
             if !s.peer_addr.is_empty() {
                 let _ = writeln!(out, "peer addr: {}", s.peer_addr);
             }
             if !s.listen_addr.is_empty() {
                 let _ = writeln!(out, "listen addr: {}", s.listen_addr);
             }
-            let _ = writeln!(out, "version: {}", s.version);
-            let _ = writeln!(out, "uptime: {}", format_uptime(s.uptime_ms));
             let _ = writeln!(
                 out,
                 "capabilities: tun={} listen={} connect={}",
                 s.tun_capable, s.listening, s.connecting,
             );
+            let _ = writeln!(out, "version: {}", s.version);
+            let _ = writeln!(out, "uptime: {}", format_uptime(s.uptime_ms));
             Ok(out)
         }
         Some(management_response::Response::Ping(p)) => {
-            let role = format!("{:?}", p.node_role()).to_lowercase();
+            let role = p.node_role().to_string();
             Ok(format!(
                 "pong — role: {role}, version: {}, uptime: {}",
                 p.version,
@@ -52,7 +54,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             let mut out = String::new();
             for peer in &p.peers {
                 let status = format!("{:?}", peer.status()).to_lowercase();
-                let role = format!("{:?}", peer.role()).to_lowercase();
+                let role = peer.role().to_string();
                 let latency = if peer.latency_ms > 0.0 {
                     format!("{:.1}ms", peer.latency_ms)
                 } else {
