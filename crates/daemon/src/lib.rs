@@ -58,7 +58,8 @@ pub async fn run_daemon_engine(
     let handle = start_node(&config)?;
 
     // Start IPC listener for the management protocol.
-    let socket_path = socket_path_override.unwrap_or_else(wallhack_core::ipc::socket_path);
+    let socket_path = socket_path_override
+        .unwrap_or_else(|| wallhack_core::ipc::socket_path(Some(config.mode.name())));
     let api = handle.api_arc();
     let peer_events = handle.peer_events_sender();
     let shutdown_rx = handle.shutdown_rx();

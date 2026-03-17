@@ -92,28 +92,36 @@ pub fn resolve_host(host: &str) -> PathBuf {
 
 /// Resolve the default IPC socket path (ignores `vsock://` `WALLHACK_HOST` values).
 ///
+/// When `name` is `Some(n)`, the socket filename is `wallhackd-{n}.sock`.
+/// When `name` is `None`, the default `wallhackd.sock` filename is used.
+/// Named instances are typically addressed via `-H` or `WALLHACK_HOST` instead.
+///
 /// Checks (in order):
 /// 1. `WALLHACK_HOST` environment variable (unix paths only)
-/// 2. `$XDG_RUNTIME_DIR/wallhack/wallhackd.sock`
-/// 3. `/tmp/wallhack-<user>/wallhackd.sock`
-/// 4. `$HOME/.wallhack/wallhackd.sock`
-/// 5. `/tmp/wallhack-shared/wallhackd.sock`
+/// 2. `$XDG_RUNTIME_DIR/wallhack/wallhackd[-{name}].sock`
+/// 3. `/tmp/wallhack-<user>/wallhackd[-{name}].sock`
+/// 4. `$HOME/.wallhack/wallhackd[-{name}].sock`
+/// 5. `/tmp/wallhack-shared/wallhackd[-{name}].sock`
 #[must_use]
-pub fn socket_path() -> PathBuf {
+pub fn socket_path(name: Option<&str>) -> PathBuf {
     #[allow(clippy::collapsible_if)]
     if let Ok(host) = std::env::var(HOST_ENV) {
         if !host.starts_with("vsock://") {
             return PathBuf::from(host.strip_prefix("unix://").unwrap_or(&host));
         }
     }
+    let filename = match name {
+        Some(n) => format!("wallhackd-{n}.sock"),
+        None => SOCKET_NAME.to_string(),
+    };
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        Path::new(&runtime_dir).join("wallhack").join(SOCKET_NAME)
+        Path::new(&runtime_dir).join("wallhack").join(&filename)
     } else if let Ok(user) = std::env::var("USER") {
-        PathBuf::from(format!("/tmp/wallhack-{user}")).join(SOCKET_NAME)
+        PathBuf::from(format!("/tmp/wallhack-{user}")).join(&filename)
     } else if let Ok(home) = std::env::var("HOME") {
-        Path::new(&home).join(".wallhack").join(SOCKET_NAME)
+        Path::new(&home).join(".wallhack").join(&filename)
     } else {
-        PathBuf::from("/tmp/wallhack-shared").join(SOCKET_NAME)
+        PathBuf::from("/tmp/wallhack-shared").join(&filename)
     }
 }
 
@@ -151,7 +159,7 @@ pub async fn connect() -> io::Result<IpcStream> {
             return connect_vsock_str(addr).await;
         }
     }
-    connect_to(&socket_path()).await
+    connect_to(&socket_path(None)).await
 }
 
 #[cfg(feature = "vsock")]
