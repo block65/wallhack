@@ -378,6 +378,25 @@
 				}
 			}
 		},
+		"/events": {
+			"get": {
+				"summary": "Event stream",
+				"description": "Server-Sent Events stream of peer lifecycle events (connect/disconnect). The stream sends `peer_connected` and `peer_disconnected` events with JSON payloads. Keep-alive comments are sent every 15 seconds.",
+				"operationId": "events",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "SSE stream opened.",
+						"content": {
+							"text/event-stream": {
+								"schema": { "type": "string" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
 		"/routes/{cidr}": {
 			"delete": {
 				"summary": "Remove route",
