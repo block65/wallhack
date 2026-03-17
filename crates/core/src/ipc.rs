@@ -365,9 +365,16 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         },
 
         Some(management_request::Request::DisconnectPeer(req)) => {
+            tracing::debug!(peer = %req.peer, "IPC: disconnect_peer request");
             match api.disconnect_peer(req.peer.clone()) {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
-                Err(e) => error_response(&e),
+                Ok(()) => {
+                    tracing::debug!(peer = %req.peer, "IPC: disconnect_peer succeeded");
+                    management_response::Response::Ok(OkResponse {})
+                }
+                Err(ref e) => {
+                    tracing::debug!(peer = %req.peer, error = %e, "IPC: disconnect_peer failed");
+                    error_response(e)
+                }
             }
         }
 

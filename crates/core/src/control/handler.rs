@@ -473,8 +473,17 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
+        let all_peers: Vec<_> = self.peers.list().iter().map(|p| p.name.clone()).collect();
+        tracing::debug!(
+            requested = %peer,
+            registered = ?all_peers,
+            count = all_peers.len(),
+            "disconnect_peer: lookup"
+        );
+
         // Try name prefix first, then fall back to exact address match.
         let peer_info = self.peers.find_by_prefix(&peer).or_else(|e| {
+            tracing::debug!(requested = %peer, error = %e, "disconnect_peer: find_by_prefix failed, trying find_by_addr");
             if matches!(e, crate::node_api::NodeApiError::PeerNotFound(_)) {
                 self.peers.find_by_addr(&peer)
             } else {
@@ -482,10 +491,15 @@ impl crate::node_api::NodeApi for Handler {
             }
         })?;
 
-        self.peers
-            .unregister(&peer_info.name)
-            .map(|_| ())
-            .ok_or(crate::node_api::NodeApiError::PeerNotFound(peer))
+        tracing::debug!(
+            found = %peer_info.name,
+            "disconnect_peer: found peer, unregistering"
+        );
+
+        // Peer was found; unregister may return None if concurrently removed
+        // by the session task — that still counts as a successful disconnect.
+        let _ = self.peers.unregister(&peer_info.name);
+        Ok(())
     }
 
     fn current_role(&self) -> NodeRole {
