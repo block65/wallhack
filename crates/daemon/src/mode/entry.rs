@@ -519,7 +519,7 @@ pub(crate) async fn run_entry_connected_erased(
 }
 
 /// Non-generic inner: monomorphized once regardless of transport type.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) async fn run_entry_connected_inner(
     transport: Arc<dyn ErasedTransport>,
     instructions_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
@@ -626,12 +626,30 @@ pub(crate) async fn run_entry_connected_inner(
     // Panic safety: delete TUN if we unwind before reaching explicit cleanup.
     let tun_guard = TunDropGuard::new(name.clone());
 
-    let manager_handle = tokio::spawn(async move { manager.run().await });
+    let mut manager_handle = tokio::spawn(async move { manager.run().await });
 
-    match manager_handle.await {
-        Ok(Ok(())) => tracing::debug!("Connection manager exited cleanly"),
-        Ok(Err(e)) => tracing::debug!("Connection manager error: {e}"),
-        Err(e) => tracing::debug!("Connection manager task failed: {e}"),
+    // 30s heartbeat keeps latency measurements fresh between manual pings.
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    heartbeat.tick().await;
+
+    loop {
+        tokio::select! {
+            result = &mut manager_handle => {
+                match result {
+                    Ok(Ok(())) => tracing::debug!("Connection manager exited cleanly"),
+                    Ok(Err(e)) => tracing::debug!("Connection manager error: {e}"),
+                    Err(e) => tracing::debug!("Connection manager task failed: {e}"),
+                }
+                break;
+            }
+            _ = heartbeat.tick() => {
+                if let Err(e) = send_ping(&control_tx).await {
+                    tracing::debug!("Heartbeat ping failed: {e}");
+                    break;
+                }
+            }
+        }
     }
 
     // Best-effort TUN cleanup after disconnect — guard fires on drop.

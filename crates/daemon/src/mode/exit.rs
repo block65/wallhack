@@ -148,6 +148,7 @@ async fn run_exit_connector(
                                 e.control_tx,
                                 e.tasks,
                                 e.peer_handshake_rx,
+                                e.latency_rx,
                                 &pa,
                                 &ctx,
                             )
@@ -196,6 +197,7 @@ async fn run_exit_connector(
                                 e.control_tx,
                                 e.tasks,
                                 e.peer_handshake_rx,
+                                e.latency_rx,
                                 &pa,
                                 &ctx,
                             )
@@ -289,6 +291,7 @@ async fn run_exit_listener(
 }
 
 /// Server accept loop for listen-only mode.
+#[allow(clippy::too_many_lines)]
 async fn run_accept_loop<S: Server>(mut server: S, ctx: &Arc<ExitContext>) -> Result<(), NodeError>
 where
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -307,7 +310,7 @@ where
 
     loop {
         match server.accept(NodeRole::Exit).await {
-            Ok(Some(accept_result)) => {
+            Ok(Some(mut accept_result)) => {
                 let peer_addr = accept_result.peer_addr().to_string();
 
                 // Register the connecting peer using handshake name if available.
@@ -325,6 +328,9 @@ where
                 );
 
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
+                let mut latency_rx = accept_result
+                    .take_latency_rx()
+                    .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
                 let adapter = SyscallExitAdapter::new();
                 let _reaper = adapter.start_reaper(
                     std::time::Duration::from_mins(1),
@@ -373,20 +379,47 @@ where
                 let stream_fut = run_stream_listener(transport);
                 let ctx = Arc::clone(ctx);
                 tokio::spawn(async move {
-                    let _keep_alive = control_tx;
-                    tokio::select! {
-                        result = orchestrator.drive(responses_tx, instructions_rx) => {
-                            if let Err(e) = result {
-                                tracing::error!("Orchestrator error: {e}");
+                    // Initial ping so latency is populated on accept.
+                    if let Err(e) = super::entry::send_ping(&control_tx).await {
+                        tracing::debug!("Initial ping failed: {e}");
+                    }
+
+                    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+                    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    heartbeat.tick().await;
+
+                    let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
+                    tokio::pin!(drive_fut);
+                    tokio::pin!(stream_fut);
+
+                    loop {
+                        tokio::select! {
+                            result = &mut drive_fut => {
+                                if let Err(e) = result {
+                                    tracing::debug!("Orchestrator finished: {e}");
+                                }
+                                break;
                             }
-                        }
-                        result = stream_fut => {
-                            if let Err(e) = result {
-                                tracing::error!("Stream handler error: {e}");
+                            result = &mut stream_fut => {
+                                if let Err(e) = result {
+                                    tracing::debug!("Stream handler finished: {e}");
+                                }
+                                break;
+                            }
+                            Some(ms) = latency_rx.recv() => {
+                                ctx.peers.update_latency(&peer_name, ms);
+                            }
+                            _ = heartbeat.tick() => {
+                                if let Err(e) = super::entry::send_ping(&control_tx).await {
+                                    tracing::debug!("Heartbeat ping failed: {e}");
+                                    break;
+                                }
                             }
                         }
                     }
+
                     ctx.peers.unregister(&peer_name);
+                    tracing::info!("Peer disconnected: {peer_name}");
                 });
             }
             Ok(None) => break,
@@ -406,9 +439,10 @@ async fn run_exit_loop_inner(
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
     responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     responses_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::ExitNodeResponse>,
-    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     mut tasks: wallhack_core::client::client::ConnectionTasks,
     peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
+    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     peer_addr: &str,
     ctx: &ExitContext,
 ) -> Result<(), NodeError> {
@@ -460,6 +494,16 @@ async fn run_exit_loop_inner(
     );
     let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
 
+    // Initial ping so latency is populated immediately after connect.
+    if let Err(e) = super::entry::send_ping(&control_tx).await {
+        tracing::debug!("Initial ping failed: {e}");
+    }
+
+    let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    heartbeat.tick().await;
+
     let stream_fut = run_stream_listener(transport);
     tokio::pin!(stream_fut);
     let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
@@ -467,22 +511,37 @@ async fn run_exit_loop_inner(
     let disconnect_fut = tasks.wait_for_disconnect();
     tokio::pin!(disconnect_fut);
 
-    tokio::select! {
-        result = &mut drive_fut => {
-            match result {
-                Ok(()) => tracing::debug!("Connection closed cleanly"),
-                Err(e) => tracing::debug!("Orchestrator error: {e}"),
+    loop {
+        tokio::select! {
+            result = &mut drive_fut => {
+                match result {
+                    Ok(()) => tracing::debug!("Connection closed cleanly"),
+                    Err(e) => tracing::debug!("Orchestrator finished: {e}"),
+                }
+                break;
             }
-        }
-        result = &mut stream_fut => {
-            if let Err(e) = result { tracing::warn!("Stream handler error: {e}"); }
-        }
-        () = &mut disconnect_fut => {
-            tracing::debug!("Connection tasks died - transport disconnected");
+            result = &mut stream_fut => {
+                if let Err(e) = result { tracing::debug!("Stream handler finished: {e}"); }
+                break;
+            }
+            () = &mut disconnect_fut => {
+                tracing::debug!("Transport disconnected");
+                break;
+            }
+            Some(ms) = latency_rx.recv() => {
+                ctx.peers.update_latency(&peer_name, ms);
+            }
+            _ = heartbeat.tick() => {
+                if let Err(e) = super::entry::send_ping(&control_tx).await {
+                    tracing::debug!("Heartbeat ping failed: {e}");
+                    break;
+                }
+            }
         }
     }
 
     ctx.peers.unregister(&peer_name);
+    tracing::info!("Peer disconnected: {peer_name}");
 
     Ok(())
 }

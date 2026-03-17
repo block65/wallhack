@@ -489,6 +489,7 @@ async fn run_auto_connect_session_dispatch(
                 instructions_rx,
                 responses_tx,
                 control_tx,
+                latency_rx,
                 &peer_name,
                 peer_addr,
                 &metrics,
@@ -544,7 +545,8 @@ async fn run_auto_exit_session_inner(
     transport: Arc<dyn ErasedTransport>,
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
     responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
-    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     peer_name: &str,
     peer_addr: &str,
     metrics: &Arc<Metrics>,
@@ -556,6 +558,16 @@ async fn run_auto_exit_session_inner(
         NodeRole::Entry,
         ConnectionSide::Connect,
     );
+
+    // Initial ping so latency is populated immediately after connect.
+    if let Err(e) = super::entry::send_ping(&control_tx).await {
+        tracing::debug!("Initial ping failed: {e}");
+    }
+
+    let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    heartbeat.tick().await;
 
     let adapter = SyscallExitAdapter::new();
     let _reaper = adapter.start_reaper(
@@ -570,16 +582,30 @@ async fn run_auto_exit_session_inner(
     tokio::pin!(stream_fut);
     tokio::pin!(drive_fut);
 
-    tokio::select! {
-        result = &mut drive_fut => {
-            if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
-        }
-        result = &mut stream_fut => {
-            if let Err(e) = result { tracing::warn!("Auto exit stream handler: {e}"); }
+    loop {
+        tokio::select! {
+            result = &mut drive_fut => {
+                if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
+                break;
+            }
+            result = &mut stream_fut => {
+                if let Err(e) = result { tracing::debug!("Auto exit stream handler: {e}"); }
+                break;
+            }
+            Some(ms) = latency_rx.recv() => {
+                peers.update_latency(peer_name, ms);
+            }
+            _ = heartbeat.tick() => {
+                if let Err(e) = super::entry::send_ping(&control_tx).await {
+                    tracing::debug!("Heartbeat ping failed: {e}");
+                    break;
+                }
+            }
         }
     }
 
     peers.unregister(peer_name);
+    tracing::info!("Peer disconnected: {peer_name}");
     Ok(())
 }
 
@@ -734,6 +760,7 @@ where
                 // so the spawned future is non-generic.
                 let peer_hs = accept_result.take_peer_handshake();
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
+                let latency_rx = accept_result.take_latency_rx();
                 let (
                     DataChannels {
                         instructions_tx,
@@ -767,6 +794,7 @@ where
                         Some(ru),
                         peer_addr,
                         ns,
+                        latency_rx,
                     )
                     .await
                     {
@@ -809,6 +837,7 @@ async fn run_auto_accept_session_inner(
     >,
     peer_addr: String,
     node_state: SharedNodeState,
+    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
 ) -> Result<(), NodeError> {
     let Some(peer_hs) = peer_hs else {
         tracing::warn!("No peer handshake from {peer_addr}; cannot negotiate");
@@ -932,7 +961,6 @@ async fn run_auto_accept_session_inner(
                 instructions_tx,
                 responses_rx,
             );
-            let keep_alive = control_tx;
             let peer_name = if peer_hs.name.is_empty() {
                 peer_addr.clone()
             } else {
@@ -954,15 +982,36 @@ async fn run_auto_accept_session_inner(
             );
 
             // Fire an initial ping so latency is populated immediately after accept.
-            if let Err(e) = super::entry::send_ping(&keep_alive).await {
+            if let Err(e) = super::entry::send_ping(&control_tx).await {
                 tracing::debug!("Auto accept initial ping failed: {e}");
             }
 
-            let handle = tokio::spawn(async move { manager.run().await });
-            match handle.await {
-                Ok(Ok(())) => tracing::info!("Auto entry session closed: {peer_name}"),
-                Ok(Err(e)) => tracing::warn!("Auto entry session error {peer_name}: {e}"),
-                Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
+            let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            heartbeat.tick().await;
+
+            let mut handle = tokio::spawn(async move { manager.run().await });
+            loop {
+                tokio::select! {
+                    result = &mut handle => {
+                        match result {
+                            Ok(Ok(())) => tracing::debug!("Auto entry session closed: {peer_name}"),
+                            Ok(Err(e)) => tracing::warn!("Auto entry session error {peer_name}: {e}"),
+                            Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
+                        }
+                        break;
+                    }
+                    Some(ms) = latency_rx.recv() => {
+                        peers.update_latency(&peer_name, ms);
+                    }
+                    _ = heartbeat.tick() => {
+                        if let Err(e) = super::entry::send_ping(&control_tx).await {
+                            tracing::debug!("Heartbeat ping failed: {e}");
+                            break;
+                        }
+                    }
+                }
             }
             peers.unregister(&peer_name);
 
@@ -1035,6 +1084,16 @@ async fn run_auto_accept_session_inner(
                 ConnectionSide::Accept,
             );
 
+            // Initial ping so latency is populated immediately after accept.
+            if let Err(e) = super::entry::send_ping(&control_tx).await {
+                tracing::debug!("Initial ping failed: {e}");
+            }
+
+            let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            heartbeat.tick().await;
+
             let adapter = SyscallExitAdapter::new();
             let _reaper = adapter.start_reaper(
                 std::time::Duration::from_mins(1),
@@ -1043,21 +1102,34 @@ async fn run_auto_accept_session_inner(
             let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
             let stream_fut = super::exit::run_stream_listener(Arc::clone(&transport));
             let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
-            let _keep_alive = control_tx;
 
             tokio::pin!(stream_fut);
             tokio::pin!(drive_fut);
 
-            tokio::select! {
-                result = &mut drive_fut => {
-                    if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
-                }
-                result = &mut stream_fut => {
-                    if let Err(e) = result { tracing::warn!("Auto exit stream handler: {e}"); }
+            loop {
+                tokio::select! {
+                    result = &mut drive_fut => {
+                        if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
+                        break;
+                    }
+                    result = &mut stream_fut => {
+                        if let Err(e) = result { tracing::debug!("Auto exit stream handler: {e}"); }
+                        break;
+                    }
+                    Some(ms) = latency_rx.recv() => {
+                        peers.update_latency(&peer_name, ms);
+                    }
+                    _ = heartbeat.tick() => {
+                        if let Err(e) = super::entry::send_ping(&control_tx).await {
+                            tracing::debug!("Heartbeat ping failed: {e}");
+                            break;
+                        }
+                    }
                 }
             }
 
             peers.unregister(&peer_name);
+            tracing::info!("Peer disconnected: {peer_name}");
         }
         NegotiationResult::Resolved(NodeRole::Relay) => {
             tracing::warn!("Unexpected relay negotiation for listener-only mode; holding");
