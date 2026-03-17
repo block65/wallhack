@@ -1,5 +1,7 @@
 //! HTTP handlers for the REST API.
 
+use std::fmt::Write;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -38,7 +40,7 @@ pub struct PeerResponse {
     pub name: String,
     pub addr: String,
     pub role: String,
-    pub connected_at: u64,
+    pub connect_time: String,
     pub bytes_transferred: u64,
     pub latency_ms: Option<f64>,
 }
@@ -140,21 +142,21 @@ pub async fn peers(State(state): State<ApiState>) -> Result<Json<PeersResponse>,
             peers: p
                 .peers
                 .into_iter()
-                .map(|peer| PeerResponse {
-                    name: peer.name,
-                    addr: peer.addr,
-                    role: if peer.listening && peer.connecting {
-                        "relay".to_string()
-                    } else {
-                        "exit".to_string()
-                    },
-                    connected_at: peer.connected_at_secs,
-                    bytes_transferred: peer.bytes_transferred,
-                    latency_ms: if peer.latency_ms > 0.0 {
-                        Some(peer.latency_ms)
-                    } else {
-                        None
-                    },
+                .map(|peer| {
+                    let role = wallhack_wire::management::NodeRole::try_from(peer.role)
+                        .unwrap_or(wallhack_wire::management::NodeRole::Unspecified);
+                    PeerResponse {
+                        name: peer.name,
+                        addr: peer.addr,
+                        role: role.to_string(),
+                        connect_time: epoch_to_iso8601(peer.connected_at_secs),
+                        bytes_transferred: peer.bytes_transferred,
+                        latency_ms: if peer.latency_ms > 0.0 {
+                            Some(peer.latency_ms)
+                        } else {
+                            None
+                        },
+                    }
                 })
                 .collect(),
         })),
@@ -393,4 +395,23 @@ pub async fn list_routes(
         })),
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
+}
+
+/// Convert epoch seconds to ISO 8601 UTC string.
+fn epoch_to_iso8601(epoch_secs: u64) -> String {
+    #[allow(clippy::cast_possible_wrap)] // REASON: epoch seconds fits i64 for millennia
+    let dt = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let mut buf = String::with_capacity(20);
+    let _ = write!(
+        buf,
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        dt.year(),
+        dt.month() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+    );
+    buf
 }
