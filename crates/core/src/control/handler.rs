@@ -431,8 +431,7 @@ impl crate::node_api::NodeApi for Handler {
 
     fn connect(&self, _addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
         Err(crate::node_api::NodeApiError::NotSupported(
-            "connect is not supported on this node (entry nodes cannot initiate connections)"
-                .into(),
+            "dynamic connect not yet implemented — specify --connect at startup".into(),
         ))
     }
 
@@ -441,13 +440,13 @@ impl crate::node_api::NodeApi for Handler {
         _addr: std::net::SocketAddr,
     ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
         Err(crate::node_api::NodeApiError::NotSupported(
-            "listen is not supported on this node".into(),
+            "dynamic listen not yet implemented — specify --listen at startup".into(),
         ))
     }
 
     fn disconnect(&self) -> crate::node_api::Result<()> {
         Err(crate::node_api::NodeApiError::NotSupported(
-            "disconnect is not supported on this node".into(),
+            "dynamic disconnect not yet implemented".into(),
         ))
     }
 
