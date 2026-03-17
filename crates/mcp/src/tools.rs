@@ -2,9 +2,10 @@
 
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool};
 use wallhack_wire::management::{
-    AddRouteRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest, ListenRequest,
-    PeersRequest, PingRequest, RemoveRouteRequest, RoutesRequest, ShutdownRequest, StatsRequest,
-    StatusRequest, management_request,
+    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest,
+    HintLevel, ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest,
+    RoutesRequest, SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    management_request,
 };
 
 use crate::convert;
@@ -41,6 +42,14 @@ pub struct AddrParams {
     pub addr: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetHintParams {
+    /// Hint level: "prefer", "exclude", or "fixed"
+    pub level: String,
+    /// Target role: "entry", "exit", or "relay"
+    pub role: String,
+}
+
 /// Wallhack MCP server — exposes daemon management as MCP tools.
 #[derive(Debug, Clone)]
 pub struct WallhackServer;
@@ -61,9 +70,9 @@ async fn ipc_call(request: management_request::Request) -> Result<String, rmcp::
 #[rmcp::tool_router(vis = "pub")]
 impl WallhackServer {
     #[tool(
-        description = "Get node status: role, version, uptime, listen/peer addresses, capabilities"
+        description = "Get node info: role, version, uptime, listen/peer addresses, capabilities"
     )]
-    async fn status(&self) -> Result<String, rmcp::ErrorData> {
+    async fn info(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Status(StatusRequest {})).await
     }
 
@@ -167,6 +176,50 @@ impl WallhackServer {
     #[tool(description = "Gracefully shut down the wallhack daemon")]
     async fn shutdown(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Shutdown(ShutdownRequest {})).await
+    }
+
+    #[tool(
+        description = "Set a role hint to influence auto-negotiation (prefer/exclude/fixed + entry/exit/relay)"
+    )]
+    async fn set_hint(
+        &self,
+        Parameters(params): Parameters<SetHintParams>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let level = match params.level.as_str() {
+            "prefer" => HintLevel::Prefer,
+            "exclude" => HintLevel::Exclude,
+            "fixed" => HintLevel::Fixed,
+            other => {
+                return Err(rmcp::ErrorData::invalid_params(
+                    format!("invalid hint level '{other}' (expected: prefer, exclude, fixed)"),
+                    None,
+                ));
+            }
+        };
+        let role = match params.role.as_str() {
+            "entry" => NodeRole::Entry,
+            "exit" => NodeRole::Exit,
+            "relay" => NodeRole::Relay,
+            other => {
+                return Err(rmcp::ErrorData::invalid_params(
+                    format!("invalid role '{other}' (expected: entry, exit, relay)"),
+                    None,
+                ));
+            }
+        };
+        ipc_call(management_request::Request::SetHint(SetHintRequest {
+            level: level.into(),
+            role: role.into(),
+        }))
+        .await
+    }
+
+    #[tool(description = "Clear all role hints, returning to pure capability-based negotiation")]
+    async fn clear_hints(&self) -> Result<String, rmcp::ErrorData> {
+        ipc_call(management_request::Request::ClearHints(
+            ClearHintsRequest {},
+        ))
+        .await
     }
 }
 
