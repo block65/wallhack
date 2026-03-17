@@ -1192,6 +1192,40 @@ fn start_api(
     });
 }
 
+/// Start the REST API using the daemon handle's existing API connection.
+///
+/// Works with any node role — not gated on entry.
+#[cfg(feature = "http-api")]
+pub(crate) fn start_api_standalone(
+    api_cfg: crate::daemon_config::ApiConfig,
+    api: std::sync::Arc<dyn wallhack_core::node_api::NodeApi>,
+    global: &crate::daemon_config::GlobalConfig,
+) {
+    use wallhack_api::{Auth, State as ApiState};
+    use wallhack_ipc::client::IpcConnection;
+
+    tracing::info!("REST API username: {}", api_cfg.user);
+    tracing::info!("REST API secret:   {}", api_cfg.secret);
+
+    let tls_config = crate::config::build_tls_config(&global.tls);
+    let (api_client, api_server) = tokio::io::duplex(4096);
+    tokio::spawn(async move {
+        if let Err(e) = wallhack_core::ipc::handle_connection(api_server, api, None).await {
+            tracing::debug!("REST API IPC connection ended: {e}");
+        }
+    });
+
+    let ipc_conn = IpcConnection::new(api_client);
+    let auth = Auth::new(api_cfg.user, api_cfg.secret);
+    let state = ApiState::new(ipc_conn, auth);
+
+    tokio::spawn(async move {
+        if let Err(e) = wallhack_api::serve(api_cfg.addr, state, tls_config).await {
+            tracing::error!("REST API error: {e}");
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

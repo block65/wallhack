@@ -71,6 +71,19 @@ pub async fn run_daemon_engine(
         }
     });
 
+    // Start REST API if configured (any mode — not gated on entry).
+    #[cfg(feature = "http-api")]
+    {
+        let api_cfg = match &config.mode {
+            ModeConfig::Entry(c) => c.api.clone(),
+            ModeConfig::Auto(c) => c.api.clone(),
+            _ => None,
+        };
+        if let Some(api_cfg) = api_cfg {
+            mode::entry::start_api_standalone(api_cfg, handle.api_arc(), &config.global);
+        }
+    }
+
     #[cfg(feature = "vsock")]
     {
         let ipc_api_vsock = handle.api_arc();
