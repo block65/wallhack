@@ -571,6 +571,7 @@ where
 }
 
 /// Non-generic handler for erased relay connection results.
+#[allow(clippy::too_many_lines)] // REASON: symmetric uni/bidi stream setup and heartbeat per accepted peer
 fn handle_relay_connection(
     erased: wallhack_core::server::server::ErasedAcceptResult,
     source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
@@ -591,6 +592,7 @@ fn handle_relay_connection(
 
     let peer_addr = erased.peer_addr;
     let transport = erased.transport;
+    let peer_handshake = erased.peer_handshake;
     let (channels, control_tx) = (erased.channels, erased.control_tx);
     let DataChannels {
         instructions_tx,
@@ -599,11 +601,20 @@ fn handle_relay_connection(
         responses_rx,
     } = channels;
 
+    let peer_name = peer_handshake
+        .as_ref()
+        .filter(|h| !h.name.is_empty())
+        .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
+    let peer_role = peer_handshake
+        .as_ref()
+        .and_then(|h| h.capabilities)
+        .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+
     // Register the bridged peer so it appears in `wallhack peers`.
     peers.register(
+        peer_name.clone(),
         peer_addr.clone(),
-        peer_addr.clone(),
-        NodeRole::Relay,
+        peer_role,
         ConnectionSide::Accept,
     );
 
@@ -627,7 +638,7 @@ fn handle_relay_connection(
     // Outgoing: open uni stream to exit peer, send instructions from the entry.
     // instructions_rx receives instructions distributed by the fan-out task.
     let peer_transport_instr = std::sync::Arc::clone(&transport);
-    let peer_addr_cleanup = peer_addr.clone();
+    let peer_name_cleanup = peer_name.clone();
     let peers_cleanup = Arc::clone(peers);
     tokio::spawn(async move {
         match peer_transport_instr.open_uni_erased().await {
@@ -639,7 +650,7 @@ fn handle_relay_connection(
             Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
         }
         // Unregister peer when the outgoing stream closes (connection gone).
-        peers_cleanup.unregister(&peer_addr_cleanup);
+        peers_cleanup.unregister(&peer_name_cleanup);
     });
 
     // Register this peer's transport for bidi bridging.
@@ -684,7 +695,7 @@ fn handle_relay_connection(
     });
 
     crate::transport::relay_bridge_channels(
-        &peer_addr,
+        &peer_name,
         instructions_tx,
         responses_rx,
         control_tx,
