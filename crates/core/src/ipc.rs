@@ -523,7 +523,7 @@ impl From<crate::node_api::PeerInfo> for management::PeerInfo {
             name: p.name,
             addr: p.addr,
             status: management::PeerStatus::from(p.status).into(),
-            connected_at_secs: p.connected_at_secs,
+            connect_time: p.connect_time,
             bytes_transferred: p.bytes_transferred,
             latency_ms: p.latency_ms.unwrap_or(0.0),
             tun_capable: p.capabilities.tun_capable,
@@ -537,14 +537,14 @@ impl From<crate::node_api::PeerInfo> for management::PeerInfo {
 
 impl From<crate::node_api::RouteEntry> for management::RouteEntry {
     fn from(r: crate::node_api::RouteEntry) -> Self {
-        let elapsed = r.added_at.elapsed();
-        let added_at_secs = std::time::SystemTime::now()
+        let elapsed = r.create_time.elapsed();
+        let create_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |now| now.as_secs().saturating_sub(elapsed.as_secs()));
         management::RouteEntry {
             cidr: r.cidr.to_string(),
             peer: r.peer,
-            added_at_secs,
+            create_time,
             auto_managed: r.auto_managed,
         }
     }

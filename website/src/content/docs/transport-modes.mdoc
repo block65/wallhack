@@ -18,19 +18,19 @@ The choice is between UDP and TCP, based on what ports are open and what the net
 
 The default transport. Network conditions in penetration testing environments are rarely predictable. UDP handles this better because QUIC provides per-stream loss recovery — a dropped packet stalls only that connection, not the entire tunnel. Native stream multiplexing and built-in TLS 1.3. Append `/udp` to the address, or omit the suffix entirely.
 
-{% codeblock code="wallhack entry --listen :443/udp" /%}
+{% codeblock code="wallhack --role entry --listen :443/udp" /%}
 
 ## TCP (WebSockets)
 
 Traffic is wrapped in WebSockets and appears as standard HTTPS to firewalls and Deep Packet Inspection (DPI) tools. Append `/tcp` to the address.
 
-{% codeblock code="wallhack entry --listen :443/tcp" /%}
+{% codeblock code="wallhack --role entry --listen :443/tcp" /%}
 
 When an explicit HTTP or SOCKS5 proxy is required, set the standard environment variables before starting the exit node. Both HTTP CONNECT and SOCKS5 (`socks5://`) schemes are supported.
 
 ```bash
 export HTTPS_PROXY=http://proxy.corp.internal:8080
-wallhack exit --connect 192.168.1.5:443/tcp
+wallhack --role exit --connect 192.168.1.5:443/tcp
 ```
 
 `NO_PROXY` is also respected for comma-separated host exclusions.
@@ -39,4 +39,4 @@ wallhack exit --connect 192.168.1.5:443/tcp
 
 Traffic can be proxied through a CDN worker such as a Cloudflare Worker. The traffic legitimately terminates at the CDN's infrastructure, making it significantly harder to attribute or block.
 
-{% codeblock code="wallhack --cert cert.pem --key key.pem entry --listen :443/tcp" /%}
+{% codeblock code="wallhack --cert cert.pem --key key.pem --role entry --listen :443/tcp" /%}

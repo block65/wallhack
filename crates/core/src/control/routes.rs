@@ -14,7 +14,7 @@ pub struct RouteEntry {
     /// Name of the peer responsible for this route.
     pub peer: String,
     /// When this route was added.
-    pub added_at: Instant,
+    pub create_time: Instant,
     /// Whether this route was auto-installed from a peer's `Handshake.routes`
     /// advertisement rather than explicitly configured by the user.
     ///
@@ -78,7 +78,7 @@ impl RouteTable {
         let entry = RouteEntry {
             cidr,
             peer,
-            added_at: Instant::now(),
+            create_time: Instant::now(),
             auto_managed,
         };
         let new_entry = entry.clone();

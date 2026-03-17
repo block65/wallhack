@@ -43,21 +43,21 @@ const endpoints = Object.entries(spec.paths).flatMap(([path, methods]) =>
   }))
 );
 
-const startExample = `wallhack entry --listen :443 --api 127.0.0.1:6566`;
-const startupOutput = `[+] REST API listening on 127.0.0.1:6566
-[+]   API username: admin
-[+]   API secret:   K7mXpQ2nR9sY4wZtBvLjC6dHfAuE3aNp  (auto-generated)`;
-const customCredsExample = `wallhack entry --listen :443 --api 127.0.0.1:6566 --api-user operator --api-secret mysecret`;
+const startExample = `wallhack daemon --role entry --listen :443 --api 127.0.0.1:6564`;
+const startupOutput = `info: REST API listening on https://127.0.0.1:6564
+info: REST API username: admin
+info: REST API secret:   K7mXpQ2nR9sY4wZtBvLjC6dHfAuE3aNp`;
+const customCredsExample = `wallhack daemon --role entry --listen :443 --api 127.0.0.1:6564 --api-user operator --api-secret mysecret`;
 const curlExample = `SECRET=K7mXpQ2nR9sY4wZtBvLjC6dHfAuE3aNp  # from startup output
 
 # Get stats
-curl -k -u admin:$SECRET https://localhost:6566/stats
+curl -k -u admin:$SECRET https://localhost:6564/stats
 
 # List peers
-curl -k -u admin:$SECRET https://localhost:6566/peers
+curl -k -u admin:$SECRET https://localhost:6564/peers
 
 # Add a route through a peer
-curl -k -u admin:$SECRET -X POST https://localhost:6566/routes \\
+curl -k -u admin:$SECRET -X POST https://localhost:6564/routes \\
   -H 'Content-Type: application/json' \\
   -d '{"cidr": "192.168.1.0/24", "peer": "bench"}'`;
 ---

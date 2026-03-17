@@ -44,7 +44,7 @@ pub struct PeerInfo {
     /// Connection status.
     pub status: PeerStatus,
     /// When the peer connected (seconds since epoch).
-    pub connected_at_secs: u64,
+    pub connect_time: u64,
     /// Total bytes transferred through this peer.
     pub bytes_transferred: u64,
     /// Latest measured latency in milliseconds.
@@ -61,7 +61,7 @@ pub struct RouteEntry {
     /// Name of the peer responsible for this route.
     pub peer: String,
     /// When the route was added.
-    pub added_at: std::time::Instant,
+    pub create_time: std::time::Instant,
     /// True if auto-installed from a peer's handshake advertisement.
     pub auto_managed: bool,
 }
