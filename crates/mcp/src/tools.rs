@@ -126,7 +126,10 @@ impl WallhackServer {
         Parameters(params): Parameters<PeerParams>,
     ) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::DisconnectPeer(
-            DisconnectPeerRequest { peer: params.peer },
+            DisconnectPeerRequest {
+                peer: params.peer,
+                exact: false,
+            },
         ))
         .await
     }

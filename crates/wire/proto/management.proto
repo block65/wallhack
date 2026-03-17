@@ -87,6 +87,7 @@ message RemoveRouteRequest {
 
 message DisconnectPeerRequest {
   string peer = 1;
+  bool exact = 2;  // true = exact match on registry id; false = prefix match (REPL/CLI)
 }
 
 message ConnectRequest {

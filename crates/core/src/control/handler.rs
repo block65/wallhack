@@ -377,6 +377,13 @@ impl Handler {
     }
 }
 
+impl Handler {
+    fn do_disconnect(&self, id: &str) {
+        self.peers.send_disconnect(id, "disconnected by API");
+        let _ = self.peers.unregister(id);
+    }
+}
+
 impl crate::node_api::NodeApi for Handler {
     fn peers(&self) -> Vec<crate::node_api::PeerInfo> {
         self.peers
@@ -475,6 +482,7 @@ impl crate::node_api::NodeApi for Handler {
 
     fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
         // Try name prefix first, then fall back to exact address match.
+        // Used by REPL/CLI where prefix matching is convenient.
         let peer_info = self.peers.find_by_prefix(&peer).or_else(|e| {
             if matches!(e, crate::node_api::NodeApiError::PeerNotFound(_)) {
                 self.peers.find_by_addr(&peer)
@@ -483,14 +491,17 @@ impl crate::node_api::NodeApi for Handler {
             }
         })?;
 
-        // Send a Disconnect control message so the peer's transport closes
-        // cleanly and the remote side detects the disconnect.
-        self.peers
-            .send_disconnect(&peer_info.name, "disconnected by API");
+        self.do_disconnect(&peer_info.id);
+        Ok(())
+    }
 
-        // Remove from registry. May return None if the session task already
-        // cleaned up in response to the control channel closing — still OK.
-        let _ = self.peers.unregister(&peer_info.name);
+    fn disconnect_peer_by_id(&self, id: String) -> crate::node_api::Result<()> {
+        // Exact match on registry key. Used by REST API where the id
+        // is taken directly from the peers list.
+        if self.peers.get(&id).is_none() {
+            return Err(crate::node_api::NodeApiError::PeerNotFound(id));
+        }
+        self.do_disconnect(&id);
         Ok(())
     }
 

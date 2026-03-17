@@ -258,7 +258,10 @@ pub async fn disconnect_peer(
         .lock()
         .await
         .request(management_request::Request::DisconnectPeer(
-            DisconnectPeerRequest { peer: name },
+            DisconnectPeerRequest {
+                peer: name,
+                exact: true,
+            },
         ))
         .await;
 

@@ -204,10 +204,15 @@ pub trait NodeApi: Send + Sync {
     /// Only supported on entry nodes. Returns error for exit/relay nodes.
     fn remove_route(&self, cidr: &Cidr) -> Result<()>;
 
-    /// Disconnect a specific peer.
+    /// Disconnect a specific peer by name prefix or address.
     ///
-    /// Only supported on entry nodes. Returns error for exit/relay nodes.
+    /// Supports prefix matching for REPL/CLI convenience.
     fn disconnect_peer(&self, peer: String) -> Result<()>;
+
+    /// Disconnect a specific peer by exact registry id.
+    ///
+    /// Used by the REST API where the id comes directly from the peers list.
+    fn disconnect_peer_by_id(&self, id: String) -> Result<()>;
 
     /// Get the current negotiated role.
     fn current_role(&self) -> NodeRole;

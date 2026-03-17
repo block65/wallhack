@@ -146,6 +146,7 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
                 Some(management_request::Request::DisconnectPeer(
                     wallhack_wire::management::DisconnectPeerRequest {
                         peer: (*peer).to_string(),
+                        exact: false,
                     },
                 ))
             } else {
