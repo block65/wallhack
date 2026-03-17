@@ -196,7 +196,7 @@ fn run_daemon_repl(
 
         // Start IPC listener so wallhackctl can still connect.
         let socket_path = cli.host.as_deref().map_or_else(
-            || wallhack_core::ipc::socket_path(None),
+            || wallhack_core::ipc::socket_path(Some(config.mode.name())),
             wallhack_cli::ipc::resolve_host,
         );
         let ipc_api = handle.api_arc();

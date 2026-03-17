@@ -82,11 +82,12 @@ pub(crate) async fn run(
     tracing::info!("Eligible roles: {}", eligible.join(", "));
 
     // Set initial capabilities; role stays Indeterminate until negotiation.
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
     node_state.update_capabilities(Capabilities {
         tun_capable,
         listening: cfg.listen.is_some(),
         connecting: cfg.connect.is_some(),
-        interactive: false,
+        interactive,
     });
 
     match (&cfg.connect, &cfg.listen) {
