@@ -34,7 +34,6 @@ pub struct StatusResponse {
     pub version: String,
     pub role: String,
     pub uptime_ms: u64,
-    pub connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer_addr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,7 +156,6 @@ pub async fn status(State(state): State<ApiState>) -> Result<Json<StatusResponse
                 version: s.version,
                 role,
                 uptime_ms: s.uptime_ms,
-                connected: s.connected,
                 peer_addr: if s.peer_addr.is_empty() {
                     None
                 } else {

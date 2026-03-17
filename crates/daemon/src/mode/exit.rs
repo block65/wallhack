@@ -74,7 +74,6 @@ pub async fn run(
                 .into(),
         )),
         ConnectivitySpec::Connect(spec) => {
-            ctx.node_state.set_connected(&spec.addr);
             run_exit_connector(global, &cfg.name, spec, &security, &ctx).await
         }
         ConnectivitySpec::Listen(spec) => run_exit_listener(global, &cfg.name, spec, &ctx).await,

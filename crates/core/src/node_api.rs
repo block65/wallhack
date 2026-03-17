@@ -85,8 +85,6 @@ pub struct Metrics {
 pub struct NodeStatus {
     /// Node's role.
     pub role: NodeRole,
-    /// Whether node is connected to a peer (for exit/relay).
-    pub connected: bool,
     /// Peer address (if connected).
     pub peer_addr: Option<String>,
     /// Advertised capabilities.

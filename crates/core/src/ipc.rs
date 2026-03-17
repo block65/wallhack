@@ -300,7 +300,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             let s = api.status();
             management_response::Response::Status(StatusResponse {
                 role: management::NodeRole::from(s.role).into(),
-                connected: s.connected,
+                connected: false, // deprecated — derive from peer count instead
                 peer_addr: s.peer_addr.unwrap_or_default(),
                 listen_addr: s.listen_addr.map_or_else(String::new, |a| a.to_string()),
                 version: s.version,

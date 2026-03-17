@@ -12,7 +12,6 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             let mut out = String::new();
             let _ = writeln!(out, "name: {}", s.package_name);
             let _ = writeln!(out, "role: {role}");
-            let _ = writeln!(out, "connected: {}", s.connected);
             if !s.peer_addr.is_empty() {
                 let _ = writeln!(out, "peer addr: {}", s.peer_addr);
             }

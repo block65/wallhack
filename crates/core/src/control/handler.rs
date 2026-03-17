@@ -27,7 +27,6 @@ struct NodeState {
     role: NodeRole,
     capabilities: Capabilities,
     listen_addr: Option<SocketAddr>,
-    connected: bool,
     peer_addr: Option<String>,
 }
 
@@ -45,7 +44,6 @@ impl SharedNodeState {
             role,
             capabilities: Capabilities::default(),
             listen_addr: None,
-            connected: false,
             peer_addr: None,
         })))
     }
@@ -78,28 +76,6 @@ impl SharedNodeState {
             let mut new = (**old).clone();
             new.listen_addr = Some(addr);
             new.capabilities.listening = true;
-            new
-        });
-    }
-
-    /// Record that the node has connected to a peer.
-    pub fn set_connected(&self, peer_addr: &str) {
-        let addr = peer_addr.to_string();
-        self.0.rcu(|old| {
-            let mut new = (**old).clone();
-            new.connected = true;
-            new.peer_addr = Some(addr.clone());
-            new.capabilities.connecting = true;
-            new
-        });
-    }
-
-    /// Record that the node has disconnected from its peer.
-    pub fn set_disconnected(&self) {
-        self.0.rcu(|old| {
-            let mut new = (**old).clone();
-            new.connected = false;
-            new.peer_addr = None;
             new
         });
     }
@@ -427,7 +403,6 @@ impl crate::node_api::NodeApi for Handler {
         let state = self.state.load();
         crate::node_api::NodeStatus {
             role: state.role,
-            connected: state.connected,
             peer_addr: state.peer_addr.clone(),
             capabilities: state.capabilities,
             listen_addr: state.listen_addr,
@@ -842,7 +817,6 @@ mod tests {
         assert!(!status.capabilities.tun_capable);
         assert!(!status.capabilities.listening);
         assert!(status.listen_addr.is_none());
-        assert!(!status.connected);
 
         // Simulate negotiation resolving to Entry.
         let state = handler.node_state();
@@ -864,19 +838,5 @@ mod tests {
         let status = crate::node_api::NodeApi::status(&handler);
         assert_eq!(status.listen_addr, Some(addr));
         assert!(status.capabilities.listening);
-
-        // Simulate connection.
-        state.set_connected("1.2.3.4:5678");
-
-        let status = crate::node_api::NodeApi::status(&handler);
-        assert!(status.connected);
-        assert_eq!(status.peer_addr.as_deref(), Some("1.2.3.4:5678"));
-
-        // Simulate disconnection.
-        state.set_disconnected();
-
-        let status = crate::node_api::NodeApi::status(&handler);
-        assert!(!status.connected);
-        assert!(status.peer_addr.is_none());
     }
 }

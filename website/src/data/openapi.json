@@ -27,7 +27,6 @@
 					"version",
 					"role",
 					"uptime_ms",
-					"connected",
 					"capabilities"
 				],
 				"properties": {
@@ -47,10 +46,6 @@
 					"uptime_ms": {
 						"type": "integer",
 						"description": "Node uptime in milliseconds."
-					},
-					"connected": {
-						"type": "boolean",
-						"description": "Whether the node has an active peer connection."
 					},
 					"peer_addr": {
 						"type": "string",

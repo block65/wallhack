@@ -187,11 +187,7 @@ pub async fn run(
             "entry nodes do not support both connect and listen simultaneously".into(),
         )),
         ConnectivitySpec::Listen(spec) => run_entry_listen(global, cfg, spec, res).await,
-        ConnectivitySpec::Connect(spec) => {
-            let node_state = res.node_state.clone();
-            node_state.set_connected(&spec.addr);
-            run_entry_connect(global, cfg, spec, res).await
-        }
+        ConnectivitySpec::Connect(spec) => run_entry_connect(global, cfg, spec, res).await,
     }
 }
 
