@@ -136,7 +136,7 @@ pub async fn events(
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(std::time::Duration::from_secs(15))
-            .text("\u{1f9f1}"),
+            .text("ping"),
     )
 }
 
