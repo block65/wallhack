@@ -125,7 +125,7 @@ pub struct ListenCmd {
     pub addr: String,
 }
 
-/// Disconnect from upstream peer.
+/// Disconnect the active transport session.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "disconnect")]
 pub struct DisconnectCmd {}
