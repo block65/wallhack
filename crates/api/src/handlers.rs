@@ -534,9 +534,9 @@ pub async fn connect(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Connect(c)) => Ok(Json(ConnectResponse {
-            peer_addr: c.peer_addr,
-            protocol: c.protocol,
+        Some(management_response::Response::Connect(connect)) => Ok(Json(ConnectResponse {
+            peer_addr: connect.peer_addr,
+            protocol: connect.protocol,
         })),
         Some(management_response::Response::Error(e)) => {
             tracing::warn!("Connect failed: {}", e.message);
@@ -561,10 +561,10 @@ pub async fn listen(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Listen(l)) => Ok(Json(ListenResponse {
-            listen_addr: l.listen_addr,
-            protocol: l.protocol,
-            fingerprint: l.fingerprint,
+        Some(management_response::Response::Listen(listen)) => Ok(Json(ListenResponse {
+            listen_addr: listen.listen_addr,
+            protocol: listen.protocol,
+            fingerprint: listen.fingerprint,
         })),
         Some(management_response::Response::Error(e)) => {
             tracing::warn!("Listen failed: {}", e.message);
@@ -630,11 +630,11 @@ pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponseBody
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Ping(p)) => {
-            let role = NodeRole::try_from(p.node_role).unwrap_or(NodeRole::Unspecified);
+        Some(management_response::Response::Ping(ping)) => {
+            let role = NodeRole::try_from(ping.node_role).unwrap_or(NodeRole::Unspecified);
             Ok(Json(PingResponseBody {
-                uptime_ms: p.uptime_ms,
-                version: p.version,
+                uptime_ms: ping.uptime_ms,
+                version: ping.version,
                 role: role.to_string(),
             }))
         }
@@ -655,11 +655,11 @@ pub async fn ping_peer(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Ping(p)) => {
-            let role = NodeRole::try_from(p.node_role).unwrap_or(NodeRole::Unspecified);
+        Some(management_response::Response::Ping(ping)) => {
+            let role = NodeRole::try_from(ping.node_role).unwrap_or(NodeRole::Unspecified);
             Ok(Json(PingResponseBody {
-                uptime_ms: p.uptime_ms,
-                version: p.version,
+                uptime_ms: ping.uptime_ms,
+                version: ping.version,
                 role: role.to_string(),
             }))
         }
