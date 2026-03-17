@@ -62,7 +62,7 @@ pub fn router(state: State) -> Router {
     let auth = state.auth.clone();
 
     let protected_routes = Router::new()
-        .route("/ping", get(handlers::ping))
+        .route("/status", get(handlers::status))
         .route("/stats", get(handlers::stats))
         .route("/peers", get(handlers::peers))
         .route("/peers/{name}", delete(handlers::disconnect_peer))
@@ -82,6 +82,14 @@ pub fn router(state: State) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
         .merge(protected_routes)
+        .fallback(|req: Request<Body>| async move {
+            tracing::warn!(
+                method = %req.method(),
+                uri = %req.uri(),
+                "API 404: no route matched"
+            );
+            axum::http::StatusCode::NOT_FOUND
+        })
         .layer(cors)
         .layer(middleware::from_fn(security_middleware))
         .with_state(state)

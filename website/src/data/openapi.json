@@ -2,7 +2,7 @@
 	"openapi": "3.1.0",
 	"info": {
 		"title": "wallhack REST API",
-		"version": "0.2.0",
+		"version": "0.3.0",
 		"description": "Headless control plane for wallhack nodes. All endpoints except /health require Basic authentication when --api-user and --api-secret are configured."
 	},
 	"servers": [
@@ -20,21 +20,63 @@
 			}
 		},
 		"schemas": {
-			"PingResponse": {
+			"StatusResponse": {
 				"type": "object",
-				"required": ["uptime_ms", "version", "node_role"],
+				"required": [
+					"name",
+					"version",
+					"role",
+					"uptime_ms",
+					"connected",
+					"capabilities"
+				],
 				"properties": {
+					"name": {
+						"type": "string",
+						"description": "Node name (set via --name)."
+					},
+					"version": {
+						"type": "string",
+						"description": "Binary version string including git SHA and build timestamp."
+					},
+					"role": {
+						"type": "string",
+						"enum": ["entry", "exit", "relay", "indeterminate"],
+						"description": "Operational role of this node."
+					},
 					"uptime_ms": {
 						"type": "integer",
 						"description": "Node uptime in milliseconds."
 					},
-					"version": {
-						"type": "string",
-						"description": "Binary version string."
+					"connected": {
+						"type": "boolean",
+						"description": "Whether the node has an active peer connection."
 					},
-					"node_role": {
+					"peer_addr": {
 						"type": "string",
-						"description": "Operational role of this node (e.g., entry, relay, exit, indeterminate)."
+						"description": "Remote peer address (present only when connected)."
+					},
+					"listen_addr": {
+						"type": "string",
+						"description": "Bound listen address (present only when listening)."
+					},
+					"capabilities": {
+						"type": "object",
+						"required": ["tun_capable", "listening", "connecting"],
+						"properties": {
+							"tun_capable": {
+								"type": "boolean",
+								"description": "Whether the node can create TUN interfaces."
+							},
+							"listening": {
+								"type": "boolean",
+								"description": "Whether the node is accepting peer connections."
+							},
+							"connecting": {
+								"type": "boolean",
+								"description": "Whether the node connects to a peer."
+							}
+						}
 					}
 				}
 			},
@@ -202,18 +244,18 @@
 				}
 			}
 		},
-		"/ping": {
+		"/status": {
 			"get": {
 				"summary": "Node status",
-				"description": "Retrieves high-level node identity and uptime information.",
-				"operationId": "ping",
+				"description": "Retrieves node identity, role, capabilities, and uptime.",
+				"operationId": "status",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
 						"description": "Status retrieved.",
 						"content": {
 							"application/json": {
-								"schema": { "$ref": "#/components/schemas/PingResponse" }
+								"schema": { "$ref": "#/components/schemas/StatusResponse" }
 							}
 						}
 					},

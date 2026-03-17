@@ -135,7 +135,11 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
     let (route_update_tx, route_update_rx) = tokio::sync::broadcast::channel(16);
 
     let handler = Handler::new(
-        HandlerConfig::new(role, "wallhack".to_string(), config.global.version.clone()),
+        HandlerConfig::new(
+            role,
+            config.mode.name().to_string(),
+            config.global.version.clone(),
+        ),
         Arc::clone(&metrics),
         Arc::clone(&peers),
         Arc::clone(&routes),

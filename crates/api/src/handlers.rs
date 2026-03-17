@@ -26,12 +26,27 @@ pub struct StatsResponse {
     pub active_flows: u64,
 }
 
-/// Ping response.
+/// Node status response.
 #[derive(Debug, Serialize)]
-pub struct PingResponse {
-    pub uptime_ms: u64,
+pub struct StatusResponse {
+    pub name: String,
     pub version: String,
-    pub node_role: String,
+    pub role: String,
+    pub uptime_ms: u64,
+    pub connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listen_addr: Option<String>,
+    pub capabilities: CapabilitiesResponse,
+}
+
+/// Node capability flags.
+#[derive(Debug, Serialize)]
+pub struct CapabilitiesResponse {
+    pub tun_capable: bool,
+    pub listening: bool,
+    pub connecting: bool,
 }
 
 /// Peer info response.
@@ -84,7 +99,7 @@ pub async fn health() -> &'static str {
     "ok"
 }
 
-pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponse>, StatusCode> {
+pub async fn status(State(state): State<ApiState>) -> Result<Json<StatusResponse>, StatusCode> {
     let resp = state
         .ipc
         .lock()
@@ -95,11 +110,28 @@ pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponse>, S
 
     match resp.response {
         Some(management_response::Response::Status(s)) => {
-            let role = format!("{:?}", s.role());
-            Ok(Json(PingResponse {
-                uptime_ms: s.uptime_ms,
+            let role = s.role().to_string();
+            Ok(Json(StatusResponse {
+                name: s.package_name,
                 version: s.version,
-                node_role: role,
+                role,
+                uptime_ms: s.uptime_ms,
+                connected: s.connected,
+                peer_addr: if s.peer_addr.is_empty() {
+                    None
+                } else {
+                    Some(s.peer_addr)
+                },
+                listen_addr: if s.listen_addr.is_empty() {
+                    None
+                } else {
+                    Some(s.listen_addr)
+                },
+                capabilities: CapabilitiesResponse {
+                    tun_capable: s.tun_capable,
+                    listening: s.listening,
+                    connecting: s.connecting,
+                },
             }))
         }
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
