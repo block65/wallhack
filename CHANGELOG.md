@@ -1,6 +1,13 @@
 
 # Changelog
 
+## [0.8.3](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.2...wallhack-cli-v0.8.3) (2026-03-17)
+
+### Bug Fixes
+
+* **entry:** prevent stale peer eviction and TUN EBUSY on reconnect ([7c66b05](https://github.com/block65/wallhack/commit/7c66b0522e07b8f6cba0b538b38ba209d169aa0e))
+
+
 ## [0.8.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.1...wallhack-cli-v0.8.2) (2026-03-16)
 
 ### Bug Fixes
