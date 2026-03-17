@@ -19,6 +19,7 @@ axum-server = { version = "0.7", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { workspace = true, features = ["sync"] }
+time = { version = "0.3", default-features = false, features = ["std"] }
 tracing = { workspace = true }
 urlencoding = "2"
 base64 = "0.22"
