@@ -1,6 +1,13 @@
 
 # Changelog
 
+## [0.9.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.3...wallhack-cli-v0.9.0) (2026-03-17)
+
+### Features
+
+* **relay:** bridge bidirectional streams between source and exit peers ([2f52989](https://github.com/block65/wallhack/commit/2f529891b1d1defde69090613f76218dda8bc360))
+
+
 ## [0.8.3](https://github.com/block65/wallhack/compare/wallhack-cli-v0.8.2...wallhack-cli-v0.8.3) (2026-03-17)
 
 ### Bug Fixes
