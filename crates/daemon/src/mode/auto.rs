@@ -141,19 +141,23 @@ pub(crate) async fn run(
 ///
 /// Always populates `routes` with locally-routable CIDRs so that a peer
 /// resolving to Entry can install OS routes automatically.
+// REASON: these are distinct capability flags from the wire format; wrapping
+// them in an enum would add indirection without clarity at the call sites.
+#[allow(clippy::fn_params_excessive_bools)]
 fn build_local_handshake(
     cfg: &AutoConfig,
     version: &str,
     tun_capable: bool,
     listening: bool,
     connecting: bool,
+    interactive: bool,
 ) -> Handshake {
     Handshake {
         capabilities: Some(Capabilities {
             tun_capable,
             listening,
             connecting,
-            interactive: false,
+            interactive,
         }),
         name: cfg.name.clone(),
         version: version.to_string(),
@@ -226,7 +230,14 @@ async fn run_auto_connector(
     route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
-    let local_hs = build_local_handshake(cfg, &global.version, tun_capable, false, true);
+    let local_hs = build_local_handshake(
+        cfg,
+        &global.version,
+        tun_capable,
+        false,
+        true,
+        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+    );
 
     tracing::info!("Auto connector: connecting to {}...", spec.addr);
     let endpoint =
@@ -398,13 +409,16 @@ async fn run_auto_connect_session_dispatch(
     let result = negotiate(local_hs, &peer_hs);
 
     let negotiated_role = match &result {
-        NegotiationResult::Resolved(role) => *role,
+        NegotiationResult::Resolved { role, .. } => *role,
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
     node_state.update_role(negotiated_role);
 
     match result {
-        NegotiationResult::Resolved(NodeRole::Entry) => {
+        NegotiationResult::Resolved {
+            role: NodeRole::Entry,
+            ..
+        } => {
             tracing::info!(
                 "Role resolved: name={} addr={peer_addr} role=entry",
                 peer_hs.name,
@@ -461,7 +475,10 @@ async fn run_auto_connect_session_dispatch(
 
             result
         }
-        NegotiationResult::Resolved(NodeRole::Exit) => {
+        NegotiationResult::Resolved {
+            role: NodeRole::Exit,
+            ..
+        } => {
             tracing::info!(
                 "Role resolved: name={} addr={peer_addr} role=exit",
                 peer_hs.name,
@@ -508,13 +525,19 @@ async fn run_auto_connect_session_dispatch(
             )
             .await
         }
-        NegotiationResult::Resolved(NodeRole::Relay) => {
+        NegotiationResult::Resolved {
+            role: NodeRole::Relay,
+            ..
+        } => {
             tracing::warn!("Unexpected relay negotiation for connector-only mode; holding");
             let _keep_alive = control_tx;
             hold_until_disconnect(tasks).await;
             Ok(())
         }
-        NegotiationResult::Resolved(NodeRole::Indeterminate)
+        NegotiationResult::Resolved {
+            role: NodeRole::Indeterminate,
+            ..
+        }
         | NegotiationResult::Indeterminate { .. } => {
             tracing::warn!("Role negotiated: {result}");
             let name = if peer_hs.name.is_empty() {
@@ -615,7 +638,14 @@ async fn run_auto_listener(
     route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
-    let local_hs = build_local_handshake(cfg, &global.version, tun_capable, true, false);
+    let local_hs = build_local_handshake(
+        cfg,
+        &global.version,
+        tun_capable,
+        true,
+        false,
+        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+    );
 
     let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
     let server_options = ServerOptions {
@@ -835,13 +865,16 @@ async fn run_auto_accept_session_inner(
     let result = negotiate(&local_hs, &peer_hs);
 
     let negotiated_role = match &result {
-        NegotiationResult::Resolved(role) => *role,
+        NegotiationResult::Resolved { role, .. } => *role,
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
     node_state.update_role(negotiated_role);
 
     match result {
-        NegotiationResult::Resolved(NodeRole::Entry) => {
+        NegotiationResult::Resolved {
+            role: NodeRole::Entry,
+            ..
+        } => {
             tracing::info!(
                 "Role resolved: name={} addr={peer_addr} role=entry",
                 peer_hs.name,
@@ -1002,7 +1035,10 @@ async fn run_auto_accept_session_inner(
                 }
             }
         }
-        NegotiationResult::Resolved(NodeRole::Exit) => {
+        NegotiationResult::Resolved {
+            role: NodeRole::Exit,
+            ..
+        } => {
             tracing::info!(
                 "Role resolved: name={} addr={peer_addr} role=exit",
                 peer_hs.name,
@@ -1087,11 +1123,17 @@ async fn run_auto_accept_session_inner(
             peers.unregister(&peer_name);
             tracing::info!("Peer disconnected: {peer_name}");
         }
-        NegotiationResult::Resolved(NodeRole::Relay) => {
+        NegotiationResult::Resolved {
+            role: NodeRole::Relay,
+            ..
+        } => {
             tracing::warn!("Unexpected relay negotiation for listener-only mode; holding");
             let _keep_alive = control_tx;
         }
-        NegotiationResult::Resolved(NodeRole::Indeterminate)
+        NegotiationResult::Resolved {
+            role: NodeRole::Indeterminate,
+            ..
+        }
         | NegotiationResult::Indeterminate { .. } => {
             tracing::warn!("Role negotiated: {result}");
             let name = if peer_hs.name.is_empty() {
