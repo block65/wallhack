@@ -491,9 +491,8 @@ async fn run_auto_connect_session_dispatch(
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
         | NegotiationResult::Indeterminate { .. } => {
-            tracing::info!("Role is indeterminate: {result}; holding connection");
-            hold_until_disconnect(tasks, control_tx, node_state).await;
-            Ok(())
+            tracing::error!("Role negotiation failed: {result}");
+            Err(NodeError::Config(result.to_string()))
         }
     }
 }

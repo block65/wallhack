@@ -292,7 +292,7 @@ where
     res.node_state.set_listen_addr(local_addr);
     let proto = server.protocol_name();
     tracing::info!("Listening on {local_addr} ({proto})");
-    tracing::info!("Certificate fingerprint: {}", server.fingerprint());
+    tracing::info!("Tunnel certificate: {}", server.fingerprint());
     if server.psk().is_none() {
         tracing::warn!(
             "No authentication configured. Set a pre-shared key (PSK) to require authentication."

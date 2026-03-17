@@ -150,8 +150,6 @@ fn run_daemon_repl(
     cli: &wallhack_cli::daemon_cli::WallhackCli,
     config: &wallhackd::daemon_config::DaemonConfig,
 ) -> ! {
-    // REPL defaults to WARN so daemon info-level noise doesn't clutter the
-    // prompt. --debug / --trace still work if the user wants more detail.
     let subscriber = if cli.trace || cli.trace_filter.is_some() {
         wallhack_cli::subscriber::SimpleSubscriber::new(
             tracing::level_filters::LevelFilter::TRACE,
@@ -162,9 +160,14 @@ fn run_daemon_repl(
             tracing::level_filters::LevelFilter::DEBUG,
             cli.debug_filter.as_deref().unwrap_or(""),
         )
-    } else {
+    } else if cli.quiet {
         wallhack_cli::subscriber::SimpleSubscriber::new(
             tracing::level_filters::LevelFilter::WARN,
+            "",
+        )
+    } else {
+        wallhack_cli::subscriber::SimpleSubscriber::new(
+            tracing::level_filters::LevelFilter::INFO,
             "",
         )
     };
