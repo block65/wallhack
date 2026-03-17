@@ -31,7 +31,9 @@ impl std::fmt::Display for PeerStatus {
 /// Information about a directly connected peer.
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-    /// Name of the peer (user-provided or auto-generated).
+    /// Unique registry key (equals `name` unless disambiguated).
+    pub id: String,
+    /// User-provided peer name (from `--name`).
     pub name: String,
     /// Remote address of the peer.
     pub addr: String,

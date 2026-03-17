@@ -178,6 +178,7 @@ message PeerInfo {
   bool connecting = 10;
   NodeRole role = 11;             // peer's negotiated role
   string tun_name = 13;           // TUN interface name (entry-side only, empty otherwise)
+  string id = 14;                 // unique registry key (equals name unless disambiguated)
 }
 
 message PeersResponse {

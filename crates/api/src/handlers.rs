@@ -53,6 +53,7 @@ pub struct CapabilitiesResponse {
 /// Peer info response.
 #[derive(Debug, Serialize)]
 pub struct PeerResponse {
+    pub id: String,
     pub name: String,
     pub addr: String,
     pub role: String,
@@ -218,6 +219,7 @@ pub async fn peers(State(state): State<ApiState>) -> Result<Json<PeersResponse>,
                     let role = wallhack_wire::management::NodeRole::try_from(peer.role)
                         .unwrap_or(wallhack_wire::management::NodeRole::Unspecified);
                     PeerResponse {
+                        id: peer.id,
                         name: peer.name,
                         addr: peer.addr,
                         role: role.to_string(),
@@ -270,9 +272,12 @@ pub async fn disconnect_peer(
                 }),
             ),
             Some(management_response::Response::Error(e)) => {
-                let code: i32 = wallhack_wire::management::ErrorCode::PeerNotFound.into();
-                let status = if e.code == code {
+                let not_found: i32 = wallhack_wire::management::ErrorCode::PeerNotFound.into();
+                let ambiguous: i32 = wallhack_wire::management::ErrorCode::PeerAmbiguous.into();
+                let status = if e.code == not_found {
                     StatusCode::NOT_FOUND
+                } else if e.code == ambiguous {
+                    StatusCode::CONFLICT
                 } else {
                     StatusCode::INTERNAL_SERVER_ERROR
                 };

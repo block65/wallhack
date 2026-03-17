@@ -65,9 +65,11 @@ pub fn validate_peer_name(id: &str) -> Result<(), ValidationError> {
     }
 
     // Allow alphanumeric, hyphen, underscore, colon, period, brackets (for IPv6)
+    // Allow alphanumeric, hyphen, underscore, colon, period, brackets (IPv6),
+    // hash (disambiguated peer ids like "foo#3").
     let valid = id
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.' | '[' | ']'));
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.' | '[' | ']' | '#'));
 
     if !valid {
         return Err(ValidationError::InvalidCharacters);

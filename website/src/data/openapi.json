@@ -120,6 +120,7 @@
 			"PeerResponse": {
 				"type": "object",
 				"required": [
+					"id",
 					"name",
 					"addr",
 					"role",
@@ -127,9 +128,13 @@
 					"bytes_transferred"
 				],
 				"properties": {
+					"id": {
+						"type": "string",
+						"description": "Unique registry key. Equals name unless disambiguated (e.g. foo#3). Use this for DELETE /peers/{id}."
+					},
 					"name": {
 						"type": "string",
-						"description": "Name of the peer (user-provided via --name, or auto-generated)."
+						"description": "User-provided peer name (from --name). May repeat across connections."
 					},
 					"addr": {
 						"type": "string",
@@ -301,19 +306,19 @@
 				}
 			}
 		},
-		"/peers/{name}": {
+		"/peers/{id}": {
 			"delete": {
 				"summary": "Disconnect peer",
-				"description": "Terminates the connection with a specific peer.",
+				"description": "Terminates the connection with a specific peer. Accepts the peer's unique id (from GET /peers) or an unambiguous name prefix.",
 				"operationId": "disconnectPeer",
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
-						"name": "name",
+						"name": "id",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string" },
-						"description": "Name of the peer to disconnect."
+						"description": "Peer id (or unambiguous name prefix) to disconnect."
 					}
 				],
 				"responses": {

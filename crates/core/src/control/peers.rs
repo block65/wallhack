@@ -50,7 +50,11 @@ impl std::fmt::Display for ConnectionSide {
 /// Information about a connected peer.
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-    /// Name of the peer (user-provided or auto-generated).
+    /// Registry key — unique per connection. Equals `name` unless
+    /// disambiguated (e.g. `foo#3` when another `foo` is already connected).
+    pub id: String,
+    /// User-provided peer name (from `--name`). May be shared across
+    /// multiple connections from the same peer.
     pub name: String,
     /// Remote address of the peer.
     pub addr: String,
@@ -132,17 +136,32 @@ impl Registry {
 
     /// Register a new peer.
     ///
-    /// Returns a connection ID that must be passed to
-    /// [`unregister_if_current`] to prevent a stale task from evicting
-    /// a newer connection that re-registered under the same name.
-    pub fn register(&self, id: String, addr: String, role: NodeRole, side: ConnectionSide) -> u64 {
+    /// Returns `(peer_id, connection_id)`. The `peer_id` is the actual
+    /// registry key — equals `id` normally, or `id#N` if disambiguated.
+    /// Use `peer_id` for all subsequent registry operations (heartbeat,
+    /// latency updates, unregister).
+    pub fn register(
+        &self,
+        id: String,
+        addr: String,
+        role: NodeRole,
+        side: ConnectionSide,
+    ) -> (String, u64) {
         let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed) + 1;
-        // TOCTOU: another thread could register the same id between this
-        // check and the rcu insert. Harmless — a duplicate Connected event
-        // is better than a missed one, and callers don't race on the same id.
-        let is_new = !self.peers.load().contains_key(&id);
+
+        // Disambiguate duplicate names using the unique connection ID.
+        let peers = self.peers.load();
+        let peer_id = if peers.contains_key(&id) {
+            let disambiguated = format!("{id}#{connection_id}");
+            tracing::info!("Peer name {id:?} already registered, using {disambiguated:?}");
+            disambiguated
+        } else {
+            id.clone()
+        };
+
         let info = PeerInfo {
-            name: id.clone(),
+            id: peer_id.clone(),
+            name: id,
             addr,
             role,
             capabilities: Capabilities::default(),
@@ -160,20 +179,18 @@ impl Registry {
         };
         let event_addr = info.addr.clone();
         let event_role = info.role;
-        let event_name = id.clone();
+        let return_id = peer_id.clone();
         self.peers.rcu(move |old| {
             let mut new = (**old).clone();
-            new.insert(id.clone(), info.clone());
+            new.insert(peer_id.clone(), info.clone());
             new
         });
-        if is_new {
-            let _ = self.events_tx.send(PeerEvent::Connected {
-                name: event_name,
-                addr: event_addr,
-                role: event_role,
-            });
-        }
-        connection_id
+        let _ = self.events_tx.send(PeerEvent::Connected {
+            name: return_id.clone(),
+            addr: event_addr,
+            role: event_role,
+        });
+        (return_id, connection_id)
     }
 
     /// Set the TUN interface name for a peer.
@@ -476,24 +493,33 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_register_does_not_emit() {
+    fn test_duplicate_name_disambiguated() {
         let registry = Registry::new();
-        registry.register(
+        let (id1, _) = registry.register(
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
             ConnectionSide::Accept,
         );
+        assert_eq!(id1, "peer1");
 
-        let mut rx = registry.subscribe();
-        registry.register(
+        let (id2, _) = registry.register(
             "peer1".into(),
             "1.2.3.4:9999".into(),
             NodeRole::Exit,
             ConnectionSide::Accept,
         );
+        assert!(
+            id2.starts_with("peer1#"),
+            "expected disambiguated id, got {id2}"
+        );
+        assert_eq!(registry.count(), 2);
 
-        assert!(rx.try_recv().is_err());
+        // Both are independently unregisterable.
+        registry.unregister(&id1);
+        assert_eq!(registry.count(), 1);
+        registry.unregister(&id2);
+        assert_eq!(registry.count(), 0);
     }
 
     #[test]
@@ -509,27 +535,30 @@ mod tests {
     #[test]
     fn test_connection_id_prevents_stale_unregister() {
         let registry = Registry::new();
-        let gen1 = registry.register(
+        let (peer_id1, gen1) = registry.register(
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
             ConnectionSide::Accept,
         );
-        // Re-register same peer (new connection arrived before old task cleaned up).
-        let gen2 = registry.register(
+        assert_eq!(peer_id1, "peer1");
+        // Re-register same peer — now disambiguated as "peer1#N".
+        let (peer_id2, gen2) = registry.register(
             "peer1".into(),
             "1.2.3.4:9999".into(),
             NodeRole::Exit,
             ConnectionSide::Accept,
         );
         assert_ne!(gen1, gen2);
+        assert_eq!(registry.count(), 2);
 
-        // Old task tries to unregister with stale connection_id — should be a no-op.
-        assert!(registry.unregister_if_current("peer1", gen1).is_none());
+        // Old task unregisters with stale connection_id on the original key — should succeed
+        // since the original "peer1" entry still exists.
+        assert!(registry.unregister_if_current(&peer_id1, gen1).is_some());
         assert_eq!(registry.count(), 1);
 
         // New task unregisters with current connection_id — should succeed.
-        assert!(registry.unregister_if_current("peer1", gen2).is_some());
+        assert!(registry.unregister_if_current(&peer_id2, gen2).is_some());
         assert_eq!(registry.count(), 0);
     }
 }

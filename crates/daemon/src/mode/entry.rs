@@ -709,13 +709,13 @@ where
                 let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
 
                 // Register peer in the registry and apply handshake capabilities.
-                let connection_id = conn_peers.register(
+                let (peer_id, connection_id) = conn_peers.register(
                     peer_name.clone(),
                     peer_addr.clone(),
                     identity.role,
                     wallhack_core::control::peers::ConnectionSide::Accept,
                 );
-                conn_peers.update_capabilities(&peer_name, &identity.capabilities);
+                conn_peers.update_capabilities(&peer_id, &identity.capabilities);
 
                 // Extract transport and channels from the generic AcceptResult before
                 // spawning so the spawned future is non-generic.

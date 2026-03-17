@@ -383,6 +383,7 @@ impl crate::node_api::NodeApi for Handler {
             .list()
             .into_iter()
             .map(|p| crate::node_api::PeerInfo {
+                id: p.id,
                 name: p.name,
                 addr: p.addr,
                 role: p.role,

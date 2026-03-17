@@ -527,6 +527,7 @@ impl From<crate::node_api::PeerStatus> for management::PeerStatus {
 impl From<crate::node_api::PeerInfo> for management::PeerInfo {
     fn from(p: crate::node_api::PeerInfo) -> Self {
         management::PeerInfo {
+            id: p.id,
             name: p.name,
             addr: p.addr,
             status: management::PeerStatus::from(p.status).into(),
