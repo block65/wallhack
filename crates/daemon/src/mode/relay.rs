@@ -30,6 +30,11 @@ use crate::{
 /// Delay before reconnecting after the source peer connection drops.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 
+/// Lightweight shutdown signal: dropping the sender wakes all receivers.
+///
+/// Avoids a `tokio-util` dependency for `CancellationToken`.
+type ShutdownSignal = tokio::sync::watch::Receiver<()>;
+
 fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>) -> ServerOptions {
     ServerOptions {
         handler_config: HandlerConfig::new(
@@ -237,6 +242,8 @@ async fn run_relay_loop_inner(
 
     tracing::info!("Connected to {peer_addr}");
 
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+
     // Register the source peer so it appears in `wallhack peers`.
     peers.register(
         peer_addr.clone(),
@@ -255,9 +262,9 @@ async fn run_relay_loop_inner(
     // Outgoing: open uni stream to source, send exit-peer responses (relay → entry).
     // The connect() incoming task already handles entry→relay instructions via
     // source_instr_tx; here we send the collected exit responses back to the entry.
-    let transport_out = std::sync::Arc::clone(&transport);
+    let transport_resp = std::sync::Arc::clone(&transport);
     tokio::spawn(async move {
-        match transport_out.open_uni_erased().await {
+        match transport_resp.open_uni_erased().await {
             Ok(mut send) => {
                 if let Err(e) = run_send_responses(&mut send, source_resp_rx).await {
                     tracing::debug!("Send-responses to source finished: {e}");
@@ -271,6 +278,53 @@ async fn run_relay_loop_inner(
     // forwards each instruction to all connected exit peers.
     let fanout_register_tx = crate::transport::spawn_fanout_task(source_instr_rx);
 
+    // Watch channel for exit peer transports — the source→peer bidi bridge
+    // reads the latest registered peer transport to route accepted bidi streams.
+    let (peer_transport_tx, peer_transport_rx) = tokio::sync::watch::channel::<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >(None);
+
+    // Source→peer bidi bridge: single accept loop on the source transport.
+    // When a bidi stream arrives from the source, opens a matching bidi to
+    // the current peer and splices them together.
+    let source_transport_bi = Arc::clone(&transport);
+    let mut shutdown_bidi = shutdown_rx.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = source_transport_bi.accept_bi_erased() => {
+                    match result {
+                        Ok(Some(source_stream)) => {
+                            let current_peer = peer_transport_rx.borrow().clone();
+                            let Some(peer) = current_peer else {
+                                tracing::debug!("bidi bridge: no peer connected, dropping stream");
+                                continue;
+                            };
+                            tokio::spawn(async move {
+                                match peer.open_bi_erased().await {
+                                    Ok(peer_stream) => {
+                                        if let Err(e) = wallhack_core::transport::splice_bi(
+                                            source_stream,
+                                            peer_stream,
+                                        ).await {
+                                            tracing::debug!("bidi bridge (source→peer) ended: {e}");
+                                        }
+                                    }
+                                    Err(e) => tracing::debug!("bidi bridge: failed to open peer stream: {e}"),
+                                }
+                            });
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::debug!("bidi bridge: source accept_bi error: {e}");
+                        }
+                    }
+                }
+                _ = shutdown_bidi.changed() => break,
+            }
+        }
+    });
+
     let listener_fut = run_listener(
         global,
         listen_spec,
@@ -278,7 +332,10 @@ async fn run_relay_loop_inner(
         server_options,
         source_resp_tx,
         fanout_register_tx,
+        peer_transport_tx,
+        Arc::clone(&transport),
         Arc::clone(&peers),
+        shutdown_rx,
     );
 
     tokio::pin!(listener_fut);
@@ -297,11 +354,15 @@ async fn run_relay_loop_inner(
         }
     }
 
+    // Dropping shutdown_tx wakes all bridge tasks holding a shutdown_rx clone.
+    drop(shutdown_tx);
+
     peers.unregister(&peer_addr);
 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // REASON: threading transport + shutdown signal through listener stack
 async fn run_listener(
     global: &GlobalConfig,
     listen_spec: &AddressSpec,
@@ -311,7 +372,12 @@ async fn run_listener(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
+    peer_transport_tx: tokio::sync::watch::Sender<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >,
+    source_transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     peers: Arc<Registry>,
+    shutdown: ShutdownSignal,
 ) -> Result<(), NodeError> {
     match listen_spec.protocol {
         Protocol::Udp => {
@@ -323,7 +389,10 @@ async fn run_listener(
                     server_options,
                     source_resp_tx,
                     fanout_register_tx,
+                    peer_transport_tx,
+                    source_transport,
                     peers,
+                    shutdown,
                 )
                 .await
             }
@@ -341,7 +410,10 @@ async fn run_listener(
                     server_options,
                     source_resp_tx,
                     fanout_register_tx,
+                    peer_transport_tx,
+                    source_transport,
                     peers,
+                    shutdown,
                 )
                 .await
             }
@@ -354,6 +426,7 @@ async fn run_listener(
 }
 
 #[cfg(feature = "quic")]
+#[allow(clippy::too_many_arguments)] // REASON: forwarding from run_listener
 async fn run_quic_listener(
     global: &GlobalConfig,
     addr: std::net::SocketAddr,
@@ -362,7 +435,12 @@ async fn run_quic_listener(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
+    peer_transport_tx: tokio::sync::watch::Sender<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >,
+    source_transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     peers: Arc<Registry>,
+    shutdown: ShutdownSignal,
 ) -> Result<(), NodeError> {
     let server_config =
         crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
@@ -370,10 +448,20 @@ async fn run_quic_listener(
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (QUIC)", server.local_addr()?);
 
-    run_relay_accept_loop(server, source_resp_tx, fanout_register_tx, peers).await
+    run_relay_accept_loop(
+        server,
+        source_resp_tx,
+        fanout_register_tx,
+        peer_transport_tx,
+        source_transport,
+        peers,
+        shutdown,
+    )
+    .await
 }
 
 #[cfg(feature = "websocket")]
+#[allow(clippy::too_many_arguments)] // REASON: forwarding from run_listener
 async fn run_ws_listener(
     global: &GlobalConfig,
     addr: std::net::SocketAddr,
@@ -382,7 +470,12 @@ async fn run_ws_listener(
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
+    peer_transport_tx: tokio::sync::watch::Sender<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >,
+    source_transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     peers: Arc<Registry>,
+    shutdown: ShutdownSignal,
 ) -> Result<(), NodeError> {
     use wallhack_core::server::ws::WebSocketServer;
 
@@ -392,17 +485,32 @@ async fn run_ws_listener(
         .map_err(|e| NodeError::Transport(Box::new(e)))?;
     tracing::info!("Listening on {} (WebSocket)", server.local_addr()?);
 
-    run_relay_accept_loop(server, source_resp_tx, fanout_register_tx, peers).await
+    run_relay_accept_loop(
+        server,
+        source_resp_tx,
+        fanout_register_tx,
+        peer_transport_tx,
+        source_transport,
+        peers,
+        shutdown,
+    )
+    .await
 }
 
 /// Generic relay accept loop that works with any `Server` implementation.
+#[allow(clippy::too_many_arguments)] // REASON: forwarding from protocol-specific listeners
 async fn run_relay_accept_loop<S: Server>(
     mut server: S,
     source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
+    peer_transport_tx: tokio::sync::watch::Sender<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >,
+    source_transport: std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     peers: Arc<Registry>,
+    shutdown: ShutdownSignal,
 ) -> Result<(), NodeError>
 where
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -419,7 +527,10 @@ where
                     erased,
                     source_resp_tx.clone(),
                     &fanout_register_tx,
+                    &peer_transport_tx,
+                    &source_transport,
                     &peers,
+                    &shutdown,
                 );
             }
             Ok(None) => {
@@ -442,7 +553,12 @@ fn handle_relay_connection(
     fanout_register_tx: &tokio::sync::mpsc::UnboundedSender<
         tokio::sync::mpsc::Sender<wallhack_wire::data::EntryNodeInstruction>,
     >,
+    peer_transport_tx: &tokio::sync::watch::Sender<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >,
+    source_transport: &std::sync::Arc<dyn wallhack_core::transport::ErasedTransport>,
     peers: &Arc<Registry>,
+    shutdown: &ShutdownSignal,
 ) {
     use wallhack_core::{
         server::server::DataChannels,
@@ -469,37 +585,78 @@ fn handle_relay_connection(
 
     // Incoming: accept uni stream from exit peer, dispatch data messages.
     // Exit peers send ExitNodeResponses which are dispatched via responses_tx.
-    let transport_in = std::sync::Arc::clone(&transport);
+    let peer_transport_uni = std::sync::Arc::clone(&transport);
     let instr_tx = instructions_tx.clone();
     let resp_tx = responses_tx.clone();
     tokio::spawn(async move {
-        match transport_in.accept_uni_erased().await {
+        match peer_transport_uni.accept_uni_erased().await {
             Ok(Some(mut recv)) => {
                 if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
-                    tracing::debug!("Relay exit-peer data-in finished: {e}");
+                    tracing::debug!("Relay peer data-in finished: {e}");
                 }
             }
-            Ok(None) => tracing::debug!("Relay exit-peer transport closed before data-in"),
-            Err(e) => tracing::debug!("Relay exit-peer failed to accept data-in: {e}"),
+            Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
+            Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
         }
     });
 
     // Outgoing: open uni stream to exit peer, send instructions from the entry.
     // instructions_rx receives instructions distributed by the fan-out task.
-    let transport_out = transport;
-    let peer_addr_out = peer_addr.clone();
-    let peers_out = Arc::clone(peers);
+    let peer_transport_instr = std::sync::Arc::clone(&transport);
+    let peer_addr_cleanup = peer_addr.clone();
+    let peers_cleanup = Arc::clone(peers);
     tokio::spawn(async move {
-        match transport_out.open_uni_erased().await {
+        match peer_transport_instr.open_uni_erased().await {
             Ok(mut send) => {
                 if let Err(e) = run_send_instructions(&mut send, instructions_rx).await {
-                    tracing::debug!("Relay exit-peer send-instructions finished: {e}");
+                    tracing::debug!("Relay peer send-instructions finished: {e}");
                 }
             }
-            Err(e) => tracing::debug!("Relay exit-peer failed to open send stream: {e}"),
+            Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
         }
         // Unregister peer when the outgoing stream closes (connection gone).
-        peers_out.unregister(&peer_addr_out);
+        peers_cleanup.unregister(&peer_addr_cleanup);
+    });
+
+    // Register this peer's transport for bidi bridging.
+    // The source→peer accept loop (spawned in run_relay_loop_inner) reads
+    // the latest peer transport from the watch channel.
+    let _ = peer_transport_tx.send(Some(Arc::clone(&transport)));
+
+    // Peer→source bidi bridge: accept bidi from this peer, open bidi to source, splice.
+    let peer_transport_bidi = transport;
+    let source_transport_bidi = Arc::clone(source_transport);
+    let mut shutdown_bidi = shutdown.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = peer_transport_bidi.accept_bi_erased() => {
+                    match result {
+                        Ok(Some(peer_stream)) => {
+                            let source = Arc::clone(&source_transport_bidi);
+                            tokio::spawn(async move {
+                                match source.open_bi_erased().await {
+                                    Ok(source_stream) => {
+                                        if let Err(e) = wallhack_core::transport::splice_bi(
+                                            peer_stream,
+                                            source_stream,
+                                        ).await {
+                                            tracing::debug!("bidi bridge (peer→source) ended: {e}");
+                                        }
+                                    }
+                                    Err(e) => tracing::debug!("bidi bridge: failed to open source stream: {e}"),
+                                }
+                            });
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::debug!("bidi bridge: peer accept_bi error: {e}");
+                        }
+                    }
+                }
+                _ = shutdown_bidi.changed() => break,
+            }
+        }
     });
 
     crate::transport::relay_bridge_channels(
