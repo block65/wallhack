@@ -358,6 +358,7 @@ impl WsClient {
                             tun_capable: false,
                             listening: false,
                             connecting: true,
+                            interactive: false,
                         }),
                         name: self.config.base.name.clone().unwrap_or_default(),
                         version: env!("CARGO_PKG_VERSION").to_string(),

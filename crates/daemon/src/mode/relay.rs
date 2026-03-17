@@ -51,6 +51,7 @@ fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>)
                 tun_capable: false,
                 listening: true,
                 connecting: true,
+                interactive: false,
             }),
             name: cfg.name.clone(),
             version: version.to_string(),
@@ -82,6 +83,7 @@ pub async fn run(
         tun_capable: false,
         listening: true,
         connecting: true,
+        interactive: false,
     });
     let addr: std::net::SocketAddr = cfg.listen.addr.parse::<crate::net::ListenAddr>()?.into();
     let server_options = build_server_options(cfg, &global.version, metrics);
@@ -101,6 +103,7 @@ pub async fn run(
             tun_capable: false,
             listening: true,
             connecting: true,
+            interactive: false,
         }),
         name: cfg.name.clone(),
         version: global.version.clone(),

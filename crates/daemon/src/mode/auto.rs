@@ -86,6 +86,7 @@ pub(crate) async fn run(
         tun_capable,
         listening: cfg.listen.is_some(),
         connecting: cfg.connect.is_some(),
+        interactive: false,
     });
 
     match (&cfg.connect, &cfg.listen) {
@@ -152,6 +153,7 @@ fn build_local_handshake(
             tun_capable,
             listening,
             connecting,
+            interactive: false,
         }),
         name: cfg.name.clone(),
         version: version.to_string(),

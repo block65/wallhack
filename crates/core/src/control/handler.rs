@@ -825,6 +825,7 @@ mod tests {
             tun_capable: true,
             listening: false,
             connecting: false,
+            interactive: false,
         });
 
         let status = crate::node_api::NodeApi::status(&handler);
