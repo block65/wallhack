@@ -605,51 +605,28 @@ pub(crate) async fn run_entry_connected_inner(
         responses_rx,
     );
 
-    // Fire an initial ping so latency is populated immediately after connect.
-    if let Err(e) = send_ping(&control_tx).await {
-        tracing::debug!("Initial ping failed: {e}");
-    }
-
-    // Consume latency measurements from the control loop and update the registry.
-    if let (Some(mut lat_rx), Some(reg)) = (latency_rx, &peers) {
-        let peer_id = peer_name.map(std::string::ToString::to_string);
-        let reg = Arc::clone(reg);
-        tokio::spawn(async move {
-            while let Some(ms) = lat_rx.recv().await {
-                if let Some(ref id) = peer_id {
-                    reg.update_latency(id, ms);
-                }
-            }
-        });
-    }
+    let _heartbeat = if let Some(pn) = peer_name {
+        Some(super::spawn_heartbeat(
+            control_tx,
+            latency_rx,
+            pn.to_string(),
+            peers.unwrap_or_else(|| Arc::new(Registry::new())),
+        ))
+    } else {
+        // No peer name — keep control_tx alive but skip heartbeat.
+        let _keep_alive = control_tx;
+        None
+    };
 
     // Panic safety: delete TUN if we unwind before reaching explicit cleanup.
     let tun_guard = TunDropGuard::new(name.clone());
 
-    let mut manager_handle = tokio::spawn(async move { manager.run().await });
+    let manager_handle = tokio::spawn(async move { manager.run().await });
 
-    // 30s heartbeat keeps latency measurements fresh between manual pings.
-    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    heartbeat.tick().await;
-
-    loop {
-        tokio::select! {
-            result = &mut manager_handle => {
-                match result {
-                    Ok(Ok(())) => tracing::debug!("Connection manager exited cleanly"),
-                    Ok(Err(e)) => tracing::debug!("Connection manager error: {e}"),
-                    Err(e) => tracing::debug!("Connection manager task failed: {e}"),
-                }
-                break;
-            }
-            _ = heartbeat.tick() => {
-                if let Err(e) = send_ping(&control_tx).await {
-                    tracing::debug!("Heartbeat ping failed: {e}");
-                    break;
-                }
-            }
-        }
+    match manager_handle.await {
+        Ok(Ok(())) => tracing::debug!("Connection manager exited cleanly"),
+        Ok(Err(e)) => tracing::debug!("Connection manager error: {e}"),
+        Err(e) => tracing::debug!("Connection manager task failed: {e}"),
     }
 
     // Best-effort TUN cleanup after disconnect — guard fires on drop.
@@ -968,7 +945,7 @@ async fn run_connection_loop(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Fire an initial ping so latency is populated immediately after connect.
-    if let Err(e) = send_ping(&control_tx).await {
+    if let Err(e) = super::send_ping(&control_tx).await {
         tracing::debug!("Initial ping failed: {e}");
     }
     // Consume the first tick (fires immediately) so the heartbeat starts
@@ -995,7 +972,7 @@ async fn run_connection_loop(
                 }
             }
             Some(result_tx) = ping_rx.recv() => {
-                match send_ping(&control_tx).await {
+                match super::send_ping(&control_tx).await {
                     Ok(()) => {
                         pending_ping = Some(result_tx);
                     }
@@ -1006,7 +983,7 @@ async fn run_connection_loop(
                 }
             }
             _ = heartbeat.tick() => {
-                if let Err(e) = send_ping(&control_tx).await {
+                if let Err(e) = super::send_ping(&control_tx).await {
                     tracing::debug!("Heartbeat ping failed: {e}");
                 }
             }
@@ -1135,30 +1112,6 @@ impl ConnectionParams {
         result?;
         Ok(name)
     }
-}
-
-/// Inject a Ping message into the control stream.
-pub(crate) async fn send_ping(
-    control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-) -> Result<(), NodeError> {
-    use wallhack_wire::control::{ControlMessage, control_message};
-
-    #[allow(clippy::cast_possible_truncation)]
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-
-    let ping_msg = ControlMessage {
-        message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
-            timestamp_ms: ts,
-        })),
-    };
-
-    control_tx
-        .send(ping_msg)
-        .await
-        .map_err(|_| NodeError::ChannelClosed)
 }
 
 #[cfg(feature = "http-api")]

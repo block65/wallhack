@@ -63,6 +63,70 @@ pub(crate) struct NodeResources {
     pub node_state: SharedNodeState,
 }
 
+/// Inject a Ping message into the control stream.
+pub(crate) async fn send_ping(
+    control_tx: &tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+) -> Result<(), crate::NodeError> {
+    use wallhack_wire::control::{ControlMessage, control_message};
+
+    #[allow(clippy::cast_possible_truncation)]
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let ping_msg = ControlMessage {
+        message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
+            timestamp_ms: ts,
+        })),
+    };
+
+    control_tx
+        .send(ping_msg)
+        .await
+        .map_err(|_| crate::NodeError::ChannelClosed)
+}
+
+/// Spawn a background heartbeat task for any connection.
+///
+/// Fires an initial ping immediately, then pings every 30 seconds.
+/// Consumes latency measurements from the transport control loop and
+/// updates the peer registry. Runs until the control channel closes
+/// or the returned handle is dropped/aborted.
+pub(crate) fn spawn_heartbeat(
+    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
+    peer_name: String,
+    peers: Arc<Registry>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        // Initial ping so latency is populated immediately after connect.
+        if let Err(e) = send_ping(&control_tx).await {
+            tracing::debug!("Initial ping failed: {e}");
+            return;
+        }
+
+        let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        heartbeat.tick().await; // consume first immediate tick
+
+        loop {
+            tokio::select! {
+                Some(ms) = latency_rx.recv() => {
+                    peers.update_latency(&peer_name, ms);
+                }
+                _ = heartbeat.tick() => {
+                    if let Err(e) = send_ping(&control_tx).await {
+                        tracing::debug!("Heartbeat ping failed: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// Dispatch to the appropriate node mode based on the config.
 ///
 /// # Errors

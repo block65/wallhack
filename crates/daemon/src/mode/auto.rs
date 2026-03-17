@@ -484,12 +484,17 @@ async fn run_auto_connect_session_dispatch(
                 }
             });
             drop(tasks);
+            let heartbeat = super::spawn_heartbeat(
+                control_tx,
+                latency_rx,
+                peer_name.clone(),
+                Arc::clone(&peers),
+            );
             run_auto_exit_session_inner(
                 transport,
                 instructions_rx,
                 responses_tx,
-                control_tx,
-                latency_rx,
+                heartbeat,
                 &peer_name,
                 peer_addr,
                 &metrics,
@@ -499,7 +504,8 @@ async fn run_auto_connect_session_dispatch(
         }
         NegotiationResult::Resolved(NodeRole::Relay) => {
             tracing::warn!("Unexpected relay negotiation for connector-only mode; holding");
-            hold_until_disconnect(tasks, control_tx, node_state).await;
+            let _keep_alive = control_tx;
+            hold_until_disconnect(tasks).await;
             Ok(())
         }
         NegotiationResult::Resolved(NodeRole::Indeterminate)
@@ -516,19 +522,18 @@ async fn run_auto_connect_session_dispatch(
                 NodeRole::Indeterminate,
                 wallhack_core::control::peers::ConnectionSide::Connect,
             );
-            hold_until_disconnect(tasks, control_tx, node_state).await;
+            let _heartbeat =
+                super::spawn_heartbeat(control_tx, latency_rx, name.clone(), Arc::clone(&peers));
+            hold_until_disconnect(tasks).await;
             peers.unregister(&name);
+            tracing::info!("Peer disconnected: {name}");
             Ok(())
         }
     }
 }
 
 /// Hold connection tasks open until the peer disconnects (or control dies).
-async fn hold_until_disconnect(
-    mut tasks: wallhack_core::client::client::ConnectionTasks,
-    _control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    _node_state: SharedNodeState,
-) {
+async fn hold_until_disconnect(mut tasks: wallhack_core::client::client::ConnectionTasks) {
     tokio::select! {
         _ = &mut tasks.incoming => {
             tracing::debug!("Indeterminate: incoming task completed");
@@ -545,8 +550,7 @@ async fn run_auto_exit_session_inner(
     transport: Arc<dyn ErasedTransport>,
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
     responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
-    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
+    _heartbeat: tokio::task::JoinHandle<()>,
     peer_name: &str,
     peer_addr: &str,
     metrics: &Arc<Metrics>,
@@ -558,16 +562,6 @@ async fn run_auto_exit_session_inner(
         NodeRole::Entry,
         ConnectionSide::Connect,
     );
-
-    // Initial ping so latency is populated immediately after connect.
-    if let Err(e) = super::entry::send_ping(&control_tx).await {
-        tracing::debug!("Initial ping failed: {e}");
-    }
-
-    let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    heartbeat.tick().await;
 
     let adapter = SyscallExitAdapter::new();
     let _reaper = adapter.start_reaper(
@@ -582,25 +576,12 @@ async fn run_auto_exit_session_inner(
     tokio::pin!(stream_fut);
     tokio::pin!(drive_fut);
 
-    loop {
-        tokio::select! {
-            result = &mut drive_fut => {
-                if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
-                break;
-            }
-            result = &mut stream_fut => {
-                if let Err(e) = result { tracing::debug!("Auto exit stream handler: {e}"); }
-                break;
-            }
-            Some(ms) = latency_rx.recv() => {
-                peers.update_latency(peer_name, ms);
-            }
-            _ = heartbeat.tick() => {
-                if let Err(e) = super::entry::send_ping(&control_tx).await {
-                    tracing::debug!("Heartbeat ping failed: {e}");
-                    break;
-                }
-            }
+    tokio::select! {
+        result = &mut drive_fut => {
+            if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
+        }
+        result = &mut stream_fut => {
+            if let Err(e) = result { tracing::debug!("Auto exit stream handler: {e}"); }
         }
     }
 
@@ -981,37 +962,18 @@ async fn run_auto_accept_session_inner(
                 ConnectionSide::Accept,
             );
 
-            // Fire an initial ping so latency is populated immediately after accept.
-            if let Err(e) = super::entry::send_ping(&control_tx).await {
-                tracing::debug!("Auto accept initial ping failed: {e}");
-            }
+            let _heartbeat = super::spawn_heartbeat(
+                control_tx,
+                latency_rx,
+                peer_name.clone(),
+                Arc::clone(&peers),
+            );
 
-            let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
-            let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
-            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            heartbeat.tick().await;
-
-            let mut handle = tokio::spawn(async move { manager.run().await });
-            loop {
-                tokio::select! {
-                    result = &mut handle => {
-                        match result {
-                            Ok(Ok(())) => tracing::debug!("Auto entry session closed: {peer_name}"),
-                            Ok(Err(e)) => tracing::warn!("Auto entry session error {peer_name}: {e}"),
-                            Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
-                        }
-                        break;
-                    }
-                    Some(ms) = latency_rx.recv() => {
-                        peers.update_latency(&peer_name, ms);
-                    }
-                    _ = heartbeat.tick() => {
-                        if let Err(e) = super::entry::send_ping(&control_tx).await {
-                            tracing::debug!("Heartbeat ping failed: {e}");
-                            break;
-                        }
-                    }
-                }
+            let handle = tokio::spawn(async move { manager.run().await });
+            match handle.await {
+                Ok(Ok(())) => tracing::debug!("Auto entry session closed: {peer_name}"),
+                Ok(Err(e)) => tracing::warn!("Auto entry session error {peer_name}: {e}"),
+                Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
             }
             peers.unregister(&peer_name);
 
@@ -1084,15 +1046,12 @@ async fn run_auto_accept_session_inner(
                 ConnectionSide::Accept,
             );
 
-            // Initial ping so latency is populated immediately after accept.
-            if let Err(e) = super::entry::send_ping(&control_tx).await {
-                tracing::debug!("Initial ping failed: {e}");
-            }
-
-            let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
-            let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
-            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            heartbeat.tick().await;
+            let _heartbeat = super::spawn_heartbeat(
+                control_tx,
+                latency_rx,
+                peer_name.clone(),
+                Arc::clone(&peers),
+            );
 
             let adapter = SyscallExitAdapter::new();
             let _reaper = adapter.start_reaper(
@@ -1106,25 +1065,12 @@ async fn run_auto_accept_session_inner(
             tokio::pin!(stream_fut);
             tokio::pin!(drive_fut);
 
-            loop {
-                tokio::select! {
-                    result = &mut drive_fut => {
-                        if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
-                        break;
-                    }
-                    result = &mut stream_fut => {
-                        if let Err(e) = result { tracing::debug!("Auto exit stream handler: {e}"); }
-                        break;
-                    }
-                    Some(ms) = latency_rx.recv() => {
-                        peers.update_latency(&peer_name, ms);
-                    }
-                    _ = heartbeat.tick() => {
-                        if let Err(e) = super::entry::send_ping(&control_tx).await {
-                            tracing::debug!("Heartbeat ping failed: {e}");
-                            break;
-                        }
-                    }
+            tokio::select! {
+                result = &mut drive_fut => {
+                    if let Err(e) = result { tracing::debug!("Auto exit orchestrator: {e}"); }
+                }
+                result = &mut stream_fut => {
+                    if let Err(e) = result { tracing::debug!("Auto exit stream handler: {e}"); }
                 }
             }
 
@@ -1149,13 +1095,15 @@ async fn run_auto_accept_session_inner(
                 NodeRole::Indeterminate,
                 wallhack_core::control::peers::ConnectionSide::Accept,
             );
-            // Hold transport and control alive; wait for the peer to disconnect
+            let _heartbeat =
+                super::spawn_heartbeat(control_tx, latency_rx, name.clone(), Arc::clone(&peers));
+            // Hold transport alive; wait for the peer to disconnect
             // by draining the instructions channel (closes when transport dies).
             let _keep_transport = transport;
-            let _keep_control = control_tx;
             let mut rx = instructions_rx;
             while rx.recv().await.is_some() {}
             peers.unregister(&name);
+            tracing::info!("Peer disconnected: {name}");
         }
     }
 
