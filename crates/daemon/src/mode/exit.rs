@@ -354,12 +354,14 @@ where
                 // Incoming: accept uni stream from entry peer, dispatch instructions.
                 {
                     let transport = Arc::clone(&transport);
-                    let instr_in = instructions_tx.clone();
-                    let resp_in = responses_tx.clone();
+                    let instructions_tx = instructions_tx.clone();
+                    let responses_tx = responses_tx.clone();
                     tokio::spawn(async move {
                         match transport.accept_uni_erased().await {
                             Ok(Some(mut recv)) => {
-                                if let Err(e) = run_data_in(&mut recv, &instr_in, &resp_in).await {
+                                if let Err(e) =
+                                    run_data_in(&mut recv, &instructions_tx, &responses_tx).await
+                                {
                                     tracing::debug!("Data-in handler finished: {e}");
                                 }
                             }

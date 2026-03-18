@@ -418,16 +418,15 @@ impl WsClient {
         let channels = DataChannels::new();
 
         // Incoming data task: accept uni stream from peer, dispatch messages.
-        let instructions_in = channels.instructions_tx.clone();
-        let responses_in = channels.responses_tx.clone();
-
         let incoming_handle = {
             let transport = Arc::clone(&transport);
+            let instructions_tx = channels.instructions_tx.clone();
+            let responses_tx = channels.responses_tx.clone();
             tokio::spawn(async move {
                 match transport.accept_uni().await {
                     Ok(Some(mut recv)) => {
                         if let Err(e) =
-                            protocol::run_data_in(&mut recv, &instructions_in, &responses_in).await
+                            protocol::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
                         {
                             tracing::debug!("Data-in handler finished: {e}");
                         }

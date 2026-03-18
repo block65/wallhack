@@ -1049,13 +1049,13 @@ async fn run_auto_accept_session_inner(
             // Spawn data tasks for exit: incoming (peer→broadcasts) + outgoing (responses→peer).
             {
                 let transport = Arc::clone(&transport);
-                let instructions_in = instructions_tx.clone();
-                let responses_in = responses_tx.clone();
+                let instructions_tx = instructions_tx.clone();
+                let responses_tx = responses_tx.clone();
                 tokio::spawn(async move {
                     match transport.accept_uni_erased().await {
                         Ok(Some(mut recv)) => {
                             if let Err(e) =
-                                protocol::run_data_in(&mut recv, &instructions_in, &responses_in)
+                                protocol::run_data_in(&mut recv, &instructions_tx, &responses_tx)
                                     .await
                             {
                                 tracing::debug!("Auto exit data-in finished: {e}");

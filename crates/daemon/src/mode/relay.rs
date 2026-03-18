@@ -340,43 +340,45 @@ async fn run_relay_loop_inner(
     // Source→peer bidi bridge: single accept loop on the source transport.
     // When a bidi stream arrives from the source, opens a matching bidi to
     // the current peer and splices them together.
-    let transport_for_bidi = Arc::clone(&transport);
-    let mut shutdown_bidi = shutdown_rx.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                result = transport_for_bidi.accept_bi_erased() => {
-                    match result {
-                        Ok(Some(source_stream)) => {
-                            let current_peer = peer_transport_rx.borrow().clone();
-                            let Some(peer) = current_peer else {
-                                tracing::debug!("bidi bridge: no peer connected, dropping stream");
-                                continue;
-                            };
-                            tokio::spawn(async move {
-                                match peer.open_bi_erased().await {
-                                    Ok(peer_stream) => {
-                                        if let Err(e) = wallhack_core::transport::splice_bi(
-                                            source_stream,
-                                            peer_stream,
-                                        ).await {
-                                            tracing::debug!("bidi bridge (source→peer) ended: {e}");
+    {
+        let transport = Arc::clone(&transport);
+        let mut shutdown_bidi = shutdown_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                        result = transport.accept_bi_erased() => {
+                        match result {
+                            Ok(Some(source_stream)) => {
+                                let current_peer = peer_transport_rx.borrow().clone();
+                                let Some(peer) = current_peer else {
+                                    tracing::debug!("bidi bridge: no peer connected, dropping stream");
+                                    continue;
+                                };
+                                tokio::spawn(async move {
+                                    match peer.open_bi_erased().await {
+                                        Ok(peer_stream) => {
+                                            if let Err(e) = wallhack_core::transport::splice_bi(
+                                                source_stream,
+                                                peer_stream,
+                                            ).await {
+                                                tracing::debug!("bidi bridge (source→peer) ended: {e}");
+                                            }
                                         }
+                                        Err(e) => tracing::debug!("bidi bridge: failed to open peer stream: {e}"),
                                     }
-                                    Err(e) => tracing::debug!("bidi bridge: failed to open peer stream: {e}"),
-                                }
-                            });
-                        }
-                        Ok(None) => break,
-                        Err(e) => {
-                            tracing::debug!("bidi bridge: source accept_bi error: {e}");
+                                });
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                tracing::debug!("bidi bridge: source accept_bi error: {e}");
+                            }
                         }
                     }
+                    _ = shutdown_bidi.changed() => break,
                 }
-                _ = shutdown_bidi.changed() => break,
             }
-        }
-    });
+        });
+    }
 
     // Forward accepted peer events to the source peer as PeerAnnouncements.
     // The source (entry) registers these peers for topology visibility.
@@ -745,18 +747,17 @@ fn handle_relay_connection(
     let _ = peer_transport_tx.send(Some(Arc::clone(&transport)));
 
     // Peer→source bidi bridge: accept bidi from this peer, open bidi to source, splice.
-    let peer_transport_bidi = transport;
-    let source_transport_bidi = Arc::clone(source_transport);
+    let source_transport = Arc::clone(source_transport);
     let mut shutdown_bidi = shutdown.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                result = peer_transport_bidi.accept_bi_erased() => {
+                result = transport.accept_bi_erased() => {
                     match result {
                         Ok(Some(peer_stream)) => {
-                            let source = Arc::clone(&source_transport_bidi);
+                            let source_transport = Arc::clone(&source_transport);
                             tokio::spawn(async move {
-                                match source.open_bi_erased().await {
+                                match source_transport.open_bi_erased().await {
                                     Ok(source_stream) => {
                                         if let Err(e) = wallhack_core::transport::splice_bi(
                                             peer_stream,
