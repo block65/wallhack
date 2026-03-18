@@ -20,7 +20,7 @@
 			}
 		},
 		"schemas": {
-			"StatusResponse": {
+			"InfoResponse": {
 				"type": "object",
 				"required": ["name", "version", "role", "uptime_ms", "capabilities"],
 				"properties": {
@@ -290,7 +290,7 @@
 					}
 				}
 			},
-			"SetHintRequest": {
+			"HintSetRequest": {
 				"type": "object",
 				"required": ["level", "role"],
 				"properties": {
