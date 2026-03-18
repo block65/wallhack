@@ -199,12 +199,12 @@ impl Server for QuicServer {
 
         // Spawn control stream task with handler
         let handler_config = self.options.handler_config.clone();
-        let peers_ctrl = self
+        let peers = self
             .options
             .peers
             .clone()
             .unwrap_or_else(|| Arc::new(Registry::new()));
-        let routes_ctrl = self
+        let routes = self
             .options
             .routes
             .clone()
@@ -220,15 +220,9 @@ impl Server for QuicServer {
 
         {
             let metrics = Arc::clone(&metrics);
+            let peer_registry = Arc::clone(&peers);
             tokio::spawn(async move {
-                let peer_registry = Arc::clone(&peers_ctrl);
-                let handler = Handler::new(
-                    handler_config,
-                    metrics,
-                    peers_ctrl,
-                    routes_ctrl,
-                    route_updates,
-                );
+                let handler = Handler::new(handler_config, metrics, peers, routes, route_updates);
                 let mut channels = protocol::ControlChannels {
                     outgoing_rx: control_rx,
                     handshake_tx: None, // Handshake already read above

@@ -390,49 +390,53 @@ impl WsClient {
         let (latency_tx, latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
 
         // Spawn control stream task
-        let transport_ctrl = Arc::clone(&transport);
-        let control_handle = tokio::spawn(async move {
-            let mut channels = protocol::ControlChannels {
-                outgoing_rx: control_rx,
-                handshake_tx: Some(handshake_tx), // receive server's Handshake
-                latency_tx: Some(latency_tx),
-                control_response_tx: None,
-                role_transition_tx: None,
-                peer_announcement_tx: None,
-            };
-            match protocol::run_control_stream_initiator(
-                &*transport_ctrl,
-                &mut channels,
-                None, // client doesn't handle ControlRequests
-                std::time::Duration::from_secs(30),
-            )
-            .await
-            {
-                Ok(exit) => tracing::debug!("Control stream finished: {exit:?}"),
-                Err(e) => tracing::debug!("Control stream error: {e}"),
-            }
-        });
+        let control_handle = {
+            let transport = Arc::clone(&transport);
+            tokio::spawn(async move {
+                let mut channels = protocol::ControlChannels {
+                    outgoing_rx: control_rx,
+                    handshake_tx: Some(handshake_tx), // receive server's Handshake
+                    latency_tx: Some(latency_tx),
+                    control_response_tx: None,
+                    role_transition_tx: None,
+                    peer_registry: None,
+                };
+                match protocol::run_control_stream_initiator(
+                    &*transport,
+                    &mut channels,
+                    None, // client doesn't handle ControlRequests
+                    std::time::Duration::from_secs(30),
+                )
+                .await
+                {
+                    Ok(exit) => tracing::debug!("Control stream finished: {exit:?}"),
+                    Err(e) => tracing::debug!("Control stream error: {e}"),
+                }
+            })
+        };
 
         let channels = DataChannels::new();
 
         // Incoming data task: accept uni stream from peer, dispatch messages.
-        let transport_data = Arc::clone(&transport);
         let instructions_in = channels.instructions_tx.clone();
         let responses_in = channels.responses_tx.clone();
 
-        let incoming_handle = tokio::spawn(async move {
-            match transport_data.accept_uni().await {
-                Ok(Some(mut recv)) => {
-                    if let Err(e) =
-                        protocol::run_data_in(&mut recv, &instructions_in, &responses_in).await
-                    {
-                        tracing::debug!("Data-in handler finished: {e}");
+        let incoming_handle = {
+            let transport = Arc::clone(&transport);
+            tokio::spawn(async move {
+                match transport.accept_uni().await {
+                    Ok(Some(mut recv)) => {
+                        if let Err(e) =
+                            protocol::run_data_in(&mut recv, &instructions_in, &responses_in).await
+                        {
+                            tracing::debug!("Data-in handler finished: {e}");
+                        }
                     }
+                    Ok(None) => tracing::debug!("Transport closed before data-in stream accepted"),
+                    Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
                 }
-                Ok(None) => tracing::debug!("Transport closed before data-in stream accepted"),
-                Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
-            }
-        });
+            })
+        };
 
         // Outgoing data task is NOT spawned here; the caller opens the uni stream
         // and drives run_send_instructions / run_send_responses as appropriate for
