@@ -135,7 +135,7 @@ pub struct PingResponseBody {
 
 /// Set hint request body.
 #[derive(Debug, Deserialize)]
-pub struct SetHintRequestBody {
+pub struct HintSetRequestBody {
     pub level: String,
     pub role: String,
 }
@@ -704,9 +704,9 @@ pub async fn shutdown(State(state): State<ApiState>) -> (StatusCode, Json<Succes
     }
 }
 
-pub async fn set_hint(
+pub async fn hint_set(
     State(state): State<ApiState>,
-    Json(req): Json<SetHintRequestBody>,
+    Json(req): Json<HintSetRequestBody>,
 ) -> (StatusCode, Json<SuccessResponse>) {
     let level = match req.level.as_str() {
         "prefer" => HintLevel::Prefer,
@@ -787,7 +787,7 @@ pub async fn set_hint(
     }
 }
 
-pub async fn clear_hints(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
+pub async fn hint_set_auto(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
     let resp = state
         .ipc
         .lock()

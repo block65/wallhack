@@ -218,9 +218,9 @@ pub trait NodeApi: Send + Sync {
     /// Apply a role hint at runtime.
     ///
     /// Triggers re-negotiation if the node is in auto mode.
-    /// `role <target>` in the REPL is shorthand for `set_hint(Fixed, target)`.
-    fn set_hint(&self, hint: RoleHint) -> Result<()>;
+    /// `role <target>` in the REPL is shorthand for `hint_set(Fixed, target)`.
+    fn hint_set(&self, hint: RoleHint) -> Result<()>;
 
     /// Remove all hints (both startup and runtime).
-    fn clear_hints(&self) -> Result<()>;
+    fn hint_set_auto(&self) -> Result<()>;
 }

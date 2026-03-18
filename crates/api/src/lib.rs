@@ -80,7 +80,7 @@ pub fn router(state: State) -> Router {
         .route("/shutdown", post(handlers::shutdown))
         .route(
             "/hints",
-            put(handlers::set_hint).delete(handlers::clear_hints),
+            put(handlers::hint_set).delete(handlers::hint_set_auto),
         )
         .layer(middleware::from_fn(move |req, next| {
             let auth = auth.clone();

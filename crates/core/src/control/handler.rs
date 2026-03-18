@@ -481,12 +481,12 @@ impl crate::node_api::NodeApi for Handler {
         self.state.load().role
     }
 
-    fn set_hint(&self, hint: RoleHint) -> crate::node_api::Result<()> {
+    fn hint_set(&self, hint: RoleHint) -> crate::node_api::Result<()> {
         self.hint_tx.send_replace(Some(hint));
         Ok(())
     }
 
-    fn clear_hints(&self) -> crate::node_api::Result<()> {
+    fn hint_set_auto(&self) -> crate::node_api::Result<()> {
         self.hint_tx.send_replace(None);
         Ok(())
     }

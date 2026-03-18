@@ -430,13 +430,13 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 level: level.into(),
                 target: target.into(),
             };
-            match api.set_hint(hint) {
+            match api.hint_set(hint) {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
                 Err(e) => error_response(&e),
             }
         }
 
-        Some(management_request::Request::HintSetAuto(_)) => match api.clear_hints() {
+        Some(management_request::Request::HintSetAuto(_)) => match api.hint_set_auto() {
             Ok(()) => management_response::Response::Ok(OkResponse {}),
             Err(e) => error_response(&e),
         },
