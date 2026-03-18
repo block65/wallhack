@@ -115,7 +115,7 @@ pub(crate) fn spawn_heartbeat(
     peer_name: String,
     peers: Arc<Registry>,
 ) -> tokio::task::JoinHandle<()> {
-    // Register control channel so disconnect_peer can send messages to this peer.
+    // Register control channel so peer_disconnect can send messages to this peer.
     peers.register_control(&peer_name, &control_tx);
 
     tokio::spawn(async move {

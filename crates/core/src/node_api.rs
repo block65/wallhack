@@ -80,9 +80,9 @@ pub struct Metrics {
     pub packets_dropped: u64,
 }
 
-/// Overall node status information.
+/// Overall node info.
 #[derive(Debug, Clone)]
-pub struct NodeStatus {
+pub struct NodeInfo {
     /// Node's role.
     pub role: NodeRole,
     /// Peer address (if connected).
@@ -153,7 +153,7 @@ pub trait NodeApi: Send + Sync {
     /// Get list of directly connected peers.
     ///
     /// For entry nodes: returns all connected exit/relay nodes.
-    /// For exit nodes with relay capability: returns downstream connected nodes.
+    /// For exit nodes with relay capability: returns accepted peer connections.
     /// For standard exit nodes: returns empty (no peers).
     fn peers(&self) -> Vec<PeerInfo>;
 
@@ -165,8 +165,8 @@ pub trait NodeApi: Send + Sync {
     /// Get traffic and connection metrics.
     fn metrics(&self) -> Metrics;
 
-    /// Get overall node status.
-    fn status(&self) -> NodeStatus;
+    /// Get overall node info.
+    fn info(&self) -> NodeInfo;
 
     /// Connect to a peer.
     ///
@@ -197,20 +197,20 @@ pub trait NodeApi: Send + Sync {
     /// Peer must be directly connected.
     fn add_route(&self, cidr: Cidr, peer: String) -> Result<()>;
 
-    /// Remove a route by CIDR.
+    /// Delete a route by CIDR.
     ///
     /// Only supported on entry nodes. Returns error for exit/relay nodes.
-    fn remove_route(&self, cidr: &Cidr) -> Result<()>;
+    fn route_del(&self, cidr: &Cidr) -> Result<()>;
 
     /// Disconnect a specific peer by name prefix or address.
     ///
     /// Supports prefix matching for REPL/CLI convenience.
-    fn disconnect_peer(&self, peer: String) -> Result<()>;
+    fn peer_disconnect(&self, peer: String) -> Result<()>;
 
     /// Disconnect a specific peer by exact registry id.
     ///
     /// Used by the REST API where the id comes directly from the peers list.
-    fn disconnect_peer_by_id(&self, id: String) -> Result<()>;
+    fn peer_disconnect_by_id(&self, id: String) -> Result<()>;
 
     /// Get the current negotiated role.
     fn current_role(&self) -> NodeRole;
@@ -218,9 +218,9 @@ pub trait NodeApi: Send + Sync {
     /// Apply a role hint at runtime.
     ///
     /// Triggers re-negotiation if the node is in auto mode.
-    /// `role <target>` in the REPL is shorthand for `set_hint(Fixed, target)`.
-    fn set_hint(&self, hint: RoleHint) -> Result<()>;
+    /// `role <target>` in the REPL is shorthand for `hint_set(Fixed, target)`.
+    fn hint_set(&self, hint: RoleHint) -> Result<()>;
 
     /// Remove all hints (both startup and runtime).
-    fn clear_hints(&self) -> Result<()>;
+    fn hint_set_auto(&self) -> Result<()>;
 }

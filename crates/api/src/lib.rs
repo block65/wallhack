@@ -65,7 +65,7 @@ pub fn router(state: State) -> Router {
         .route("/info", get(handlers::info))
         .route("/stats", get(handlers::stats))
         .route("/peers", get(handlers::peers))
-        .route("/peers/{name}", delete(handlers::disconnect_peer))
+        .route("/peers/{name}", delete(handlers::peer_disconnect))
         .route(
             "/routes",
             get(handlers::list_routes).post(handlers::add_route),
@@ -76,11 +76,11 @@ pub fn router(state: State) -> Router {
         .route("/listen", post(handlers::listen))
         .route("/disconnect", post(handlers::disconnect))
         .route("/ping", get(handlers::ping))
-        .route("/ping/{peer}", get(handlers::ping_peer))
+        .route("/ping/{peer}", get(handlers::peer_ping))
         .route("/shutdown", post(handlers::shutdown))
         .route(
             "/hints",
-            put(handlers::set_hint).delete(handlers::clear_hints),
+            put(handlers::hint_set).delete(handlers::hint_set_auto),
         )
         .layer(middleware::from_fn(move |req, next| {
             let auth = auth.clone();
