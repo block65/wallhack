@@ -7,7 +7,7 @@ use wallhack_wire::management::{ManagementResponse, management_response};
 /// Format a management response as human-readable text for MCP tool output.
 pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
     match &resp.response {
-        Some(management_response::Response::Status(s)) => {
+        Some(management_response::Response::Info(s)) => {
             let role = s.role().to_string();
             let mut out = String::new();
             let _ = writeln!(out, "name: {}", s.package_name);

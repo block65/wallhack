@@ -115,8 +115,8 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
                 wallhack_wire::management::PingRequest { peer },
             ))
         }
-        "info" => Some(management_request::Request::Status(
-            wallhack_wire::management::StatusRequest {},
+        "info" => Some(management_request::Request::Info(
+            wallhack_wire::management::InfoRequest {},
         )),
         "stats" => Some(management_request::Request::Stats(
             wallhack_wire::management::StatsRequest {},
@@ -143,8 +143,8 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
         }
         "disconnect" => {
             if let Some(peer) = parts.get(1) {
-                Some(management_request::Request::DisconnectPeer(
-                    wallhack_wire::management::DisconnectPeerRequest {
+                Some(management_request::Request::PeerDisconnect(
+                    wallhack_wire::management::PeerDisconnectRequest {
                         peer: (*peer).to_string(),
                         exact: false,
                     },
@@ -173,14 +173,14 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
             // Support: `route add <cidr> <peer>` or `route add <cidr> via <peer>`
             let peer_idx = if parts.get(3) == Some(&"via") { 4 } else { 3 };
             let peer = (*parts.get(peer_idx)?).to_string();
-            Some(management_request::Request::AddRoute(
-                wallhack_wire::management::AddRouteRequest { cidr, peer },
+            Some(management_request::Request::RouteAdd(
+                wallhack_wire::management::RouteAddRequest { cidr, peer },
             ))
         }
-        "del" | "remove" => {
+        "remove" => {
             let cidr = (*parts.get(2)?).to_string();
-            Some(management_request::Request::RemoveRoute(
-                wallhack_wire::management::RemoveRouteRequest { cidr },
+            Some(management_request::Request::RouteRemove(
+                wallhack_wire::management::RouteRemoveRequest { cidr },
             ))
         }
         "list" | "" => Some(management_request::Request::Routes(
@@ -194,16 +194,16 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
 fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
     match parts.get(1).copied() {
         None => {
-            // `role` alone → show current role via status.
-            Some(management_request::Request::Status(
-                wallhack_wire::management::StatusRequest {},
+            // `role` alone → show current role via info.
+            Some(management_request::Request::Info(
+                wallhack_wire::management::InfoRequest {},
             ))
         }
         Some(target) => {
             // `role <target>` → shorthand for `hint fixed <target>`.
             let role = parse_role_name(target)?;
-            Some(management_request::Request::SetHint(
-                management::SetHintRequest {
+            Some(management_request::Request::HintSet(
+                management::HintSetRequest {
                     level: management::HintLevel::Fixed.into(),
                     role: role.into(),
                 },
@@ -216,8 +216,8 @@ fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
 fn parse_hint_command(parts: &[&str]) -> Option<management_request::Request> {
     let sub = parts.get(1).copied()?;
     match sub {
-        "auto" | "clear" => Some(management_request::Request::ClearHints(
-            management::ClearHintsRequest {},
+        "auto" | "clear" => Some(management_request::Request::HintAuto(
+            management::HintAutoRequest {},
         )),
         "prefer" | "exclude" | "fixed" => {
             let role_name = parts.get(2).copied()?;
@@ -228,8 +228,8 @@ fn parse_hint_command(parts: &[&str]) -> Option<management_request::Request> {
                 "fixed" => management::HintLevel::Fixed,
                 _ => unreachable!(),
             };
-            Some(management_request::Request::SetHint(
-                management::SetHintRequest {
+            Some(management_request::Request::HintSet(
+                management::HintSetRequest {
                     level: level.into(),
                     role: role.into(),
                 },
@@ -262,7 +262,7 @@ fn print_help() {
     let _ = writeln!(tw, "  peers\tList connected peers");
     let _ = writeln!(tw, "  route\tList configured routes");
     let _ = writeln!(tw, "  route add <cidr> <peer>\tAdd a route");
-    let _ = writeln!(tw, "  route del <cidr>\tRemove a route");
+    let _ = writeln!(tw, "  route remove <cidr>\tRemove a route");
     let _ = writeln!(tw, "  connect <addr>\tConnect to a peer");
     let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
     let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");

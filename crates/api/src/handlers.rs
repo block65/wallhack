@@ -10,10 +10,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use wallhack_wire::management::{
-    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest,
-    HintLevel, ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest,
-    RoutesRequest, SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest,
-    management_request, management_response,
+    ConnectRequest, DisconnectRequest, HintAutoRequest, HintLevel, HintSetRequest, InfoRequest,
+    ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest,
+    RouteAddRequest as ProtoRouteAddRequest, RouteRemoveRequest, RoutesRequest, ShutdownRequest,
+    StatsRequest, management_request, management_response,
 };
 
 use super::{state::State as ApiState, validation};
@@ -188,12 +188,12 @@ pub async fn info(State(state): State<ApiState>) -> Result<Json<StatusResponse>,
         .ipc
         .lock()
         .await
-        .request(management_request::Request::Status(StatusRequest {}))
+        .request(management_request::Request::Info(InfoRequest {}))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Status(s)) => {
+        Some(management_response::Response::Info(s)) => {
             let role = s.role().to_string();
             Ok(Json(StatusResponse {
                 name: s.package_name,
@@ -299,8 +299,8 @@ pub async fn disconnect_peer(
         .ipc
         .lock()
         .await
-        .request(management_request::Request::DisconnectPeer(
-            DisconnectPeerRequest {
+        .request(management_request::Request::PeerDisconnect(
+            PeerDisconnectRequest {
                 peer: name,
                 exact: true,
             },
@@ -382,10 +382,12 @@ pub async fn add_route(
         .ipc
         .lock()
         .await
-        .request(management_request::Request::AddRoute(AddRouteRequest {
-            cidr: req.cidr,
-            peer: req.peer,
-        }))
+        .request(management_request::Request::RouteAdd(
+            ProtoRouteAddRequest {
+                cidr: req.cidr,
+                peer: req.peer,
+            },
+        ))
         .await;
 
     match resp {
@@ -445,8 +447,8 @@ pub async fn delete_route(
         .ipc
         .lock()
         .await
-        .request(management_request::Request::RemoveRoute(
-            RemoveRouteRequest { cidr: cidr_str },
+        .request(management_request::Request::RouteRemove(
+            RouteRemoveRequest { cidr: cidr_str },
         ))
         .await;
 
@@ -740,7 +742,7 @@ pub async fn set_hint(
         .ipc
         .lock()
         .await
-        .request(management_request::Request::SetHint(SetHintRequest {
+        .request(management_request::Request::HintSet(HintSetRequest {
             level: level.into(),
             role: role.into(),
         }))
@@ -785,9 +787,7 @@ pub async fn clear_hints(State(state): State<ApiState>) -> (StatusCode, Json<Suc
         .ipc
         .lock()
         .await
-        .request(management_request::Request::ClearHints(
-            ClearHintsRequest {},
-        ))
+        .request(management_request::Request::HintAuto(HintAutoRequest {}))
         .await;
 
     match resp {

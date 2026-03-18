@@ -2,10 +2,9 @@
 
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool};
 use wallhack_wire::management::{
-    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest,
-    HintLevel, ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest,
-    RoutesRequest, SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest,
-    management_request,
+    ConnectRequest, DisconnectRequest, HintAutoRequest, HintLevel, HintSetRequest, InfoRequest,
+    ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest, RouteAddRequest,
+    RouteRemoveRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
 };
 
 use crate::convert;
@@ -73,7 +72,7 @@ impl WallhackServer {
         description = "Get node info: role, version, uptime, listen/peer addresses, capabilities"
     )]
     async fn info(&self) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::Status(StatusRequest {})).await
+        ipc_call(management_request::Request::Info(InfoRequest {})).await
     }
 
     #[tool(description = "Ping the daemon (or a specific peer by name prefix)")]
@@ -111,7 +110,7 @@ impl WallhackServer {
         &self,
         Parameters(params): Parameters<AddRouteParams>,
     ) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::AddRoute(AddRouteRequest {
+        ipc_call(management_request::Request::RouteAdd(RouteAddRequest {
             cidr: params.cidr,
             peer: params.peer,
         }))
@@ -123,8 +122,8 @@ impl WallhackServer {
         &self,
         Parameters(params): Parameters<RemoveRouteParams>,
     ) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::RemoveRoute(
-            RemoveRouteRequest { cidr: params.cidr },
+        ipc_call(management_request::Request::RouteRemove(
+            RouteRemoveRequest { cidr: params.cidr },
         ))
         .await
     }
@@ -160,8 +159,8 @@ impl WallhackServer {
     ) -> Result<String, rmcp::ErrorData> {
         match params.peer {
             Some(peer) => {
-                ipc_call(management_request::Request::DisconnectPeer(
-                    DisconnectPeerRequest { peer, exact: false },
+                ipc_call(management_request::Request::PeerDisconnect(
+                    PeerDisconnectRequest { peer, exact: false },
                 ))
                 .await
             }
@@ -208,7 +207,7 @@ impl WallhackServer {
                 ));
             }
         };
-        ipc_call(management_request::Request::SetHint(SetHintRequest {
+        ipc_call(management_request::Request::HintSet(HintSetRequest {
             level: level.into(),
             role: role.into(),
         }))
@@ -217,10 +216,7 @@ impl WallhackServer {
 
     #[tool(description = "Return to capability-based negotiation by removing all role hints")]
     async fn hint_auto(&self) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::ClearHints(
-            ClearHintsRequest {},
-        ))
-        .await
+        ipc_call(management_request::Request::HintAuto(HintAutoRequest {})).await
     }
 }
 
