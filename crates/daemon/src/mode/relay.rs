@@ -30,6 +30,21 @@ use crate::{
 /// Delay before reconnecting after the source peer connection drops.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 
+/// Extract peer name and role from an optional handshake, falling back to the
+/// transport address and `Exit` role when the handshake is missing or empty.
+fn resolve_peer(
+    handshake: Option<&wallhack_wire::data::Handshake>,
+    peer_addr: &str,
+) -> (String, NodeRole) {
+    let name = handshake
+        .filter(|h| !h.name.is_empty())
+        .map_or_else(|| peer_addr.to_owned(), |h| h.name.clone());
+    let role = handshake
+        .and_then(|h| h.capabilities)
+        .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+    (name, role)
+}
+
 /// Lightweight shutdown signal: dropping the sender wakes all receivers.
 ///
 /// Avoids a `tokio-util` dependency for `CancellationToken`.
@@ -267,16 +282,8 @@ async fn run_relay_loop_inner(
     } else {
         None
     };
-    let peer_name = peer_handshake
-        .as_ref()
-        .filter(|h| !h.name.is_empty())
-        .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
-    let peer_role = peer_handshake
-        .as_ref()
-        .and_then(|h| h.capabilities)
-        .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+    let (peer_name, peer_role) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
 
-    // Register the source peer so it appears in `wallhack peers`.
     peers.register(
         peer_name.clone(),
         peer_addr.clone(),
@@ -617,19 +624,11 @@ fn handle_relay_connection(
         responses_rx,
     } = channels;
 
-    let peer_name = peer_handshake
-        .as_ref()
-        .filter(|h| !h.name.is_empty())
-        .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
-    let peer_role = peer_handshake
-        .as_ref()
-        .and_then(|h| h.capabilities)
-        .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+    let (peer_name, peer_role) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
 
-    // Register the bridged peer so it appears in `wallhack peers`.
     peers.register(
         peer_name.clone(),
-        peer_addr.clone(),
+        peer_addr,
         peer_role,
         ConnectionSide::Accept,
     );
@@ -662,20 +661,21 @@ fn handle_relay_connection(
     // Outgoing: open uni stream to exit peer, send instructions from the entry.
     // instructions_rx receives instructions distributed by the fan-out task.
     let peer_transport_instr = std::sync::Arc::clone(&transport);
-    let peer_name_cleanup = peer_name.clone();
-    let peers_cleanup = Arc::clone(peers);
-    tokio::spawn(async move {
-        match peer_transport_instr.open_uni_erased().await {
-            Ok(mut send) => {
-                if let Err(e) = run_send_instructions(&mut send, instructions_rx).await {
-                    tracing::debug!("Relay peer send-instructions finished: {e}");
+    {
+        let peer_name = peer_name.clone();
+        let peers = Arc::clone(peers);
+        tokio::spawn(async move {
+            match peer_transport_instr.open_uni_erased().await {
+                Ok(mut send) => {
+                    if let Err(e) = run_send_instructions(&mut send, instructions_rx).await {
+                        tracing::debug!("Relay peer send-instructions finished: {e}");
+                    }
                 }
+                Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
             }
-            Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
-        }
-        // Unregister peer when the outgoing stream closes (connection gone).
-        peers_cleanup.unregister(&peer_name_cleanup);
-    });
+            peers.unregister(&peer_name);
+        });
+    }
 
     // Register this peer's transport for bidi bridging.
     // The source→peer accept loop (spawned in run_relay_loop_inner) reads
