@@ -893,44 +893,48 @@ pub(crate) fn spawn_data_tasks(
     instructions_rx: tokio::sync::mpsc::Receiver<wallhack_wire::data::EntryNodeInstruction>,
 ) {
     // Incoming data: accept uni stream from exit peer, dispatch data messages.
-    let transport_data = Arc::clone(transport);
-    let instructions_in = instructions_tx.clone();
-    let responses_in = responses_tx.clone();
-    tokio::spawn(async move {
-        match transport_data.accept_uni_erased().await {
-            Ok(Some(mut recv)) => {
-                if let Err(e) = wallhack_core::transport::protocol::run_data_in(
-                    &mut recv,
-                    &instructions_in,
-                    &responses_in,
-                )
-                .await
-                {
-                    tracing::debug!("Data-in handler finished: {e}");
+    {
+        let transport = Arc::clone(transport);
+        let instructions_tx = instructions_tx.clone();
+        let responses_tx = responses_tx.clone();
+        tokio::spawn(async move {
+            match transport.accept_uni_erased().await {
+                Ok(Some(mut recv)) => {
+                    if let Err(e) = wallhack_core::transport::protocol::run_data_in(
+                        &mut recv,
+                        &instructions_tx,
+                        &responses_tx,
+                    )
+                    .await
+                    {
+                        tracing::debug!("Data-in handler finished: {e}");
+                    }
                 }
+                Ok(None) => tracing::debug!("Transport closed before data-in stream accepted"),
+                Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
             }
-            Ok(None) => tracing::debug!("Transport closed before data-in stream accepted"),
-            Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
-        }
-    });
+        });
+    }
 
     // Outgoing data: open uni stream to exit peer, write instructions.
-    let transport_out = Arc::clone(transport);
-    tokio::spawn(async move {
-        match transport_out.open_uni_erased().await {
-            Ok(mut send) => {
-                if let Err(e) = wallhack_core::transport::protocol::run_send_instructions(
-                    &mut send,
-                    instructions_rx,
-                )
-                .await
-                {
-                    tracing::debug!("Send-instructions handler finished: {e}");
+    {
+        let transport = Arc::clone(transport);
+        tokio::spawn(async move {
+            match transport.open_uni_erased().await {
+                Ok(mut send) => {
+                    if let Err(e) = wallhack_core::transport::protocol::run_send_instructions(
+                        &mut send,
+                        instructions_rx,
+                    )
+                    .await
+                    {
+                        tracing::debug!("Send-instructions handler finished: {e}");
+                    }
                 }
+                Err(e) => tracing::debug!("Failed to open send stream: {e}"),
             }
-            Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-        }
-    });
+        });
+    }
 }
 
 /// Run the connection manager alongside ping/latency handling.
