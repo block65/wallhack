@@ -22,9 +22,9 @@ use wallhack_cli::{
     ipc, output,
 };
 use wallhack_wire::management::{
-    ConnectRequest, DisconnectRequest, HintAutoRequest, HintLevel, HintSetRequest, InfoRequest,
+    ConnectRequest, DisconnectRequest, HintLevel, HintSetAutoRequest, HintSetRequest, InfoRequest,
     ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest, RouteAddRequest,
-    RouteRemoveRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
+    RouteDelRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
 };
 
 const DAEMON_BIN_NAME: &str = "wallhackd";
@@ -338,8 +338,8 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
                 cidr: add.cidr,
                 peer: add.peer,
             }),
-            RouteAction::Remove(rm) => {
-                management_request::Request::RouteRemove(RouteRemoveRequest { cidr: rm.cidr })
+            RouteAction::Del(del) => {
+                management_request::Request::RouteDel(RouteDelRequest { cidr: del.cidr })
             }
         },
         CtlCommand::Connect(cmd) => {
@@ -386,7 +386,7 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
                 })
             }
             wallhack_cli::cli::HintAction::Auto(_) => {
-                management_request::Request::HintAuto(HintAutoRequest {})
+                management_request::Request::HintSetAuto(HintSetAutoRequest {})
             }
         },
         CtlCommand::Shutdown(_) => management_request::Request::Shutdown(ShutdownRequest {}),

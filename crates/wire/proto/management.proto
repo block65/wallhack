@@ -16,14 +16,14 @@ message ManagementRequest {
     PeersRequest peers = 5;
     RoutesRequest routes = 6;
     RouteAddRequest route_add = 7;
-    RouteRemoveRequest route_remove = 8;
+    RouteDelRequest route_del = 8;
     PeerDisconnectRequest peer_disconnect = 9;
     ConnectRequest connect = 10;
     ListenRequest listen = 11;
     DisconnectRequest disconnect = 12;
     ShutdownRequest shutdown = 13;
     HintSetRequest hint_set = 14;
-    HintAutoRequest hint_auto = 15;
+    HintSetAutoRequest hint_set_auto = 15;
   }
 }
 
@@ -81,7 +81,7 @@ message RouteAddRequest {
   string peer = 2; // target peer name
 }
 
-message RouteRemoveRequest {
+message RouteDelRequest {
   string cidr = 1;
 }
 
@@ -115,7 +115,7 @@ message HintSetRequest {
   NodeRole role = 2;
 }
 
-message HintAutoRequest {}
+message HintSetAutoRequest {}
 
 // ── Response messages ───────────────────────────────────────────────
 

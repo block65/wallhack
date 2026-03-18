@@ -76,7 +76,7 @@ pub struct RouteCmd {
 pub enum RouteAction {
     List(RouteListCmd),
     Add(RouteAddCmd),
-    Remove(RouteRemoveCmd),
+    Del(RouteDelCmd),
 }
 
 /// List routes.
@@ -97,11 +97,11 @@ pub struct RouteAddCmd {
     pub peer: String,
 }
 
-/// Remove a route.
+/// Delete a route.
 #[derive(FromArgs, Debug)]
-#[argh(subcommand, name = "remove")]
-pub struct RouteRemoveCmd {
-    /// CIDR to remove (e.g. "10.0.0.0/8")
+#[argh(subcommand, name = "del")]
+pub struct RouteDelCmd {
+    /// CIDR to delete (e.g. "10.0.0.0/8")
     #[argh(positional)]
     pub cidr: String,
 }

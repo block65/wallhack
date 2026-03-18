@@ -175,7 +175,7 @@ impl Handler {
             Some(control_request::Request::Peers(_)) => self.handle_peers(),
             Some(control_request::Request::Disconnect(req)) => self.handle_disconnect(&req),
             Some(control_request::Request::RouteAdd(req)) => self.handle_route_add(req),
-            Some(control_request::Request::RouteRemove(req)) => self.handle_route_remove(&req),
+            Some(control_request::Request::RouteDel(req)) => self.handle_route_del(&req),
             Some(control_request::Request::RouteList(_)) => self.handle_route_list(),
             None => Self::error_response("Empty request"),
         }
@@ -286,16 +286,13 @@ impl Handler {
         }
     }
 
-    fn handle_route_remove(
-        &self,
-        req: &wallhack_wire::control::RouteRemoveRequest,
-    ) -> ControlResponse {
+    fn handle_route_del(&self, req: &wallhack_wire::control::RouteDelRequest) -> ControlResponse {
         let cidr = match req.cidr.parse() {
             Ok(c) => c,
             Err(e) => {
                 return ControlResponse {
-                    response: Some(control_response::Response::RouteRemove(
-                        wallhack_wire::control::RouteRemoveResponse {
+                    response: Some(control_response::Response::RouteDel(
+                        wallhack_wire::control::RouteDelResponse {
                             success: false,
                             message: format!("invalid CIDR: {e}"),
                         },
@@ -312,8 +309,8 @@ impl Handler {
                 .send(super::routes::RouteUpdate::Remove(entry));
         }
         ControlResponse {
-            response: Some(control_response::Response::RouteRemove(
-                wallhack_wire::control::RouteRemoveResponse {
+            response: Some(control_response::Response::RouteDel(
+                wallhack_wire::control::RouteDelResponse {
                     success,
                     message: if success {
                         String::new()
@@ -654,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn test_route_remove() {
+    fn test_route_del() {
         let handler = test_handler();
 
         // Add first
@@ -669,15 +666,15 @@ mod tests {
 
         // Remove
         let response = handler.handle(ControlRequest {
-            request: Some(control_request::Request::RouteRemove(
-                wallhack_wire::control::RouteRemoveRequest {
+            request: Some(control_request::Request::RouteDel(
+                wallhack_wire::control::RouteDelRequest {
                     cidr: "10.0.0.0/8".to_string(),
                 },
             )),
         });
 
         match response.response {
-            Some(control_response::Response::RouteRemove(r)) => {
+            Some(control_response::Response::RouteDel(r)) => {
                 assert!(r.success);
             }
             _ => panic!("Expected route remove response"),
@@ -685,18 +682,18 @@ mod tests {
     }
 
     #[test]
-    fn test_route_remove_not_found() {
+    fn test_route_del_not_found() {
         let handler = test_handler();
         let response = handler.handle(ControlRequest {
-            request: Some(control_request::Request::RouteRemove(
-                wallhack_wire::control::RouteRemoveRequest {
+            request: Some(control_request::Request::RouteDel(
+                wallhack_wire::control::RouteDelRequest {
                     cidr: "10.0.0.0/8".to_string(),
                 },
             )),
         });
 
         match response.response {
-            Some(control_response::Response::RouteRemove(r)) => {
+            Some(control_response::Response::RouteDel(r)) => {
                 assert!(!r.success);
                 assert_eq!(r.message, "route not found");
             }

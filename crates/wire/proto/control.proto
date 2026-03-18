@@ -13,7 +13,7 @@ message ControlRequest {
     PeersRequest peers = 3;
     DisconnectRequest disconnect = 4;
     RouteAddRequest route_add = 5;
-    RouteRemoveRequest route_remove = 6;
+    RouteDelRequest route_del = 6;
     RouteListRequest route_list = 7;
   }
 }
@@ -25,7 +25,7 @@ message ControlResponse {
     PeersResponse peers = 3;
     DisconnectResponse disconnect = 4;
     RouteAddResponse route_add = 5;
-    RouteRemoveResponse route_remove = 6;
+    RouteDelResponse route_del = 6;
     RouteListResponse route_list = 7;
     ErrorResponse error = 100;
   }
@@ -79,10 +79,10 @@ message RouteAddResponse {
   string message = 2;
 }
 
-message RouteRemoveRequest {
+message RouteDelRequest {
   string cidr = 1;
 }
-message RouteRemoveResponse {
+message RouteDelResponse {
   bool success = 1;
   string message = 2;
 }
