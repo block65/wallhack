@@ -183,7 +183,7 @@ pub async fn events(
     )
 }
 
-pub async fn status(State(state): State<ApiState>) -> Result<Json<StatusResponse>, StatusCode> {
+pub async fn info(State(state): State<ApiState>) -> Result<Json<StatusResponse>, StatusCode> {
     let resp = state
         .ipc
         .lock()

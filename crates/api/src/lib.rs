@@ -62,7 +62,7 @@ pub fn router(state: State) -> Router {
     let auth = state.auth.clone();
 
     let protected_routes = Router::new()
-        .route("/info", get(handlers::status))
+        .route("/info", get(handlers::info))
         .route("/stats", get(handlers::stats))
         .route("/peers", get(handlers::peers))
         .route("/peers/{name}", delete(handlers::disconnect_peer))
