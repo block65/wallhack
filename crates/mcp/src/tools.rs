@@ -107,7 +107,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Add a route: forward traffic for a CIDR range to a peer")]
-    async fn add_route(
+    async fn route_add(
         &self,
         Parameters(params): Parameters<AddRouteParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -119,7 +119,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Remove a route by CIDR")]
-    async fn remove_route(
+    async fn route_remove(
         &self,
         Parameters(params): Parameters<RemoveRouteParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -182,7 +182,7 @@ impl WallhackServer {
     #[tool(
         description = "Set a role hint to influence auto-negotiation (prefer/exclude/fixed + entry/exit/relay)"
     )]
-    async fn set_hint(
+    async fn hint_set(
         &self,
         Parameters(params): Parameters<SetHintParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -216,7 +216,7 @@ impl WallhackServer {
     }
 
     #[tool(description = "Clear all role hints, returning to pure capability-based negotiation")]
-    async fn clear_hints(&self) -> Result<String, rmcp::ErrorData> {
+    async fn hint_clear(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::ClearHints(
             ClearHintsRequest {},
         ))
