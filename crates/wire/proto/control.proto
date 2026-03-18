@@ -114,6 +114,7 @@ message ControlMessage {
     ControlResponse control_response = 5;
     Disconnect disconnect = 6;
     RoleTransition role_transition = 7;
+    PeerAnnouncement peer_announcement = 8;
   }
 }
 
@@ -127,4 +128,19 @@ message Disconnect {
 // own RoleTransition to its peers.
 message RoleTransition {
   wallhack.data.NodeRole new_role = 1;
+}
+
+// Announces a peer behind this node (relay → source). The source can register
+// the peer for visibility and install routes advertised in the handshake.
+message PeerAnnouncement {
+  enum Event {
+    EVENT_UNSPECIFIED = 0;
+    CONNECTED = 1;
+    DISCONNECTED = 2;
+  }
+  Event event = 1;
+  string name = 2;
+  string addr = 3;
+  wallhack.data.NodeRole role = 4;
+  repeated string routes = 5;  // CIDR notation, from the announced peer's handshake
 }
