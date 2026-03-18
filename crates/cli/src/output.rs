@@ -103,7 +103,7 @@ fn print_peers_table(peers: &[wallhack_wire::management::PeerInfo]) {
 /// Returns an error if the response contains an error from the daemon.
 pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
     match &resp.response {
-        Some(management_response::Response::Status(s)) => {
+        Some(management_response::Response::Info(s)) => {
             let role = s.role();
             let uptime = format_uptime(s.uptime_ms);
 

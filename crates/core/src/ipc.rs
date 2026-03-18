@@ -17,9 +17,9 @@ use tokio::{
 use wallhack_transport::TransportError;
 use wallhack_wire::management::{
     self, ConnectResponse, DaemonMessage, DaemonNotification, ErrorCode, ErrorResponse,
-    ListenResponse, ManagementRequest, ManagementResponse, OkResponse, PeerConnected,
-    PeerDisconnected, PeersResponse, PingResponse, RoutesResponse, StatsResponse, StatusResponse,
-    daemon_message, daemon_notification, management_request, management_response,
+    InfoResponse, ListenResponse, ManagementRequest, ManagementResponse, OkResponse, PeerConnected,
+    PeerDisconnected, PeersResponse, PingResponse, RoutesResponse, StatsResponse, daemon_message,
+    daemon_notification, management_request, management_response,
 };
 
 use crate::{
@@ -307,9 +307,9 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }
         }
 
-        Some(management_request::Request::Status(_)) => {
+        Some(management_request::Request::Info(_)) => {
             let s = api.status();
-            management_response::Response::Status(StatusResponse {
+            management_response::Response::Info(InfoResponse {
                 role: management::NodeRole::from(s.role).into(),
                 connected: false, // deprecated — derive from peer count instead
                 peer_addr: s.peer_addr.unwrap_or_default(),
@@ -353,7 +353,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             Err(e) => error_response(&e),
         },
 
-        Some(management_request::Request::AddRoute(req)) => match req.cidr.parse() {
+        Some(management_request::Request::RouteAdd(req)) => match req.cidr.parse() {
             Ok(cidr) => match api.add_route(cidr, req.peer.clone()) {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
                 Err(e) => error_response(&e),
@@ -364,7 +364,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }),
         },
 
-        Some(management_request::Request::RemoveRoute(req)) => match req.cidr.parse() {
+        Some(management_request::Request::RouteRemove(req)) => match req.cidr.parse() {
             Ok(cidr) => match api.remove_route(&cidr) {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
                 Err(e) => error_response(&e),
@@ -375,7 +375,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }),
         },
 
-        Some(management_request::Request::DisconnectPeer(req)) => {
+        Some(management_request::Request::PeerDisconnect(req)) => {
             let result = if req.exact {
                 api.disconnect_peer_by_id(req.peer.clone())
             } else {
@@ -422,7 +422,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             management_response::Response::Ok(OkResponse {})
         }
 
-        Some(management_request::Request::SetHint(req)) => {
+        Some(management_request::Request::HintSet(req)) => {
             let level = wallhack_wire::data::HintLevel::try_from(req.level).unwrap_or_default();
             let target = wallhack_wire::data::NodeRole::try_from(req.role).unwrap_or_default();
             let hint = wallhack_wire::data::RoleHint {
@@ -435,7 +435,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }
         }
 
-        Some(management_request::Request::ClearHints(_)) => match api.clear_hints() {
+        Some(management_request::Request::HintAuto(_)) => match api.clear_hints() {
             Ok(()) => management_response::Response::Ok(OkResponse {}),
             Err(e) => error_response(&e),
         },

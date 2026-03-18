@@ -22,10 +22,9 @@ use wallhack_cli::{
     ipc, output,
 };
 use wallhack_wire::management::{
-    AddRouteRequest, ClearHintsRequest, ConnectRequest, DisconnectPeerRequest, DisconnectRequest,
-    HintLevel, ListenRequest, NodeRole, PeersRequest, PingRequest, RemoveRouteRequest,
-    RoutesRequest, SetHintRequest, ShutdownRequest, StatsRequest, StatusRequest,
-    management_request,
+    ConnectRequest, DisconnectRequest, HintAutoRequest, HintLevel, HintSetRequest, InfoRequest,
+    ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest, RouteAddRequest,
+    RouteRemoveRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
 };
 
 const DAEMON_BIN_NAME: &str = "wallhackd";
@@ -316,7 +315,7 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         CtlCommand::Ping(cmd) => management_request::Request::Ping(PingRequest {
             peer: cmd.peer.unwrap_or_default(),
         }),
-        CtlCommand::Info(_) => management_request::Request::Status(StatusRequest {}),
+        CtlCommand::Info(_) => management_request::Request::Info(InfoRequest {}),
         CtlCommand::Stats(_) => management_request::Request::Stats(StatsRequest {}),
         #[cfg(feature = "json")]
         CtlCommand::Peers(ref cmd) if cmd.json => {
@@ -335,12 +334,12 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         CtlCommand::Peers(_) => management_request::Request::Peers(PeersRequest {}),
         CtlCommand::Route(cmd) => match cmd.action {
             RouteAction::List(_) => management_request::Request::Routes(RoutesRequest {}),
-            RouteAction::Add(add) => management_request::Request::AddRoute(AddRouteRequest {
+            RouteAction::Add(add) => management_request::Request::RouteAdd(RouteAddRequest {
                 cidr: add.cidr,
                 peer: add.peer,
             }),
             RouteAction::Remove(rm) => {
-                management_request::Request::RemoveRoute(RemoveRouteRequest { cidr: rm.cidr })
+                management_request::Request::RouteRemove(RouteRemoveRequest { cidr: rm.cidr })
             }
         },
         CtlCommand::Connect(cmd) => {
@@ -350,7 +349,7 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
             management_request::Request::Listen(ListenRequest { addr: cmd.addr })
         }
         CtlCommand::Disconnect(cmd) => match cmd.peer {
-            Some(peer) => management_request::Request::DisconnectPeer(DisconnectPeerRequest {
+            Some(peer) => management_request::Request::PeerDisconnect(PeerDisconnectRequest {
                 peer,
                 exact: false,
             }),
@@ -359,35 +358,35 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         CtlCommand::Role(cmd) => {
             if let Some(target) = cmd.target {
                 let role = parse_ctl_role(&target);
-                management_request::Request::SetHint(SetHintRequest {
+                management_request::Request::HintSet(HintSetRequest {
                     level: HintLevel::Fixed.into(),
                     role: role.into(),
                 })
             } else {
-                management_request::Request::Status(StatusRequest {})
+                management_request::Request::Info(InfoRequest {})
             }
         }
         CtlCommand::Hint(cmd) => match cmd.action {
             wallhack_cli::cli::HintAction::Prefer(h) => {
-                management_request::Request::SetHint(SetHintRequest {
+                management_request::Request::HintSet(HintSetRequest {
                     level: HintLevel::Prefer.into(),
                     role: parse_ctl_role(&h.role).into(),
                 })
             }
             wallhack_cli::cli::HintAction::Exclude(h) => {
-                management_request::Request::SetHint(SetHintRequest {
+                management_request::Request::HintSet(HintSetRequest {
                     level: HintLevel::Exclude.into(),
                     role: parse_ctl_role(&h.role).into(),
                 })
             }
             wallhack_cli::cli::HintAction::Fixed(h) => {
-                management_request::Request::SetHint(SetHintRequest {
+                management_request::Request::HintSet(HintSetRequest {
                     level: HintLevel::Fixed.into(),
                     role: parse_ctl_role(&h.role).into(),
                 })
             }
             wallhack_cli::cli::HintAction::Auto(_) => {
-                management_request::Request::ClearHints(ClearHintsRequest {})
+                management_request::Request::HintAuto(HintAutoRequest {})
             }
         },
         CtlCommand::Shutdown(_) => management_request::Request::Shutdown(ShutdownRequest {}),

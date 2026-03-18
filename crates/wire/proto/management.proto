@@ -11,19 +11,19 @@ message ManagementRequest {
   uint64 request_id = 1; // assigned by sender, echoed in response
   oneof request {
     PingRequest ping = 2;
-    StatusRequest status = 3;
+    InfoRequest info = 3;
     StatsRequest stats = 4;
     PeersRequest peers = 5;
     RoutesRequest routes = 6;
-    AddRouteRequest add_route = 7;
-    RemoveRouteRequest remove_route = 8;
-    DisconnectPeerRequest disconnect_peer = 9;
+    RouteAddRequest route_add = 7;
+    RouteRemoveRequest route_remove = 8;
+    PeerDisconnectRequest peer_disconnect = 9;
     ConnectRequest connect = 10;
     ListenRequest listen = 11;
     DisconnectRequest disconnect = 12;
     ShutdownRequest shutdown = 13;
-    SetHintRequest set_hint = 14;
-    ClearHintsRequest clear_hints = 15;
+    HintSetRequest hint_set = 14;
+    HintAutoRequest hint_auto = 15;
   }
 }
 
@@ -39,14 +39,14 @@ message ManagementResponse {
   uint64 request_id = 1; // echoes the request
   oneof response {
     PingResponse ping = 2;
-    StatusResponse status = 3;
+    InfoResponse info = 3;
     StatsResponse stats = 4;
     PeersResponse peers = 5;
     RoutesResponse routes = 6;
     ConnectResponse connect = 7;
     ListenResponse listen = 8;
     ErrorResponse error = 20;
-    OkResponse ok = 21; // for void operations (add_route, disconnect, etc.)
+    OkResponse ok = 21; // for void operations (route_add, disconnect, etc.)
   }
 }
 
@@ -68,7 +68,7 @@ message PingRequest {
   string peer = 1;  // prefix to match; empty = auto-select sole peer
 }
 
-message StatusRequest {}
+message InfoRequest {}
 
 message StatsRequest {}
 
@@ -76,16 +76,16 @@ message PeersRequest {}
 
 message RoutesRequest {}
 
-message AddRouteRequest {
+message RouteAddRequest {
   string cidr = 1; // e.g., "10.0.0.0/8"
   string peer = 2; // target peer name
 }
 
-message RemoveRouteRequest {
+message RouteRemoveRequest {
   string cidr = 1;
 }
 
-message DisconnectPeerRequest {
+message PeerDisconnectRequest {
   string peer = 1;
   bool exact = 2;  // true = exact match on registry id; false = prefix match (REPL/CLI)
 }
@@ -110,12 +110,12 @@ enum HintLevel {
   HINT_LEVEL_FIXED = 3;      // Hard — this role and no other
 }
 
-message SetHintRequest {
+message HintSetRequest {
   HintLevel level = 1;
   NodeRole role = 2;
 }
 
-message ClearHintsRequest {}
+message HintAutoRequest {}
 
 // ── Response messages ───────────────────────────────────────────────
 
@@ -140,7 +140,7 @@ message PingResponse {
   NodeRole node_role = 3;
 }
 
-message StatusResponse {
+message InfoResponse {
   NodeRole role = 1;
   bool connected = 2;
   string peer_addr = 3;
