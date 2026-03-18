@@ -364,7 +364,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }),
         },
 
-        Some(management_request::Request::RouteRemove(req)) => match req.cidr.parse() {
+        Some(management_request::Request::RouteDel(req)) => match req.cidr.parse() {
             Ok(cidr) => match api.remove_route(&cidr) {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
                 Err(e) => error_response(&e),
@@ -435,7 +435,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }
         }
 
-        Some(management_request::Request::HintAuto(_)) => match api.clear_hints() {
+        Some(management_request::Request::HintSetAuto(_)) => match api.clear_hints() {
             Ok(()) => management_response::Response::Ok(OkResponse {}),
             Err(e) => error_response(&e),
         },

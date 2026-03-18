@@ -2,9 +2,9 @@
 
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool};
 use wallhack_wire::management::{
-    ConnectRequest, DisconnectRequest, HintAutoRequest, HintLevel, HintSetRequest, InfoRequest,
+    ConnectRequest, DisconnectRequest, HintLevel, HintSetAutoRequest, HintSetRequest, InfoRequest,
     ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest, RouteAddRequest,
-    RouteRemoveRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
+    RouteDelRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
 };
 
 use crate::convert;
@@ -24,7 +24,7 @@ pub struct AddRouteParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RemoveRouteParams {
+pub struct RouteDelParams {
     /// CIDR range to remove, e.g. "10.0.0.0/8"
     pub cidr: String,
 }
@@ -118,13 +118,13 @@ impl WallhackServer {
     }
 
     #[tool(description = "Remove a route by CIDR")]
-    async fn route_remove(
+    async fn route_del(
         &self,
-        Parameters(params): Parameters<RemoveRouteParams>,
+        Parameters(params): Parameters<RouteDelParams>,
     ) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::RouteRemove(
-            RouteRemoveRequest { cidr: params.cidr },
-        ))
+        ipc_call(management_request::Request::RouteDel(RouteDelRequest {
+            cidr: params.cidr,
+        }))
         .await
     }
 
@@ -215,8 +215,11 @@ impl WallhackServer {
     }
 
     #[tool(description = "Return to capability-based negotiation by removing all role hints")]
-    async fn hint_auto(&self) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::HintAuto(HintAutoRequest {})).await
+    async fn hint_set_auto(&self) -> Result<String, rmcp::ErrorData> {
+        ipc_call(management_request::Request::HintSetAuto(
+            HintSetAutoRequest {},
+        ))
+        .await
     }
 }
 

@@ -177,10 +177,10 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
                 wallhack_wire::management::RouteAddRequest { cidr, peer },
             ))
         }
-        "remove" => {
+        "del" => {
             let cidr = (*parts.get(2)?).to_string();
-            Some(management_request::Request::RouteRemove(
-                wallhack_wire::management::RouteRemoveRequest { cidr },
+            Some(management_request::Request::RouteDel(
+                wallhack_wire::management::RouteDelRequest { cidr },
             ))
         }
         "list" | "" => Some(management_request::Request::Routes(
@@ -216,8 +216,8 @@ fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
 fn parse_hint_command(parts: &[&str]) -> Option<management_request::Request> {
     let sub = parts.get(1).copied()?;
     match sub {
-        "auto" | "clear" => Some(management_request::Request::HintAuto(
-            management::HintAutoRequest {},
+        "auto" => Some(management_request::Request::HintSetAuto(
+            management::HintSetAutoRequest {},
         )),
         "prefer" | "exclude" | "fixed" => {
             let role_name = parts.get(2).copied()?;
@@ -262,7 +262,7 @@ fn print_help() {
     let _ = writeln!(tw, "  peers\tList connected peers");
     let _ = writeln!(tw, "  route\tList configured routes");
     let _ = writeln!(tw, "  route add <cidr> <peer>\tAdd a route");
-    let _ = writeln!(tw, "  route remove <cidr>\tRemove a route");
+    let _ = writeln!(tw, "  route del <cidr>\tRemove a route");
     let _ = writeln!(tw, "  connect <addr>\tConnect to a peer");
     let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
     let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");

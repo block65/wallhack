@@ -10,9 +10,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use wallhack_wire::management::{
-    ConnectRequest, DisconnectRequest, HintAutoRequest, HintLevel, HintSetRequest, InfoRequest,
+    ConnectRequest, DisconnectRequest, HintLevel, HintSetAutoRequest, HintSetRequest, InfoRequest,
     ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest,
-    RouteAddRequest as ProtoRouteAddRequest, RouteRemoveRequest, RoutesRequest, ShutdownRequest,
+    RouteAddRequest as ProtoRouteAddRequest, RouteDelRequest, RoutesRequest, ShutdownRequest,
     StatsRequest, management_request, management_response,
 };
 
@@ -447,9 +447,9 @@ pub async fn delete_route(
         .ipc
         .lock()
         .await
-        .request(management_request::Request::RouteRemove(
-            RouteRemoveRequest { cidr: cidr_str },
-        ))
+        .request(management_request::Request::RouteDel(RouteDelRequest {
+            cidr: cidr_str,
+        }))
         .await;
 
     match resp {
@@ -787,7 +787,9 @@ pub async fn clear_hints(State(state): State<ApiState>) -> (StatusCode, Json<Suc
         .ipc
         .lock()
         .await
-        .request(management_request::Request::HintAuto(HintAutoRequest {}))
+        .request(management_request::Request::HintSetAuto(
+            HintSetAutoRequest {},
+        ))
         .await;
 
     match resp {
