@@ -329,14 +329,14 @@
 			"get": {
 				"summary": "Node info",
 				"description": "Retrieves node identity, role, capabilities, and uptime.",
-				"operationId": "getInfo",
+				"operationId": "infoGet",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
 						"description": "Info retrieved.",
 						"content": {
 							"application/json": {
-								"schema": { "$ref": "#/components/schemas/StatusResponse" }
+								"schema": { "$ref": "#/components/schemas/InfoResponse" }
 							}
 						}
 					},
@@ -367,7 +367,7 @@
 			"get": {
 				"summary": "List connections",
 				"description": "Retrieves a list of all currently connected peers.",
-				"operationId": "listPeers",
+				"operationId": "peersList",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
@@ -386,7 +386,7 @@
 			"delete": {
 				"summary": "Disconnect peer",
 				"description": "Terminates the connection with a specific peer. Accepts the peer's unique id (from GET /peers) or an unambiguous name prefix.",
-				"operationId": "disconnectPeer",
+				"operationId": "peerDisconnect",
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
@@ -416,7 +416,7 @@
 			"get": {
 				"summary": "List routing table",
 				"description": "Retrieves all active routing entries established through this node.",
-				"operationId": "listRoutes",
+				"operationId": "routesList",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
@@ -607,7 +607,7 @@
 			"get": {
 				"summary": "Ping peer",
 				"description": "Pings a specific connected peer by name or prefix.",
-				"operationId": "pingPeer",
+				"operationId": "peerPing",
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
@@ -662,7 +662,7 @@
 					"required": true,
 					"content": {
 						"application/json": {
-							"schema": { "$ref": "#/components/schemas/SetHintRequest" }
+							"schema": { "$ref": "#/components/schemas/HintSetRequest" }
 						}
 					}
 				},

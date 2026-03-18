@@ -33,8 +33,8 @@ struct NodeState {
 /// Shared node state handle, cloneable and cheaply updatable.
 ///
 /// Consumers call [`SharedNodeState::update_role`], [`SharedNodeState::update_capabilities`],
-/// etc. after negotiation or listening starts so that `wallhack info` /
-/// `wallhack_status` reflects the real state of the daemon.
+/// etc. after negotiation or listening starts so that `wallhack info`
+/// reflects the real state of the daemon.
 #[derive(Clone, Debug)]
 pub struct SharedNodeState(Arc<ArcSwap<NodeState>>);
 
@@ -148,7 +148,7 @@ impl Handler {
     /// Returns a handle to the shared node state.
     ///
     /// Callers (daemon modes) use this to update role, capabilities, and
-    /// listen/connect state after negotiation so that `status()` reports
+    /// listen/connect state after negotiation so that `info()` reports
     /// accurate information.
     #[must_use]
     pub fn node_state(&self) -> SharedNodeState {
@@ -396,9 +396,9 @@ impl crate::node_api::NodeApi for Handler {
         self.metrics.snapshot()
     }
 
-    fn status(&self) -> crate::node_api::NodeStatus {
+    fn info(&self) -> crate::node_api::NodeInfo {
         let state = self.state.load();
-        crate::node_api::NodeStatus {
+        crate::node_api::NodeInfo {
             role: state.role,
             peer_addr: state.peer_addr.clone(),
             capabilities: state.capabilities,
@@ -441,7 +441,7 @@ impl crate::node_api::NodeApi for Handler {
         Ok(())
     }
 
-    fn remove_route(&self, cidr: &crate::Cidr) -> crate::node_api::Result<()> {
+    fn route_del(&self, cidr: &crate::Cidr) -> crate::node_api::Result<()> {
         if let Some(entry) = self.routes.remove(cidr) {
             let _ = self
                 .route_updates
@@ -452,7 +452,7 @@ impl crate::node_api::NodeApi for Handler {
         }
     }
 
-    fn disconnect_peer(&self, peer: String) -> crate::node_api::Result<()> {
+    fn peer_disconnect(&self, peer: String) -> crate::node_api::Result<()> {
         // Try name prefix first, then fall back to exact address match.
         // Used by REPL/CLI where prefix matching is convenient.
         let peer_info = self.peers.find_by_prefix(&peer).or_else(|e| {
@@ -467,7 +467,7 @@ impl crate::node_api::NodeApi for Handler {
         Ok(())
     }
 
-    fn disconnect_peer_by_id(&self, id: String) -> crate::node_api::Result<()> {
+    fn peer_disconnect_by_id(&self, id: String) -> crate::node_api::Result<()> {
         // Exact match on registry key. Used by REST API where the id
         // is taken directly from the peers list.
         if self.peers.get(&id).is_none() {
@@ -481,12 +481,12 @@ impl crate::node_api::NodeApi for Handler {
         self.state.load().role
     }
 
-    fn set_hint(&self, hint: RoleHint) -> crate::node_api::Result<()> {
+    fn hint_set(&self, hint: RoleHint) -> crate::node_api::Result<()> {
         self.hint_tx.send_replace(Some(hint));
         Ok(())
     }
 
-    fn clear_hints(&self) -> crate::node_api::Result<()> {
+    fn hint_set_auto(&self) -> crate::node_api::Result<()> {
         self.hint_tx.send_replace(None);
         Ok(())
     }
@@ -738,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn test_status_indeterminate_role() {
+    fn test_info_indeterminate_role() {
         let metrics = Arc::new(Metrics::default());
         let peers = Arc::new(Registry::new());
         let routes = RouteTable::shared();
@@ -754,7 +754,7 @@ mod tests {
             tokio::sync::broadcast::channel(16).0,
         );
 
-        let status = crate::node_api::NodeApi::status(&handler);
+        let status = crate::node_api::NodeApi::info(&handler);
         assert_eq!(status.role, NodeRole::Indeterminate);
     }
 
@@ -795,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn test_status_reflects_node_state_updates() {
+    fn test_info_reflects_node_state_updates() {
         let handler = Handler::new(
             HandlerConfig::new(
                 NodeRole::Indeterminate,
@@ -809,7 +809,7 @@ mod tests {
         );
 
         // Initially indeterminate with no capabilities.
-        let status = crate::node_api::NodeApi::status(&handler);
+        let status = crate::node_api::NodeApi::info(&handler);
         assert_eq!(status.role, NodeRole::Indeterminate);
         assert!(!status.capabilities.tun_capable);
         assert!(!status.capabilities.listening);
@@ -825,7 +825,7 @@ mod tests {
             interactive: false,
         });
 
-        let status = crate::node_api::NodeApi::status(&handler);
+        let status = crate::node_api::NodeApi::info(&handler);
         assert_eq!(status.role, NodeRole::Entry);
         assert!(status.capabilities.tun_capable);
 
@@ -833,7 +833,7 @@ mod tests {
         let addr: SocketAddr = "0.0.0.0:4433".parse().unwrap();
         state.set_listen_addr(addr);
 
-        let status = crate::node_api::NodeApi::status(&handler);
+        let status = crate::node_api::NodeApi::info(&handler);
         assert_eq!(status.listen_addr, Some(addr));
         assert!(status.capabilities.listening);
     }

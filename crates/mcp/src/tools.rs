@@ -42,7 +42,7 @@ pub struct AddrParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetHintParams {
+pub struct HintSetParams {
     /// Hint level: "prefer", "exclude", or "fixed"
     pub level: String,
     /// Target role: "entry", "exit", or "relay"
@@ -117,7 +117,7 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Remove a route by CIDR")]
+    #[tool(description = "Delete a route by CIDR")]
     async fn route_del(
         &self,
         Parameters(params): Parameters<RouteDelParams>,
@@ -183,7 +183,7 @@ impl WallhackServer {
     )]
     async fn hint_set(
         &self,
-        Parameters(params): Parameters<SetHintParams>,
+        Parameters(params): Parameters<HintSetParams>,
     ) -> Result<String, rmcp::ErrorData> {
         let level = match params.level.as_str() {
             "prefer" => HintLevel::Prefer,

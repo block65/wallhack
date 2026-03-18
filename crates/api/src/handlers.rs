@@ -29,9 +29,9 @@ pub struct StatsResponse {
     pub active_flows: u64,
 }
 
-/// Node status response.
+/// Node info response.
 #[derive(Debug, Serialize)]
-pub struct StatusResponse {
+pub struct InfoResponse {
     pub name: String,
     pub version: String,
     pub role: String,
@@ -133,9 +133,9 @@ pub struct PingResponseBody {
     pub role: String,
 }
 
-/// Set hint request body.
+/// Hint set request body.
 #[derive(Debug, Deserialize)]
-pub struct SetHintRequestBody {
+pub struct HintSetRequestBody {
     pub level: String,
     pub role: String,
 }
@@ -183,7 +183,7 @@ pub async fn events(
     )
 }
 
-pub async fn info(State(state): State<ApiState>) -> Result<Json<StatusResponse>, StatusCode> {
+pub async fn info(State(state): State<ApiState>) -> Result<Json<InfoResponse>, StatusCode> {
     let resp = state
         .ipc
         .lock()
@@ -195,7 +195,7 @@ pub async fn info(State(state): State<ApiState>) -> Result<Json<StatusResponse>,
     match resp.response {
         Some(management_response::Response::Info(s)) => {
             let role = s.role().to_string();
-            Ok(Json(StatusResponse {
+            Ok(Json(InfoResponse {
                 name: s.package_name,
                 version: s.version,
                 role,
@@ -280,7 +280,7 @@ pub async fn peers(State(state): State<ApiState>) -> Result<Json<PeersResponse>,
     }
 }
 
-pub async fn disconnect_peer(
+pub async fn peer_disconnect(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> (StatusCode, Json<SuccessResponse>) {
@@ -644,7 +644,7 @@ pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponseBody
     }
 }
 
-pub async fn ping_peer(
+pub async fn peer_ping(
     State(state): State<ApiState>,
     Path(peer): Path<String>,
 ) -> Result<Json<PingResponseBody>, StatusCode> {
@@ -704,9 +704,9 @@ pub async fn shutdown(State(state): State<ApiState>) -> (StatusCode, Json<Succes
     }
 }
 
-pub async fn set_hint(
+pub async fn hint_set(
     State(state): State<ApiState>,
-    Json(req): Json<SetHintRequestBody>,
+    Json(req): Json<HintSetRequestBody>,
 ) -> (StatusCode, Json<SuccessResponse>) {
     let level = match req.level.as_str() {
         "prefer" => HintLevel::Prefer,
@@ -787,7 +787,7 @@ pub async fn set_hint(
     }
 }
 
-pub async fn clear_hints(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
+pub async fn hint_set_auto(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
     let resp = state
         .ipc
         .lock()

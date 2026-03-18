@@ -290,7 +290,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         Some(management_request::Request::Ping(req)) => {
             if req.peer.is_empty() {
                 // Ping the daemon itself
-                let status = api.status();
+                let status = api.info();
                 management_response::Response::Ping(PingResponse {
                     uptime_ms: status.uptime_ms,
                     version: status.version,
@@ -309,7 +309,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         }
 
         Some(management_request::Request::Info(_)) => {
-            let s = api.status();
+            let s = api.info();
             management_response::Response::Info(InfoResponse {
                 role: management::NodeRole::from(s.role).into(),
                 connected: false, // deprecated — derive from peer count instead
@@ -366,7 +366,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         },
 
         Some(management_request::Request::RouteDel(req)) => match req.cidr.parse() {
-            Ok(cidr) => match api.remove_route(&cidr) {
+            Ok(cidr) => match api.route_del(&cidr) {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
                 Err(e) => error_response(&e),
             },
@@ -378,9 +378,9 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
         Some(management_request::Request::PeerDisconnect(req)) => {
             let result = if req.exact {
-                api.disconnect_peer_by_id(req.peer.clone())
+                api.peer_disconnect_by_id(req.peer.clone())
             } else {
-                api.disconnect_peer(req.peer.clone())
+                api.peer_disconnect(req.peer.clone())
             };
             match result {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
@@ -430,13 +430,13 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 level: level.into(),
                 target: target.into(),
             };
-            match api.set_hint(hint) {
+            match api.hint_set(hint) {
                 Ok(()) => management_response::Response::Ok(OkResponse {}),
                 Err(e) => error_response(&e),
             }
         }
 
-        Some(management_request::Request::HintSetAuto(_)) => match api.clear_hints() {
+        Some(management_request::Request::HintSetAuto(_)) => match api.hint_set_auto() {
             Ok(()) => management_response::Response::Ok(OkResponse {}),
             Err(e) => error_response(&e),
         },
