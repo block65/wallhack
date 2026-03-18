@@ -225,6 +225,8 @@ impl ControlChannels {
     /// Process a single incoming `ControlMessage`.
     ///
     /// Returns `Some(exit_reason)` if the loop should terminate.
+    // REASON: dispatches all control message variants with inline handling
+    #[allow(clippy::too_many_lines)]
     async fn handle_message(
         &mut self,
         stream: &mut BoxBiStream,
@@ -311,6 +313,7 @@ impl ControlChannels {
                                 announcement.name,
                                 announcement.addr,
                                 role,
+                                wallhack_wire::data::Capabilities::default(),
                                 crate::control::peers::ConnectionSide::Accept,
                             );
                         }
@@ -322,7 +325,7 @@ impl ControlChannels {
                             );
                             registry.unregister(&announcement.name);
                         }
-                        _ => {}
+                        peer_announcement::Event::Unspecified => {}
                     }
                 }
             }
