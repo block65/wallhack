@@ -129,10 +129,12 @@ async fn run_exit_connector(
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let ctx = Arc::clone(&ctx);
                         async move {
                             use wallhack_core::client::client::Client;
                             let mut client =
                                 wallhack_core::client::quic::QuicClient::try_new(client_config)?;
+                            client.peer_registry = Some(Arc::clone(&ctx.peers));
                             client.connect(NodeRole::Exit).await
                         }
                     },
@@ -149,7 +151,6 @@ async fn run_exit_connector(
                                 erased.control_tx,
                                 erased.tasks,
                                 erased.peer_handshake_rx,
-                                erased.latency_rx,
                                 &peer_addr,
                                 &ctx,
                             )
@@ -180,9 +181,11 @@ async fn run_exit_connector(
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let ctx = Arc::clone(&ctx);
                         async move {
                             let mut client =
                                 wallhack_core::client::ws::WsClient::new(client_config)?;
+                            client.peer_registry = Some(Arc::clone(&ctx.peers));
                             client.connect(NodeRole::Exit).await
                         }
                     },
@@ -199,7 +202,6 @@ async fn run_exit_connector(
                                 erased.control_tx,
                                 erased.tasks,
                                 erased.peer_handshake_rx,
-                                erased.latency_rx,
                                 &peer_addr,
                                 &ctx,
                             )
@@ -314,7 +316,7 @@ where
 
     loop {
         match server.accept(NodeRole::Exit).await {
-            Ok(Some(mut accept_result)) => {
+            Ok(Some(accept_result)) => {
                 let peer_addr = accept_result.peer_addr().to_string();
 
                 // Register the connecting peer using handshake name and capabilities.
@@ -334,9 +336,6 @@ where
                 );
 
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
-                let latency_rx = accept_result
-                    .take_latency_rx()
-                    .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
                 let adapter = SyscallExitAdapter::new();
                 let _reaper = adapter.start_reaper(
                     std::time::Duration::from_mins(1),
@@ -393,7 +392,6 @@ where
                 tokio::spawn(async move {
                     let _heartbeat = super::spawn_heartbeat(
                         control_tx,
-                        Some(latency_rx),
                         peer_name.clone(),
                         Arc::clone(&ctx.peers),
                     );
@@ -430,7 +428,7 @@ where
 }
 
 /// Non-generic exit loop: monomorphized once regardless of transport type.
-// REASON: threading transport, instructions, responses, control, tasks, handshake, latency, peer_addr, ctx
+// REASON: threading transport, instructions, responses, control, tasks, handshake, peer_addr, ctx
 #[allow(clippy::too_many_arguments)]
 async fn run_exit_loop_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -440,7 +438,6 @@ async fn run_exit_loop_inner(
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     mut tasks: wallhack_core::client::client::ConnectionTasks,
     peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
-    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     peer_addr: &str,
     ctx: &ExitContext,
 ) -> Result<(), NodeError> {
@@ -492,12 +489,7 @@ async fn run_exit_loop_inner(
     );
     let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
 
-    let _heartbeat = super::spawn_heartbeat(
-        control_tx,
-        latency_rx,
-        peer_name.clone(),
-        Arc::clone(&ctx.peers),
-    );
+    let _heartbeat = super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&ctx.peers));
 
     let stream_fut = run_stream_listener(transport);
     tokio::pin!(stream_fut);

@@ -152,10 +152,12 @@ pub async fn run(
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let peers = Arc::clone(&peers);
                         async move {
                             use wallhack_core::client::client::Client;
                             let mut client =
                                 wallhack_core::client::quic::QuicClient::try_new(client_config)?;
+                            client.peer_registry = Some(peers);
                             client.connect(NodeRole::Relay).await
                         }
                     },
@@ -173,7 +175,6 @@ pub async fn run(
                                 erased.tasks,
                                 erased.control_tx,
                                 erased.peer_handshake_rx,
-                                erased.latency_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -208,9 +209,11 @@ pub async fn run(
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let peers = Arc::clone(&peers);
                         async move {
                             let mut client =
                                 wallhack_core::client::ws::WsClient::new(client_config)?;
+                            client.peer_registry = Some(peers);
                             client.connect(NodeRole::Relay).await
                         }
                     },
@@ -228,7 +231,6 @@ pub async fn run(
                                 erased.tasks,
                                 erased.control_tx,
                                 erased.peer_handshake_rx,
-                                erased.latency_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -264,7 +266,6 @@ async fn run_relay_loop_inner(
     mut tasks: wallhack_core::client::client::ConnectionTasks,
     source_control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     peer_handshake_rx: Option<tokio::sync::oneshot::Receiver<wallhack_wire::data::Handshake>>,
-    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     global: &GlobalConfig,
     listen_spec: &AddressSpec,
     addr: std::net::SocketAddr,
@@ -302,7 +303,6 @@ async fn run_relay_loop_inner(
 
     let _source_heartbeat = super::spawn_heartbeat(
         source_control_tx.clone(),
-        latency_rx,
         peer_name.clone(),
         Arc::clone(&peers),
     );
@@ -682,7 +682,6 @@ fn handle_relay_connection(
     let peer_addr = erased.peer_addr;
     let transport = erased.transport;
     let peer_handshake = erased.peer_handshake;
-    let latency_rx = erased.latency_rx;
     let (channels, control_tx) = (erased.channels, erased.control_tx);
     let DataChannels {
         instructions_tx,
@@ -705,12 +704,8 @@ fn handle_relay_connection(
         ConnectionSide::Accept,
     );
 
-    let _accepted_heartbeat = super::spawn_heartbeat(
-        control_tx.clone(),
-        latency_rx,
-        peer_name.clone(),
-        Arc::clone(peers),
-    );
+    let _accepted_heartbeat =
+        super::spawn_heartbeat(control_tx.clone(), peer_name.clone(), Arc::clone(peers));
 
     // Incoming: accept uni stream from exit peer, dispatch data messages.
     // Exit peers send ExitNodeResponses which are dispatched via responses_tx.

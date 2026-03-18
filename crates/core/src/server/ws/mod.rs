@@ -291,9 +291,7 @@ impl Server for WebSocketServer {
             .clone()
             .unwrap_or_else(RouteTable::shared);
 
-        // Create latency channel so pong-derived RTT measurements are available
-        // to the caller (e.g. for registry updates and one-shot ping responses).
-        let (latency_tx, latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
+        let peer_name = peer_handshake.as_ref().map(|hs| hs.name.clone());
         let route_updates = self.options.route_updates.clone().unwrap_or_else(|| {
             let (tx, _) = tokio::sync::broadcast::channel(16);
             tx
@@ -306,10 +304,10 @@ impl Server for WebSocketServer {
                 let handler = Handler::new(handler_config, metrics, peers, routes, route_updates);
                 let mut channels = protocol::ControlChannels {
                     outgoing_rx: control_rx,
-                    handshake_tx: None, // Handshake already read above
-                    latency_tx: Some(latency_tx),
+                    handshake_tx: None,        // Handshake already read above
                     control_response_tx: None, // server doesn't issue ControlRequests
                     peer_registry: Some(peer_registry),
+                    peer_name,
                 };
                 let mut control_stream =
                     wallhack_transport::erased::BoxBiStream::new(control_stream);
@@ -328,7 +326,6 @@ impl Server for WebSocketServer {
             metrics,
             peer_handshake,
             control_tx,
-            latency_rx,
             channel_binding,
         )))
     }
