@@ -349,13 +349,13 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         CtlCommand::Listen(cmd) => {
             management_request::Request::Listen(ListenRequest { addr: cmd.addr })
         }
-        CtlCommand::Disconnect(_) => management_request::Request::Disconnect(DisconnectRequest {}),
-        CtlCommand::DisconnectPeer(cmd) => {
-            management_request::Request::DisconnectPeer(DisconnectPeerRequest {
-                peer: cmd.peer,
+        CtlCommand::Disconnect(cmd) => match cmd.peer {
+            Some(peer) => management_request::Request::DisconnectPeer(DisconnectPeerRequest {
+                peer,
                 exact: false,
-            })
-        }
+            }),
+            None => management_request::Request::Disconnect(DisconnectRequest {}),
+        },
         CtlCommand::Role(cmd) => {
             if let Some(target) = cmd.target {
                 let role = parse_ctl_role(&target);

@@ -31,9 +31,9 @@ pub struct RemoveRouteParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct PeerParams {
-    /// Peer name (or unambiguous prefix)
-    pub peer: String,
+pub struct DisconnectParams {
+    /// Peer name (or unambiguous prefix). Omit to disconnect the transport.
+    pub peer: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -129,20 +129,6 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Disconnect a peer by name (or unambiguous prefix) or by remote address")]
-    async fn disconnect_peer(
-        &self,
-        Parameters(params): Parameters<PeerParams>,
-    ) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::DisconnectPeer(
-            DisconnectPeerRequest {
-                peer: params.peer,
-                exact: false,
-            },
-        ))
-        .await
-    }
-
     #[tool(description = "Connect to a remote peer by address")]
     async fn connect(
         &self,
@@ -165,12 +151,27 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Disconnect from the current transport (stop connecting/listening)")]
-    async fn disconnect(&self) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::Disconnect(
-            DisconnectRequest {},
-        ))
-        .await
+    #[tool(
+        description = "Disconnect a peer by name, or disconnect the transport if no peer specified"
+    )]
+    async fn disconnect(
+        &self,
+        Parameters(params): Parameters<DisconnectParams>,
+    ) -> Result<String, rmcp::ErrorData> {
+        match params.peer {
+            Some(peer) => {
+                ipc_call(management_request::Request::DisconnectPeer(
+                    DisconnectPeerRequest { peer, exact: false },
+                ))
+                .await
+            }
+            None => {
+                ipc_call(management_request::Request::Disconnect(
+                    DisconnectRequest {},
+                ))
+                .await
+            }
+        }
     }
 
     #[tool(description = "Gracefully shut down the wallhack daemon")]
