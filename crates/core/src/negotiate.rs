@@ -59,12 +59,17 @@ fn parse_hint(hint: Option<&RoleHint>) -> Option<(HintLevel, NodeRole)> {
 ///
 /// # Rules (in priority order)
 ///
-/// 1. **FIXED hint** — checked first. If local has a FIXED hint, return
-///    the target role immediately. If both sides are FIXED to the same role,
-///    return Indeterminate (conflict detected at runtime, not startup).
+/// 1a. **Local FIXED hint** — if local has a FIXED hint, return the target
+///     role immediately. If both sides are FIXED to the same role, return
+///     Indeterminate (conflict).
 ///
-/// 2. **Capability-based rules** — relay, TUN asymmetry. If these produce an
-///    unambiguous result, hints don't override it.
+/// 1b. **Peer FIXED hint** — if the peer declares a FIXED role, local takes
+///     the complement. This lets a relay proxy the entry side of the chain:
+///     the relay sends `Fixed(Entry)` to accepted peers, forcing them to Exit.
+///
+/// 2. **Capability-based rules** — relay, TUN asymmetry, interactive
+///    tiebreaker. If these produce an unambiguous result, soft hints don't
+///    override it.
 ///
 /// 3. **EXCLUDE hint** — removes a role from the local candidate set, then
 ///    re-evaluates.
@@ -89,6 +94,19 @@ pub fn negotiate(local: &Handshake, peer: &Handshake) -> NegotiationResult {
         return NegotiationResult::Resolved {
             role: target,
             reason: "local has a fixed role hint",
+        };
+    }
+
+    // 1b. Peer's FIXED hint — the peer is declaring its role (e.g. a relay
+    //     proxying the entry side of the chain). Local takes the complement.
+    if let Some((HintLevel::Fixed, peer_target)) = peer_hint {
+        return match complement(peer_target) {
+            Some(role) => NegotiationResult::Resolved {
+                role,
+                reason: "complement of peer's declared role",
+            },
+            // No complement (e.g. peer fixed as relay) → fall through to capabilities.
+            None => negotiate_from_capabilities(local, peer),
         };
     }
 
@@ -764,5 +782,132 @@ mod tests {
         let peer = hs_interactive(true, false, true, false);
         assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
         assert_resolved(&negotiate(&peer, &local), NodeRole::Entry);
+    }
+
+    // -------------------------------------------------------------------------
+    // Peer FIXED hint (relay topology)
+    // -------------------------------------------------------------------------
+
+    /// Peer declares Fixed(Entry) → local takes the complement (Exit).
+    /// This is how a relay forces accepted peers to resolve as exit nodes.
+    #[test]
+    fn peer_fixed_entry_forces_exit() {
+        // TUN-capable connector would normally resolve to Entry against a
+        // relay, but the relay's Fixed(Entry) hint overrides.
+        let local = hs(true, false, true); // TUN-capable connector
+        let peer = hs_hint(
+            false,
+            true,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
+    }
+
+    /// Non-TUN peer also respects Fixed(Entry) → Exit.
+    #[test]
+    fn peer_fixed_entry_nontun_also_exit() {
+        let local = hs(false, false, true); // non-TUN connector
+        let peer = hs_hint(
+            false,
+            true,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Exit);
+    }
+
+    /// Peer declares Fixed(Exit) → local takes the complement (Entry).
+    #[test]
+    fn peer_fixed_exit_forces_entry() {
+        let local = hs(false, false, true);
+        let peer = hs_hint(
+            false,
+            true,
+            false,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleExit)),
+        );
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
+    }
+
+    /// Peer declares Fixed(Relay) → no complement, falls through to capabilities.
+    #[test]
+    fn peer_fixed_relay_no_complement() {
+        let local = hs(true, false, true); // TUN-capable
+        let peer = hs_hint(
+            false,
+            true,
+            true, // relay caps
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleRelay)),
+        );
+        // complement(Relay) = None → falls through to capability-based.
+        // peer_relay = true, local_tun = true → Entry.
+        assert_resolved(&negotiate(&local, &peer), NodeRole::Entry);
+    }
+
+    /// Local FIXED takes precedence over peer FIXED.
+    #[test]
+    fn local_fixed_overrides_peer_fixed() {
+        let local = hs_hint(
+            true,
+            false,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        let peer = hs_hint(
+            false,
+            true,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        // Both Fixed(Entry) → Indeterminate (conflict).
+        assert!(is_indeterminate(&negotiate(&local, &peer)));
+    }
+
+    // -------------------------------------------------------------------------
+    // Three-node relay chain scenario
+    // -------------------------------------------------------------------------
+
+    /// Full three-node chain: entry ← relay ← exit.
+    /// The relay sends Fixed(Entry) to accepted peers, forcing them to Exit
+    /// even if they have TUN capability.
+    #[test]
+    fn three_node_chain_all_roles_correct() {
+        // ENTRY: TUN-capable, listening.
+        let entry_hs = hs(true, true, false);
+        // RELAY connector handshake (sent to entry): no hint.
+        let relay_connector_hs = hs(false, true, true);
+        // RELAY accept handshake (sent to exit peers): Fixed(Entry).
+        let relay_accept_hs = hs_hint(
+            false,
+            true,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        // EXIT: TUN-capable (root), connecting.
+        let exit_hs = hs(true, false, true);
+
+        // Entry ↔ Relay(connector): entry resolves Entry.
+        assert_resolved(&negotiate(&entry_hs, &relay_connector_hs), NodeRole::Entry);
+
+        // Exit ↔ Relay(accept): exit resolves Exit despite having TUN.
+        assert_resolved(&negotiate(&exit_hs, &relay_accept_hs), NodeRole::Exit);
+    }
+
+    /// Three-node chain with non-TUN exit: same correct result.
+    #[test]
+    fn three_node_chain_nontun_exit() {
+        let entry_hs = hs(true, true, false);
+        let relay_connector_hs = hs(false, true, true);
+        let relay_accept_hs = hs_hint(
+            false,
+            true,
+            true,
+            Some(role_hint(HintLevel::Fixed, ProtoNodeRole::RoleEntry)),
+        );
+        let exit_hs = hs(false, false, true); // non-TUN
+
+        assert_resolved(&negotiate(&entry_hs, &relay_connector_hs), NodeRole::Entry);
+        assert_resolved(&negotiate(&exit_hs, &relay_accept_hs), NodeRole::Exit);
     }
 }
