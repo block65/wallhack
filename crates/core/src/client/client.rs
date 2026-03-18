@@ -133,6 +133,87 @@ where
     }
 }
 
+/// Spawn the control and data-in tasks shared by all client transports.
+///
+/// Called after the transport is established and the handshake has been
+/// queued on `control_tx`. Creates the handshake oneshot, control loop
+/// task, incoming data task, and returns a fully wired `ConnectResult`.
+pub fn spawn_client_tasks<T: wallhack_transport::Transport + 'static>(
+    transport: Arc<T>,
+    control_tx: mpsc::Sender<ControlMessage>,
+    control_rx: mpsc::Receiver<ControlMessage>,
+    peer_registry: Option<std::sync::Arc<crate::control::peers::Registry>>,
+    remote_addr: String,
+) -> ConnectResult<T>
+where
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: Send + 'static,
+{
+    use crate::transport::protocol;
+
+    let (handshake_tx, handshake_rx) = oneshot::channel::<Handshake>();
+
+    let control_handle = {
+        let transport = Arc::clone(&transport);
+        tokio::spawn(async move {
+            let mut channels = protocol::ControlChannels {
+                outgoing_rx: control_rx,
+                handshake_tx: Some(handshake_tx),
+                control_response_tx: None,
+                peer_registry,
+                peer_name: None,
+            };
+            match protocol::run_control_stream_initiator(
+                &*transport,
+                &mut channels,
+                None,
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            {
+                Ok(exit) => tracing::debug!("Control stream finished: {exit:?}"),
+                Err(e) => tracing::debug!("Control stream error: {e}"),
+            }
+        })
+    };
+
+    let channels = DataChannels::new();
+
+    let incoming_handle = {
+        let transport = Arc::clone(&transport);
+        let instructions_tx = channels.instructions_tx.clone();
+        let responses_tx = channels.responses_tx.clone();
+        tokio::spawn(async move {
+            match transport.accept_uni().await {
+                Ok(Some(mut recv)) => {
+                    if let Err(e) =
+                        protocol::run_data_in(&mut recv, &instructions_tx, &responses_tx).await
+                    {
+                        tracing::debug!("Data-in handler finished: {e}");
+                    }
+                }
+                Ok(None) => tracing::debug!("Transport closed before data-in stream accepted"),
+                Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
+            }
+        })
+    };
+
+    let tasks = ConnectionTasks {
+        incoming: incoming_handle,
+        control: control_handle,
+    };
+
+    ConnectResult::new(
+        transport,
+        channels,
+        remote_addr,
+        tasks,
+        control_tx,
+        Some(handshake_rx),
+    )
+}
+
 pub trait Client {
     type Error: std::error::Error + std::fmt::Debug + Send + Sync + 'static;
     type Transport: wallhack_transport::Transport;
