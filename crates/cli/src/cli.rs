@@ -29,7 +29,6 @@ pub enum CtlCommand {
     Connect(ConnectCmd),
     Listen(ListenCmd),
     Disconnect(DisconnectCmd),
-    DisconnectPeer(DisconnectPeerCmd),
     Role(RoleCmd),
     Hint(HintCmd),
     Shutdown(ShutdownCmd),
@@ -125,18 +124,13 @@ pub struct ListenCmd {
     pub addr: String,
 }
 
-/// Disconnect the active transport session.
+/// Disconnect a peer or the transport session.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "disconnect")]
-pub struct DisconnectCmd {}
-
-/// Disconnect a specific peer by name.
-#[derive(FromArgs, Debug)]
-#[argh(subcommand, name = "disconnect-peer")]
-pub struct DisconnectPeerCmd {
-    /// peer name (or unambiguous prefix)
+pub struct DisconnectCmd {
+    /// peer name (or unambiguous prefix). Omit to disconnect the transport.
     #[argh(positional)]
-    pub peer: String,
+    pub peer: Option<String>,
 }
 
 /// Show or set the node role.
