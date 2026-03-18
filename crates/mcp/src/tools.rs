@@ -179,9 +179,9 @@ impl WallhackServer {
     }
 
     #[tool(
-        description = "Set a role hint to influence auto-negotiation (prefer/exclude/fixed + entry/exit/relay)"
+        description = "Set the node role with a level (prefer/exclude/fixed) and target (entry/exit/relay)"
     )]
-    async fn hint_set(
+    async fn role_set(
         &self,
         Parameters(params): Parameters<HintSetParams>,
     ) -> Result<String, rmcp::ErrorData> {
@@ -214,8 +214,8 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Return to capability-based negotiation by removing all role hints")]
-    async fn hint_set_auto(&self) -> Result<String, rmcp::ErrorData> {
+    #[tool(description = "Return to capability-based auto-negotiation")]
+    async fn role_auto(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::HintSetAuto(
             HintSetAutoRequest {},
         ))

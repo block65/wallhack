@@ -356,39 +356,41 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
             None => management_request::Request::Disconnect(DisconnectRequest {}),
         },
         CtlCommand::Role(cmd) => {
-            if let Some(target) = cmd.target {
-                let role = parse_ctl_role(&target);
-                management_request::Request::HintSet(HintSetRequest {
+            let first = cmd.args.first().map(String::as_str);
+            let second = cmd.args.get(1).map(String::as_str);
+            match (first, second) {
+                (None, _) => management_request::Request::Info(InfoRequest {}),
+                (Some("auto"), None) => {
+                    management_request::Request::HintSetAuto(HintSetAutoRequest {})
+                }
+                (Some("prefer"), Some(role)) => {
+                    management_request::Request::HintSet(HintSetRequest {
+                        level: HintLevel::Prefer.into(),
+                        role: parse_ctl_role(role).into(),
+                    })
+                }
+                (Some("exclude"), Some(role)) => {
+                    management_request::Request::HintSet(HintSetRequest {
+                        level: HintLevel::Exclude.into(),
+                        role: parse_ctl_role(role).into(),
+                    })
+                }
+                (Some(level @ ("prefer" | "exclude")), None) => {
+                    eprintln!("error: 'role {level}' requires a target role (entry, exit, relay)");
+                    std::process::exit(1);
+                }
+                (Some(role), None) => management_request::Request::HintSet(HintSetRequest {
                     level: HintLevel::Fixed.into(),
-                    role: role.into(),
-                })
-            } else {
-                management_request::Request::Info(InfoRequest {})
+                    role: parse_ctl_role(role).into(),
+                }),
+                (Some(_), Some(_)) => {
+                    eprintln!(
+                        "error: invalid syntax. Usage: role [auto|entry|exit|relay|prefer <role>|exclude <role>]"
+                    );
+                    std::process::exit(1);
+                }
             }
         }
-        CtlCommand::Hint(cmd) => match cmd.action {
-            wallhack_cli::cli::HintAction::Prefer(h) => {
-                management_request::Request::HintSet(HintSetRequest {
-                    level: HintLevel::Prefer.into(),
-                    role: parse_ctl_role(&h.role).into(),
-                })
-            }
-            wallhack_cli::cli::HintAction::Exclude(h) => {
-                management_request::Request::HintSet(HintSetRequest {
-                    level: HintLevel::Exclude.into(),
-                    role: parse_ctl_role(&h.role).into(),
-                })
-            }
-            wallhack_cli::cli::HintAction::Fixed(h) => {
-                management_request::Request::HintSet(HintSetRequest {
-                    level: HintLevel::Fixed.into(),
-                    role: parse_ctl_role(&h.role).into(),
-                })
-            }
-            wallhack_cli::cli::HintAction::Auto(_) => {
-                management_request::Request::HintSetAuto(HintSetAutoRequest {})
-            }
-        },
         CtlCommand::Shutdown(_) => management_request::Request::Shutdown(ShutdownRequest {}),
     };
 

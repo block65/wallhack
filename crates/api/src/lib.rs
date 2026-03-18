@@ -76,7 +76,7 @@ pub fn router(state: State) -> Router {
         .route("/listen", post(handlers::listen))
         .route("/disconnect", post(handlers::disconnect))
         .route("/ping", get(handlers::ping))
-        .route("/ping/{peer}", get(handlers::ping_peer))
+        .route("/ping/{peer}", get(handlers::peer_ping))
         .route("/shutdown", post(handlers::shutdown))
         .route(
             "/hints",

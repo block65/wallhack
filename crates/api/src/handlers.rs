@@ -644,7 +644,7 @@ pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponseBody
     }
 }
 
-pub async fn ping_peer(
+pub async fn peer_ping(
     State(state): State<ApiState>,
     Path(peer): Path<String>,
 ) -> Result<Json<PingResponseBody>, StatusCode> {

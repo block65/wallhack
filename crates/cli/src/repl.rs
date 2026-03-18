@@ -159,7 +159,6 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
             wallhack_wire::management::ShutdownRequest {},
         )),
         "role" => parse_role_command(&parts),
-        "hint" => parse_hint_command(&parts),
         _ => None,
     }
 }
@@ -190,47 +189,41 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
     }
 }
 
-/// Parse `role` command: `role` (show) or `role <entry|exit|relay>` (set fixed).
+/// Parse `role` command.
+///
+/// Forms:
+/// - `role` — show current role via info
+/// - `role auto` — return to capability-based negotiation
+/// - `role prefer <role>` — soft prefer a role
+/// - `role exclude <role>` — exclude a role
+/// - `role <entry|exit|relay>` — hard set role
 fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
-    match parts.get(1).copied() {
-        None => {
-            // `role` alone → show current role via info.
-            Some(management_request::Request::Info(
-                wallhack_wire::management::InfoRequest {},
-            ))
-        }
-        Some(target) => {
-            // `role <target>` → shorthand for `hint fixed <target>`.
-            let role = parse_role_name(target)?;
-            Some(management_request::Request::HintSet(
-                management::HintSetRequest {
-                    level: management::HintLevel::Fixed.into(),
-                    role: role.into(),
-                },
-            ))
-        }
-    }
-}
-
-/// Parse `hint` command: `hint auto` or `hint <level> <role>`.
-fn parse_hint_command(parts: &[&str]) -> Option<management_request::Request> {
-    let sub = parts.get(1).copied()?;
-    match sub {
-        "auto" => Some(management_request::Request::HintSetAuto(
+    match (parts.get(1).copied(), parts.get(2).copied()) {
+        (None, _) => Some(management_request::Request::Info(
+            wallhack_wire::management::InfoRequest {},
+        )),
+        (Some("auto"), None) => Some(management_request::Request::HintSetAuto(
             management::HintSetAutoRequest {},
         )),
-        "prefer" | "exclude" | "fixed" => {
-            let role_name = parts.get(2).copied()?;
-            let role = parse_role_name(role_name)?;
-            let level = match sub {
+        (Some("prefer" | "exclude"), Some(role)) => {
+            let role = parse_role_name(role)?;
+            let level = match parts[1] {
                 "prefer" => management::HintLevel::Prefer,
                 "exclude" => management::HintLevel::Exclude,
-                "fixed" => management::HintLevel::Fixed,
                 _ => unreachable!(),
             };
             Some(management_request::Request::HintSet(
                 management::HintSetRequest {
                     level: level.into(),
+                    role: role.into(),
+                },
+            ))
+        }
+        (Some(target), None) => {
+            let role = parse_role_name(target)?;
+            Some(management_request::Request::HintSet(
+                management::HintSetRequest {
+                    level: management::HintLevel::Fixed.into(),
                     role: role.into(),
                 },
             ))
@@ -267,12 +260,10 @@ fn print_help() {
     let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
     let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");
     let _ = writeln!(tw, "  role\tShow current role");
-    let _ = writeln!(tw, "  role <entry|exit|relay>\tSet role hint");
-    let _ = writeln!(
-        tw,
-        "  hint <prefer|exclude|fixed> <role>\tApply a role hint"
-    );
-    let _ = writeln!(tw, "  hint auto\tReturn to capability-based negotiation");
+    let _ = writeln!(tw, "  role <entry|exit|relay>\tSet role (hard)");
+    let _ = writeln!(tw, "  role prefer <role>\tPrefer a role (soft)");
+    let _ = writeln!(tw, "  role exclude <role>\tExclude a role");
+    let _ = writeln!(tw, "  role auto\tAuto-negotiate");
     let _ = writeln!(tw, "  shutdown\tShut down the daemon");
     let _ = writeln!(tw, "  help / ?\tShow this help");
     let _ = writeln!(tw, "  quit \tQuit the REPL");
