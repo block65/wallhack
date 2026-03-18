@@ -315,7 +315,7 @@ impl ControlChannels {
                             );
                         }
                         peer_announcement::Event::Disconnected => {
-                            tracing::info!("Peer departed: {}", announcement.name);
+                            tracing::info!("Peer disconnected (via relay): {}", announcement.name);
                             registry.unregister(&announcement.name);
                         }
                         _ => {}
