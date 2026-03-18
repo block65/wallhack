@@ -474,9 +474,8 @@ async fn run_auto_connect_session_dispatch(
                 peer_hs.name,
             );
             node_state.update_role(NodeRole::Exit);
-            let peer_role = peer_hs
-                .capabilities
-                .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+            let peer_caps = peer_hs.capabilities.unwrap_or_default();
+            let peer_role = super::peer_role_from_capabilities(peer_caps);
             let peer_name = if peer_hs.name.is_empty() {
                 peer_addr.to_string()
             } else {
@@ -511,6 +510,7 @@ async fn run_auto_connect_session_dispatch(
                 responses_tx,
                 heartbeat,
                 peer_role,
+                peer_caps,
                 &peer_name,
                 peer_addr,
                 &metrics,
@@ -538,12 +538,14 @@ async fn run_auto_connect_session_dispatch(
             } else {
                 peer_hs.name.clone()
             };
-            peers.register(
+            let (peer_id, _) = peers.register(
                 name.clone(),
                 peer_addr.to_string(),
                 NodeRole::Indeterminate,
                 wallhack_core::control::peers::ConnectionSide::Connect,
             );
+            let peer_caps = peer_hs.capabilities.unwrap_or_default();
+            peers.update_capabilities(&peer_id, &peer_caps);
             let _heartbeat =
                 super::spawn_heartbeat(control_tx, latency_rx, name.clone(), Arc::clone(&peers));
             hold_until_disconnect(tasks).await;
@@ -567,7 +569,7 @@ async fn hold_until_disconnect(mut tasks: wallhack_core::client::client::Connect
 }
 
 /// Non-generic exit session handler for the auto-connector path.
-// REASON: threading transport, instructions, responses, heartbeat, role, peer info, metrics, peers
+// REASON: threading transport, instructions, responses, heartbeat, role, caps, peer info, metrics, peers
 #[allow(clippy::too_many_arguments)]
 async fn run_auto_exit_session_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -575,17 +577,19 @@ async fn run_auto_exit_session_inner(
     responses_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     _heartbeat: tokio::task::JoinHandle<()>,
     peer_role: NodeRole,
+    peer_caps: Capabilities,
     peer_name: &str,
     peer_addr: &str,
     metrics: &Arc<Metrics>,
     peers: &Arc<Registry>,
 ) -> Result<(), NodeError> {
-    peers.register(
+    let (peer_id, _) = peers.register(
         peer_name.to_string(),
         peer_addr.to_string(),
         peer_role,
         ConnectionSide::Connect,
     );
+    peers.update_capabilities(&peer_id, &peer_caps);
 
     let adapter = SyscallExitAdapter::new();
     let _reaper = adapter.start_reaper(
@@ -990,18 +994,19 @@ async fn run_auto_accept_session_inner(
             };
             // The peer connected to us (we accepted), so side=Accept.
             // The peer is an exit/relay node — use role from their handshake capabilities.
-            let peer_caps = peer_hs.capabilities.as_ref();
-            let peer_role = if peer_caps.is_some_and(|c| c.listening && c.connecting) {
+            let peer_caps = peer_hs.capabilities.unwrap_or_default();
+            let peer_role = if peer_caps.listening && peer_caps.connecting {
                 NodeRole::Relay
             } else {
                 NodeRole::Exit
             };
-            peers.register(
+            let (peer_id, _) = peers.register(
                 peer_name.clone(),
                 peer_addr.clone(),
                 peer_role,
                 ConnectionSide::Accept,
             );
+            peers.update_capabilities(&peer_id, &peer_caps);
 
             let _heartbeat = super::spawn_heartbeat(
                 control_tx,
@@ -1087,17 +1092,15 @@ async fn run_auto_accept_session_inner(
             } else {
                 peer_hs.name.clone()
             };
-            let peer_role = peer_hs
-                .capabilities
-                .as_ref()
-                .copied()
-                .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
-            peers.register(
+            let peer_caps = peer_hs.capabilities.unwrap_or_default();
+            let peer_role = super::peer_role_from_capabilities(peer_caps);
+            let (peer_id, _) = peers.register(
                 peer_name.clone(),
                 peer_addr.clone(),
                 peer_role,
                 ConnectionSide::Accept,
             );
+            peers.update_capabilities(&peer_id, &peer_caps);
 
             let _heartbeat = super::spawn_heartbeat(
                 control_tx,
@@ -1148,12 +1151,14 @@ async fn run_auto_accept_session_inner(
             } else {
                 peer_hs.name.clone()
             };
-            peers.register(
+            let (peer_id, _) = peers.register(
                 name.clone(),
                 peer_addr.clone(),
                 NodeRole::Indeterminate,
                 wallhack_core::control::peers::ConnectionSide::Accept,
             );
+            let peer_caps = peer_hs.capabilities.unwrap_or_default();
+            peers.update_capabilities(&peer_id, &peer_caps);
             let _heartbeat =
                 super::spawn_heartbeat(control_tx, latency_rx, name.clone(), Arc::clone(&peers));
             // Hold transport alive; wait for the peer to disconnect
