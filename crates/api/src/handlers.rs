@@ -666,8 +666,13 @@ pub async fn ping_peer(
             }))
         }
         Some(management_response::Response::Error(e)) => {
-            tracing::warn!("Ping peer failed: {}", e.message);
-            Err(StatusCode::NOT_FOUND)
+            let not_supported: i32 = wallhack_wire::management::ErrorCode::NotSupported.into();
+            if e.code == not_supported {
+                Err(StatusCode::NOT_IMPLEMENTED)
+            } else {
+                tracing::warn!("Ping peer failed: {}", e.message);
+                Err(StatusCode::NOT_FOUND)
+            }
         }
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
