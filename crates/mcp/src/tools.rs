@@ -215,8 +215,8 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Clear all role hints, returning to pure capability-based negotiation")]
-    async fn hint_clear(&self) -> Result<String, rmcp::ErrorData> {
+    #[tool(description = "Return to capability-based negotiation by removing all role hints")]
+    async fn hint_auto(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::ClearHints(
             ClearHintsRequest {},
         ))

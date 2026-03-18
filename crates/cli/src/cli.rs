@@ -157,7 +157,7 @@ pub enum HintAction {
     Prefer(HintPreferCmd),
     Exclude(HintExcludeCmd),
     Fixed(HintFixedCmd),
-    Clear(HintClearCmd),
+    Auto(HintAutoCmd),
 }
 
 /// Set a prefer hint.
@@ -187,10 +187,10 @@ pub struct HintFixedCmd {
     pub role: String,
 }
 
-/// Clear all role hints.
+/// Return to capability-based negotiation.
 #[derive(FromArgs, Debug)]
-#[argh(subcommand, name = "clear")]
-pub struct HintClearCmd {}
+#[argh(subcommand, name = "auto")]
+pub struct HintAutoCmd {}
 
 /// Shut down the daemon.
 #[derive(FromArgs, Debug)]
