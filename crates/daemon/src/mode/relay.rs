@@ -46,6 +46,10 @@ fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>)
         peers: None,
         routes: None,
         route_updates: None,
+        // Accept-side handshake: declare Fixed(Entry) so accepted peers
+        // resolve to Exit via complement. Without this, a TUN-capable peer
+        // connecting to the relay's listen port would resolve to Entry
+        // (wrong — it's on the exit side of the chain).
         local_handshake: Some(wallhack_wire::data::Handshake {
             capabilities: Some(wallhack_wire::data::Capabilities {
                 tun_capable: false,
@@ -57,7 +61,10 @@ fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>)
             version: version.to_string(),
             psk_proof: Vec::new(),
             routes: Vec::new(),
-            hint: None,
+            hint: Some(wallhack_wire::data::RoleHint {
+                level: wallhack_wire::data::HintLevel::Fixed.into(),
+                target: wallhack_wire::data::NodeRole::RoleEntry.into(),
+            }),
         }),
     }
 }
