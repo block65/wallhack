@@ -433,7 +433,7 @@
 			"post": {
 				"summary": "Add route",
 				"description": "Configures a new route to a target network through an active peer.",
-				"operationId": "addRoute",
+				"operationId": "routeAdd",
 				"security": [{ "basicAuth": [] }],
 				"requestBody": {
 					"required": true,
@@ -480,9 +480,9 @@
 		},
 		"/routes/{cidr}": {
 			"delete": {
-				"summary": "Remove route",
+				"summary": "Delete route",
 				"description": "Deletes a routing entry by its network specification.",
-				"operationId": "deleteRoute",
+				"operationId": "routeDel",
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
@@ -655,7 +655,7 @@
 			"put": {
 				"summary": "Set role hint",
 				"description": "Configures a negotiation hint to influence auto-role resolution.",
-				"operationId": "setHint",
+				"operationId": "hintSet",
 				"security": [{ "basicAuth": [] }],
 				"requestBody": {
 					"required": true,
@@ -679,9 +679,9 @@
 				}
 			},
 			"delete": {
-				"summary": "Clear hints",
-				"description": "Removes all role hints, returning to pure capability-based negotiation.",
-				"operationId": "clearHints",
+				"summary": "Auto-negotiate",
+				"description": "Returns to pure capability-based negotiation by removing all role hints.",
+				"operationId": "hintSetAuto",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
