@@ -22,13 +22,7 @@
 		"schemas": {
 			"StatusResponse": {
 				"type": "object",
-				"required": [
-					"name",
-					"version",
-					"role",
-					"uptime_ms",
-					"capabilities"
-				],
+				"required": ["name", "version", "role", "uptime_ms", "capabilities"],
 				"properties": {
 					"name": {
 						"type": "string",
