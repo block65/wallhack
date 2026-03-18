@@ -194,6 +194,85 @@ pub struct ServerOptions {
     pub local_handshake: Option<Handshake>,
 }
 
+/// Spawn the control task and build an `AcceptResult` — shared by all
+/// server transports.
+///
+/// Called after the transport handshake exchange. Resolves shared
+/// resources from `options`, spawns the control loop with a `Handler`,
+/// and returns a fully wired `AcceptResult`.
+pub fn spawn_server_tasks<T: Transport + 'static>(
+    transport: Arc<T>,
+    control_stream: wallhack_transport::erased::BoxBiStream,
+    options: &ServerOptions,
+    peer_handshake: Option<Handshake>,
+    remote_addr: String,
+    channel_binding: Option<[u8; crate::psk::CHANNEL_BINDING_LEN]>,
+) -> AcceptResult<T>
+where
+    T::SendStream: 'static,
+    T::RecvStream: 'static,
+    T::BiStream: Send + 'static,
+{
+    use crate::{
+        control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
+        transport::protocol,
+    };
+
+    let metrics = options
+        .metrics
+        .clone()
+        .unwrap_or_else(|| Arc::new(Metrics::default()));
+
+    let channels = DataChannels::new();
+    let (control_tx, control_rx) = mpsc::channel::<ControlMessage>(64);
+
+    let handler_config = options.handler_config.clone();
+    let peers = options
+        .peers
+        .clone()
+        .unwrap_or_else(|| Arc::new(Registry::new()));
+    let routes = options.routes.clone().unwrap_or_else(RouteTable::shared);
+    let peer_name = peer_handshake.as_ref().map(|hs| hs.name.clone());
+    let route_updates = options.route_updates.clone().unwrap_or_else(|| {
+        let (tx, _) = tokio::sync::broadcast::channel(16);
+        tx
+    });
+
+    {
+        let metrics = Arc::clone(&metrics);
+        let peer_registry = Arc::clone(&peers);
+        tokio::spawn(async move {
+            let handler = Handler::new(handler_config, metrics, peers, routes, route_updates);
+            let mut channels = protocol::ControlChannels {
+                outgoing_rx: control_rx,
+                handshake_tx: None,
+                control_response_tx: None,
+                peer_registry: Some(peer_registry),
+                peer_name,
+            };
+            let mut control_stream = control_stream;
+            let exit = channels
+                .run(
+                    &mut control_stream,
+                    Some(&handler),
+                    std::time::Duration::from_secs(30),
+                )
+                .await;
+            tracing::debug!("Control stream finished: {exit:?}");
+        });
+    }
+
+    AcceptResult::with_handshake(
+        transport,
+        channels,
+        remote_addr,
+        metrics,
+        peer_handshake,
+        control_tx,
+        channel_binding,
+    )
+}
+
 pub trait Server {
     type Error: std::error::Error + std::fmt::Debug + Send + Sync + 'static;
     type Transport: Transport;
