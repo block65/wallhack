@@ -285,6 +285,10 @@ async fn run_relay_loop_inner(
         None
     };
     let (peer_name, peer_role) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
+    let peer_caps = peer_handshake
+        .as_ref()
+        .and_then(|h| h.capabilities)
+        .unwrap_or_default();
 
     // Clone before heartbeat takes ownership — used for peer announcements.
     let announce_tx = source_control_tx.clone();
@@ -293,6 +297,7 @@ async fn run_relay_loop_inner(
         peer_name.clone(),
         peer_addr.clone(),
         peer_role,
+        peer_caps,
         ConnectionSide::Connect,
     );
 
@@ -687,11 +692,16 @@ fn handle_relay_connection(
     } = channels;
 
     let (peer_name, _) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
+    let peer_caps = peer_handshake
+        .as_ref()
+        .and_then(|h| h.capabilities)
+        .unwrap_or_default();
 
     peers.register(
         peer_name.clone(),
         peer_addr,
         NodeRole::Exit, // relay's Fixed(Entry) hint forces accepted peers to Exit
+        peer_caps,
         ConnectionSide::Accept,
     );
 
