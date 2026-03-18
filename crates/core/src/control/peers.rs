@@ -145,6 +145,7 @@ impl Registry {
         id: String,
         addr: String,
         role: NodeRole,
+        capabilities: Capabilities,
         side: ConnectionSide,
     ) -> (String, u64) {
         let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed) + 1;
@@ -166,7 +167,7 @@ impl Registry {
             name: id,
             addr,
             role,
-            capabilities: Capabilities::default(),
+            capabilities,
             side,
             connect_time: Instant::now(),
             connect_time_epoch: std::time::SystemTime::now()
@@ -202,17 +203,6 @@ impl Registry {
             let mut new = (**old).clone();
             if let Some(peer) = new.get_mut(id) {
                 peer.tun_name = Some(tun_name.clone());
-            }
-            new
-        });
-    }
-
-    /// Update capability fields for a peer from a received `Handshake` message.
-    pub fn update_capabilities(&self, id: &str, capabilities: &Capabilities) {
-        self.peers.rcu(|old| {
-            let mut new = (**old).clone();
-            if let Some(peer) = new.get_mut(id) {
-                peer.capabilities = *capabilities;
             }
             new
         });
@@ -416,6 +406,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
 
@@ -434,6 +425,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
 
@@ -451,6 +443,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
 
@@ -470,6 +463,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
 
@@ -484,6 +478,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
 
@@ -501,6 +496,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
         assert_eq!(id1, "peer1");
@@ -510,6 +506,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:9999".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
         assert_eq!(id2, "peer1", "reconnect should reuse the name");
@@ -536,6 +533,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:5678".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
         assert_eq!(peer_id1, "peer1");
@@ -544,6 +542,7 @@ mod tests {
             "peer1".into(),
             "1.2.3.4:9999".into(),
             NodeRole::Exit,
+            Capabilities::default(),
             ConnectionSide::Accept,
         );
         assert_eq!(peer_id2, "peer1");

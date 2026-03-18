@@ -320,14 +320,14 @@ where
                 let peer_name = peer_hs
                     .filter(|h| !h.name.is_empty())
                     .map_or_else(|| peer_addr.clone(), |h| h.name.clone());
-                let peer_role = peer_hs
-                    .and_then(|h| h.capabilities)
-                    .map_or(NodeRole::Exit, super::peer_role_from_capabilities);
+                let peer_caps = peer_hs.and_then(|h| h.capabilities).unwrap_or_default();
+                let peer_role = super::peer_role_from_capabilities(peer_caps);
                 tracing::info!("Peer connected: name={peer_name} addr={peer_addr}");
                 ctx.peers.register(
                     peer_name.clone(),
                     peer_addr,
                     peer_role,
+                    peer_caps,
                     ConnectionSide::Accept,
                 );
 
@@ -464,10 +464,9 @@ async fn run_exit_loop_inner(
         peer_name.clone(),
         peer_addr.to_string(),
         peer_role,
+        peer_capabilities,
         ConnectionSide::Connect,
     );
-    ctx.peers
-        .update_capabilities(&peer_name, &peer_capabilities);
 
     // Outgoing: open uni stream to entry peer, send responses.
     {
