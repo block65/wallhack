@@ -309,7 +309,6 @@ impl Server for WebSocketServer {
                     handshake_tx: None, // Handshake already read above
                     latency_tx: Some(latency_tx),
                     control_response_tx: None, // server doesn't issue ControlRequests
-                    role_transition_tx: None,
                     peer_registry: Some(peer_registry),
                 };
                 let mut control_stream =

@@ -141,8 +141,6 @@ pub struct ControlChannels {
     pub latency_tx: Option<mpsc::Sender<f64>>,
     /// `ControlResponse` forwarding (client side, for correlating requests).
     pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
-    /// `RoleTransition` forwarding to the mode task for re-evaluation.
-    pub role_transition_tx: Option<mpsc::Sender<wallhack_wire::control::RoleTransition>>,
     /// Peer registry for handling relay `PeerAnnouncement` messages.
     /// Announced peers are registered/unregistered directly in the registry.
     pub peer_registry: Option<std::sync::Arc<crate::control::peers::Registry>>,
@@ -292,9 +290,6 @@ impl ControlChannels {
             }
             Some(control_message::Message::RoleTransition(rt)) => {
                 tracing::info!("Control: received RoleTransition: {:?}", rt.new_role());
-                if let Some(ref tx) = self.role_transition_tx {
-                    let _ = tx.send(rt).await;
-                }
             }
             Some(control_message::Message::PeerAnnouncement(announcement)) => {
                 use wallhack_wire::control::peer_announcement;
@@ -708,7 +703,6 @@ mod tests {
                 handshake_tx: Some(a_hs_tx),
                 latency_tx: None,
                 control_response_tx: None,
-                role_transition_tx: None,
                 peer_registry: None,
             };
             let mut stream_a = BoxBiStream::new(stream_a);
@@ -723,7 +717,6 @@ mod tests {
                 handshake_tx: Some(b_hs_tx),
                 latency_tx: None,
                 control_response_tx: None,
-                role_transition_tx: None,
                 peer_registry: None,
             };
             let mut stream_b = BoxBiStream::new(stream_b);
@@ -778,7 +771,6 @@ mod tests {
             handshake_tx: Some(hs_tx),
             latency_tx: None,
             control_response_tx: None,
-            role_transition_tx: None,
             peer_registry: None,
         };
 
@@ -806,7 +798,6 @@ mod tests {
             handshake_tx: None,
             latency_tx: Some(latency_tx),
             control_response_tx: None,
-            role_transition_tx: None,
             peer_registry: None,
         };
 
@@ -888,7 +879,6 @@ mod tests {
             handshake_tx: None,
             latency_tx: None,
             control_response_tx: None,
-            role_transition_tx: None,
             peer_registry: None,
         };
 
@@ -962,7 +952,6 @@ mod tests {
             handshake_tx: None,
             latency_tx: None,
             control_response_tx: None,
-            role_transition_tx: None,
             peer_registry: None,
         };
 
@@ -1094,7 +1083,6 @@ mod tests {
             handshake_tx: None,
             latency_tx: None,
             control_response_tx: None,
-            role_transition_tx: None,
             peer_registry: None,
         };
 
