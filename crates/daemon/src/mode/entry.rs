@@ -170,7 +170,7 @@ pub async fn run(
         tun_capable: crate::tun_cap::detect_tun_capable(),
         listening: false,
         connecting: false,
-        interactive: false,
+        interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
     });
 
     let res = EntryResources {
@@ -216,7 +216,7 @@ async fn run_entry_listen(
                 tun_capable: crate::tun_cap::detect_tun_capable(),
                 listening: true,
                 connecting: false,
-                interactive: false,
+                interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
             }),
             name: cfg.name.clone(),
             version: global.version.clone(),
@@ -440,7 +440,7 @@ fn entry_local_handshake(name: &str, version: &str) -> wallhack_wire::data::Hand
             tun_capable: crate::tun_cap::detect_tun_capable(),
             listening: false,
             connecting: true,
-            interactive: false,
+            interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
         }),
         name: name.to_string(),
         version: version.to_string(),

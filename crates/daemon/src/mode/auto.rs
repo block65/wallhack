@@ -142,24 +142,10 @@ pub(crate) async fn run(
 ///
 /// Always populates `routes` with locally-routable CIDRs so that a peer
 /// resolving to Entry can install OS routes automatically.
-// REASON: these are distinct capability flags from the wire format; wrapping
-// them in an enum would add indirection without clarity at the call sites.
-#[allow(clippy::fn_params_excessive_bools)]
-fn build_local_handshake(
-    cfg: &AutoConfig,
-    version: &str,
-    tun_capable: bool,
-    listening: bool,
-    connecting: bool,
-    interactive: bool,
-) -> Handshake {
+/// Build a local `Handshake` from config and process-wide capabilities.
+fn build_local_handshake(cfg: &AutoConfig, version: &str, caps: Capabilities) -> Handshake {
     Handshake {
-        capabilities: Some(Capabilities {
-            tun_capable,
-            listening,
-            connecting,
-            interactive,
-        }),
+        capabilities: Some(caps),
         name: cfg.name.clone(),
         version: version.to_string(),
         psk_proof: Vec::new(),
@@ -234,10 +220,12 @@ async fn run_auto_connector(
     let local_hs = build_local_handshake(
         cfg,
         &global.version,
-        tun_capable,
-        false,
-        true,
-        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        Capabilities {
+            tun_capable,
+            listening: false,
+            connecting: true,
+            interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        },
     );
 
     tracing::info!("Auto connector: connecting to {}...", spec.addr);
@@ -642,10 +630,12 @@ async fn run_auto_listener(
     let local_hs = build_local_handshake(
         cfg,
         &global.version,
-        tun_capable,
-        true,
-        false,
-        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        Capabilities {
+            tun_capable,
+            listening: true,
+            connecting: false,
+            interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        },
     );
 
     let addr: std::net::SocketAddr = spec.addr.parse::<crate::net::ListenAddr>()?.into();
