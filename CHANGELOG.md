@@ -1,6 +1,38 @@
 
 # Changelog
 
+## [0.11.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.10.0...wallhack-cli-v0.11.0) (2026-03-18)
+
+### Features
+
+* **api:** full command parity for REST API and rename /status to /info ([444d728](https://github.com/block65/wallhack/commit/444d72883692550e388ca21884803d7862ccc27f))
+* **cli:** disconnect a specific peer without tearing down the transport ([a8e54f4](https://github.com/block65/wallhack/commit/a8e54f4b6e7b5cde3dcc88cd8f9122459ec067da))
+* **daemon:** advertise interactive capability when stdin is a terminal ([0566137](https://github.com/block65/wallhack/commit/0566137c15392e07f61a9914cd80be497b26da45))
+* **mcp:** expose role negotiation controls and rename status to info ([aeb80bc](https://github.com/block65/wallhack/commit/aeb80bc066c796bfebcfcec876863ce1934ee809))
+* **negotiate:** resolve TUN-capable ambiguity via interactive tiebreaker ([e9f22f2](https://github.com/block65/wallhack/commit/e9f22f2e5f730f81ca760c903874f8a7d6b27f55))
+* **relay:** announce accepted peers to source for topology visibility ([bf8f3bf](https://github.com/block65/wallhack/commit/bf8f3bfd1322acaa1dd13abf1738189d131ac9b1))
+* **wire:** support interactive capability for human-in-the-loop tiebreaker ([e3fcbfc](https://github.com/block65/wallhack/commit/e3fcbfc2e928a9cd30d84826882246612e1739ba))
+* **wire:** PeerAnnouncement control message for relay topology visibility ([ccac172](https://github.com/block65/wallhack/commit/ccac1722db456add0a876b2a96db41f440088789))
+
+### Bug Fixes
+
+* align interactive capability and socket path with review findings ([933a224](https://github.com/block65/wallhack/commit/933a224fe6f9f2404603e5c459faa82429b151c4))
+* **api:** return 501 for unimplemented peer ping instead of misleading 404 ([ca88845](https://github.com/block65/wallhack/commit/ca8884576b2c850cc6cb20785e53fa66c982a336))
+* **auto:** update peer capabilities from handshake after registration ([d3f9299](https://github.com/block65/wallhack/commit/d3f9299c6e8f7264884b85103d92e3676eec8710))
+* **heartbeat:** unregister peer when heartbeat exits on connection death ([80792c4](https://github.com/block65/wallhack/commit/80792c4a06c54abb9d851585827d34d0f9699861))
+* **ipc:** per-instance socket paths prevent collision between concurrent daemons ([f749ed5](https://github.com/block65/wallhack/commit/f749ed579f889b059827222cadd57efcb492f0cf))
+* **ipc:** skip empty env vars in socket path fallback chain ([f90de61](https://github.com/block65/wallhack/commit/f90de61e27c3d16dba354858dddc2956fc76492f))
+* **lint:** add REASON to handle_message allow, use explicit match variant ([81a3d76](https://github.com/block65/wallhack/commit/81a3d76d2ca8c09ea4d6a558e3de09b2a73b2891))
+* **negotiate:** relay forces accepted peers to exit via peer-FIXED hint ([c006911](https://github.com/block65/wallhack/commit/c0069114444b5de4da9db055cb5855502f2fdb15))
+* **relay:** identify accepted peers by handshake name instead of raw address ([4625001](https://github.com/block65/wallhack/commit/4625001b720c440f51b5a899b6598a4918368b34))
+* **relay:** enable heartbeat and latency tracking for all relay peers ([a13e119](https://github.com/block65/wallhack/commit/a13e119888dc3cafc11e64df3f1f057b06ac8fd4))
+* **relay:** register accepted peers as Exit instead of capability-derived role ([5bf1c2c](https://github.com/block65/wallhack/commit/5bf1c2c07c3fe42fc84abd7c09881586b4a80a01))
+* **relay:** detect accepted peer disconnect via transport liveness ([bc8e350](https://github.com/block65/wallhack/commit/bc8e3500af68dd8164fdf8c9182bc58b75c4be3e))
+* **relay:** detect accepted peer disconnect and consistent log wording ([c9b8dc2](https://github.com/block65/wallhack/commit/c9b8dc263fbbaa6ba65b56992b453a2c7970e459))
+
+14 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.10.0...wallhack-cli-v0.11.0)
+
+
 ## [0.10.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.9.0...wallhack-cli-v0.10.0) (2026-03-17)
 
 ### Features
