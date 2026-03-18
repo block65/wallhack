@@ -25,7 +25,6 @@ use yamux::Mode;
 
 use crate::{
     NodeRole, SocketAddrExt as _,
-    control::{handler::Handler, metrics::Metrics, peers::Registry, routes::RouteTable},
     psk::HandshakeExt,
     transport::{
         protocol,
@@ -266,66 +265,13 @@ impl Server for WebSocketServer {
             }
         }
 
-        // Get or create shared metrics
-        let metrics = self
-            .options
-            .metrics
-            .clone()
-            .unwrap_or_else(|| Arc::new(Metrics::default()));
-
-        let channels = super::server::DataChannels::new();
-
-        // Create control channel for injecting outgoing control messages
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(64);
-
-        // Spawn control stream task with handler
-        let handler_config = self.options.handler_config.clone();
-        let peers = self
-            .options
-            .peers
-            .clone()
-            .unwrap_or_else(|| Arc::new(Registry::new()));
-        let routes = self
-            .options
-            .routes
-            .clone()
-            .unwrap_or_else(RouteTable::shared);
-
-        let peer_name = peer_handshake.as_ref().map(|hs| hs.name.clone());
-        let route_updates = self.options.route_updates.clone().unwrap_or_else(|| {
-            let (tx, _) = tokio::sync::broadcast::channel(16);
-            tx
-        });
-
-        {
-            let metrics = Arc::clone(&metrics);
-            let peer_registry = Arc::clone(&peers);
-            tokio::spawn(async move {
-                let handler = Handler::new(handler_config, metrics, peers, routes, route_updates);
-                let mut channels = protocol::ControlChannels {
-                    outgoing_rx: control_rx,
-                    handshake_tx: None,        // Handshake already read above
-                    control_response_tx: None, // server doesn't issue ControlRequests
-                    peer_registry: Some(peer_registry),
-                    peer_name,
-                };
-                let mut control_stream =
-                    wallhack_transport::erased::BoxBiStream::new(control_stream);
-                let exit = channels
-                    .run(&mut control_stream, Some(&handler), Duration::from_secs(30))
-                    .await;
-                tracing::debug!("Control stream finished: {exit:?}");
-            });
-        }
-
-        // Data tasks are NOT spawned here — the caller does that after PSK validation.
-        Ok(Some(AcceptResult::with_handshake(
-            Arc::clone(&transport),
-            channels,
-            peer_addr.to_string(),
-            metrics,
+        let control_stream = wallhack_transport::erased::BoxBiStream::new(control_stream);
+        Ok(Some(super::server::spawn_server_tasks(
+            transport,
+            control_stream,
+            &self.options,
             peer_handshake,
-            control_tx,
+            peer_addr.to_string(),
             channel_binding,
         )))
     }
