@@ -212,11 +212,11 @@ fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
     }
 }
 
-/// Parse `hint` command: `hint clear` or `hint <level> <role>`.
+/// Parse `hint` command: `hint auto` or `hint <level> <role>`.
 fn parse_hint_command(parts: &[&str]) -> Option<management_request::Request> {
     let sub = parts.get(1).copied()?;
     match sub {
-        "clear" => Some(management_request::Request::ClearHints(
+        "auto" | "clear" => Some(management_request::Request::ClearHints(
             management::ClearHintsRequest {},
         )),
         "prefer" | "exclude" | "fixed" => {
@@ -272,7 +272,7 @@ fn print_help() {
         tw,
         "  hint <prefer|exclude|fixed> <role>\tApply a role hint"
     );
-    let _ = writeln!(tw, "  hint clear\tClear all role hints");
+    let _ = writeln!(tw, "  hint auto\tReturn to capability-based negotiation");
     let _ = writeln!(tw, "  shutdown\tShut down the daemon");
     let _ = writeln!(tw, "  help / ?\tShow this help");
     let _ = writeln!(tw, "  quit \tQuit the REPL");

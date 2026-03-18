@@ -386,7 +386,7 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
                     role: parse_ctl_role(&h.role).into(),
                 })
             }
-            wallhack_cli::cli::HintAction::Clear(_) => {
+            wallhack_cli::cli::HintAction::Auto(_) => {
                 management_request::Request::ClearHints(ClearHintsRequest {})
             }
         },
