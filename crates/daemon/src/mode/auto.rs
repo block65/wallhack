@@ -254,13 +254,17 @@ async fn run_auto_connector(
                     Some(local_hs.clone()),
                 );
                 let route_updates = route_updates.resubscribe();
+                // Clone peers for the factory closure; the session closure moves the original.
+                let peers_for_factory = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let peers = Arc::clone(&peers_for_factory);
                         async move {
                             use wallhack_core::client::client::Client;
                             let mut client =
                                 wallhack_core::client::quic::QuicClient::try_new(client_config)?;
+                            client.peer_registry = Some(peers);
                             client.connect(NodeRole::Indeterminate).await
                         }
                     },
@@ -306,12 +310,16 @@ async fn run_auto_connector(
                     Some(local_hs.clone()),
                 );
                 let route_updates = route_updates.resubscribe();
+                // Clone peers for the factory closure; the session closure moves the original.
+                let peers_for_factory = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let peers = Arc::clone(&peers_for_factory);
                         async move {
                             let mut client =
                                 wallhack_core::client::ws::WsClient::new(client_config)?;
+                            client.peer_registry = Some(peers);
                             client.connect(NodeRole::Indeterminate).await
                         }
                     },
@@ -371,7 +379,6 @@ async fn run_auto_connect_session_dispatch(
         tasks,
         control_tx,
         peer_addr: _,
-        latency_rx,
     } = connect_result;
 
     let DataChannels {
@@ -444,7 +451,6 @@ async fn run_auto_connect_session_dispatch(
                 peer_addr,
                 Some(peer_name),
                 Some(Arc::clone(&peers)),
-                latency_rx,
                 routes.clone(),
                 route_updates,
             )
@@ -500,12 +506,8 @@ async fn run_auto_connect_session_dispatch(
                 });
             }
             drop(tasks);
-            let heartbeat = super::spawn_heartbeat(
-                control_tx,
-                latency_rx,
-                peer_name.clone(),
-                Arc::clone(&peers),
-            );
+            let heartbeat =
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
             run_auto_exit_session_inner(
                 transport,
                 instructions_rx,
@@ -548,8 +550,7 @@ async fn run_auto_connect_session_dispatch(
                 peer_caps,
                 wallhack_core::control::peers::ConnectionSide::Connect,
             );
-            let _heartbeat =
-                super::spawn_heartbeat(control_tx, latency_rx, name.clone(), Arc::clone(&peers));
+            let _heartbeat = super::spawn_heartbeat(control_tx, name.clone(), Arc::clone(&peers));
             hold_until_disconnect(tasks).await;
             peers.unregister(&name);
             tracing::info!("Peer disconnected: {name}");
@@ -782,7 +783,6 @@ where
                 // so the spawned future is non-generic.
                 let peer_hs = accept_result.take_peer_handshake();
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
-                let latency_rx = accept_result.take_latency_rx();
                 let (
                     DataChannels {
                         instructions_tx,
@@ -816,7 +816,6 @@ where
                         Some(route_updates),
                         peer_addr,
                         node_state,
-                        latency_rx,
                     )
                     .await
                     {
@@ -860,7 +859,6 @@ async fn run_auto_accept_session_inner(
     >,
     peer_addr: String,
     node_state: SharedNodeState,
-    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
 ) -> Result<(), NodeError> {
     let Some(peer_hs) = peer_hs else {
         tracing::warn!("No peer handshake from {peer_addr}; cannot negotiate");
@@ -1011,12 +1009,8 @@ async fn run_auto_accept_session_inner(
                 ConnectionSide::Accept,
             );
 
-            let _heartbeat = super::spawn_heartbeat(
-                control_tx,
-                latency_rx,
-                peer_name.clone(),
-                Arc::clone(&peers),
-            );
+            let _heartbeat =
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
 
             let handle = tokio::spawn(async move { manager.run().await });
             match handle.await {
@@ -1105,12 +1099,8 @@ async fn run_auto_accept_session_inner(
                 ConnectionSide::Accept,
             );
 
-            let _heartbeat = super::spawn_heartbeat(
-                control_tx,
-                latency_rx,
-                peer_name.clone(),
-                Arc::clone(&peers),
-            );
+            let _heartbeat =
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
 
             let adapter = SyscallExitAdapter::new();
             let _reaper = adapter.start_reaper(
@@ -1162,8 +1152,7 @@ async fn run_auto_accept_session_inner(
                 peer_caps,
                 wallhack_core::control::peers::ConnectionSide::Accept,
             );
-            let _heartbeat =
-                super::spawn_heartbeat(control_tx, latency_rx, name.clone(), Arc::clone(&peers));
+            let _heartbeat = super::spawn_heartbeat(control_tx, name.clone(), Arc::clone(&peers));
             // Hold transport alive; wait for the peer to disconnect
             // by draining the instructions channel (closes when transport dies).
             let _keep_transport = transport;

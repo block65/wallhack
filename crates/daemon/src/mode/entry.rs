@@ -368,13 +368,17 @@ pub(crate) async fn run_entry_connect(
                     Some(entry_handshake),
                 );
                 let route_updates = res.route_updates.resubscribe();
+                // Clone peers for the factory closure; the session closure moves the original.
+                let peers_for_factory = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let peers = Arc::clone(&peers_for_factory);
                         async move {
                             use wallhack_core::client::client::Client;
                             let mut client =
                                 wallhack_core::client::quic::QuicClient::try_new(client_config)?;
+                            client.peer_registry = Some(peers);
                             client.connect(NodeRole::Entry).await
                         }
                     },
@@ -415,12 +419,16 @@ pub(crate) async fn run_entry_connect(
                     Some(entry_handshake),
                 );
                 let route_updates = res.route_updates.resubscribe();
+                // Clone peers for the factory closure; the session closure moves the original.
+                let peers_for_factory = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
+                        let peers = Arc::clone(&peers_for_factory);
                         async move {
                             let mut client =
                                 wallhack_core::client::ws::WsClient::new(client_config)?;
+                            client.peer_registry = Some(peers);
                             client.connect(NodeRole::Entry).await
                         }
                     },
@@ -493,7 +501,6 @@ pub(crate) async fn run_entry_connected_erased(
         tasks: _tasks,
         control_tx,
         peer_addr: _,
-        latency_rx,
     } = connect_result;
 
     // Wait for the server's handshake to get the peer name
@@ -531,7 +538,6 @@ pub(crate) async fn run_entry_connected_erased(
         peer_addr,
         peer_name.as_deref(),
         peers,
-        latency_rx,
         routes,
         route_updates,
     )
@@ -551,7 +557,6 @@ pub(crate) async fn run_entry_connected_inner(
     peer_addr: &str,
     peer_name: Option<&str>,
     peers: Option<Arc<Registry>>,
-    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     routes: Option<SharedRouteTable>,
     route_updates: Option<
         tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
@@ -632,7 +637,6 @@ pub(crate) async fn run_entry_connected_inner(
     let _heartbeat = if let Some(pn) = peer_name {
         Some(super::spawn_heartbeat(
             control_tx,
-            latency_rx,
             pn.to_string(),
             peers.unwrap_or_else(|| Arc::new(Registry::new())),
         ))
@@ -745,9 +749,6 @@ where
                 // Extract transport and channels from the generic AcceptResult before
                 // spawning so the spawned future is non-generic.
                 let transport: Arc<dyn ErasedTransport> = accept_result.transport();
-                let latency_rx = accept_result
-                    .take_latency_rx()
-                    .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
                 let (channels, control_tx) = accept_result.into_channels();
 
                 // Spawn non-generic handler
@@ -766,7 +767,7 @@ where
                         peer: identity.name,
                         peer_addr: peer_addr.clone(),
                     };
-                    let result = params.run(latency_rx).await;
+                    let result = params.run().await;
 
                     // Unregister peer — connection ID check prevents evicting a
                     // newer connection that re-registered under the same name.
@@ -939,33 +940,19 @@ pub(crate) fn spawn_data_tasks(
     }
 }
 
-/// Run the connection manager alongside ping/latency handling.
+/// Run the connection manager alongside route update handling.
 ///
 /// On exit (normal or error), the manager task is aborted and joined so
 /// the `ConnectionManager` (and its TUN fd Arcs) are dropped before the
 /// caller runs `delete_tun`.
-// REASON: threading manager_handle, control, latency, route_updates, peer info, peers, tun_name
+// REASON: threading manager_handle, control, route_updates, peer info, peers, tun_name
 #[allow(clippy::too_many_arguments)]
 async fn run_connection_loop(
     mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
-    control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    mut latency_rx: tokio::sync::mpsc::Receiver<f64>,
     mut route_updates: tokio::sync::broadcast::Receiver<RouteUpdate>,
     peer: Option<&str>,
-    peers: &Arc<Registry>,
     tun_name: &str,
 ) -> Result<(), NodeError> {
-    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    // Fire an initial ping so latency is populated immediately after connect.
-    if let Err(e) = super::send_ping(&control_tx).await {
-        tracing::debug!("Initial ping failed: {e}");
-    }
-    // Consume the first tick (fires immediately) so the heartbeat starts
-    // 30s after the initial ping, not immediately.
-    heartbeat.tick().await;
-
     let mut manager_result = Ok(());
     loop {
         tokio::select! {
@@ -976,16 +963,6 @@ async fn run_connection_loop(
                     Err(e) => Err(e.into()),
                 };
                 break;
-            }
-            Some(ms) = latency_rx.recv() => {
-                if let Some(id) = peer {
-                    peers.update_latency(id, ms);
-                }
-            }
-            _ = heartbeat.tick() => {
-                if let Err(e) = super::send_ping(&control_tx).await {
-                    tracing::debug!("Heartbeat ping failed: {e}");
-                }
             }
             update = route_updates.recv() => {
                 match update {
@@ -1023,10 +1000,7 @@ async fn run_connection_loop(
 
 impl ConnectionParams {
     /// Main entry point for the non-generic connection handler.
-    pub async fn run(
-        self,
-        latency_rx: tokio::sync::mpsc::Receiver<f64>,
-    ) -> Result<String, NodeError> {
+    pub async fn run(self) -> Result<String, NodeError> {
         use wallhack_core::server::server::DataChannels;
 
         let ConnectionParams {
@@ -1084,20 +1058,28 @@ impl ConnectionParams {
             responses_rx,
         );
 
+        // Spawn heartbeat: sends periodic pings; latency updates happen directly
+        // in the control loop Pong handler via the peer registry.
+        // When there is no peer name, keep control_tx alive for the duration
+        // of this connection without spawning a heartbeat.
+        let mut _control_tx_keep = None;
+        let _heartbeat = if let Some(ref peer_name) = peer {
+            Some(super::spawn_heartbeat(
+                control_tx,
+                peer_name.clone(),
+                Arc::clone(&peers),
+            ))
+        } else {
+            _control_tx_keep = Some(control_tx);
+            None
+        };
+
         // Panic safety: guard calls delete_tun if we unwind.
         let mut tun_guard = TunDropGuard::new(name.clone());
 
         let manager_handle = tokio::spawn(async move { manager.run().await });
-        let result = run_connection_loop(
-            manager_handle,
-            control_tx,
-            latency_rx,
-            route_updates,
-            peer.as_deref(),
-            &peers,
-            &name,
-        )
-        .await;
+        let result =
+            run_connection_loop(manager_handle, route_updates, peer.as_deref(), &name).await;
 
         // run_connection_loop aborts and joins the manager task, so all
         // TUN fd Arcs are dropped. Delete the TUN NOW — before returning —

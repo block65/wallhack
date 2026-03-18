@@ -106,12 +106,11 @@ pub(crate) async fn send_ping(
 /// Spawn a background heartbeat task for any connection.
 ///
 /// Fires an initial ping immediately, then pings every 30 seconds.
-/// Consumes latency measurements from the transport control loop and
-/// updates the peer registry. Runs until the control channel closes
-/// or the returned handle is dropped/aborted.
+/// Latency is now updated directly by the control loop Pong handler via
+/// the peer registry. Runs until the control channel closes or the
+/// returned handle is dropped/aborted.
 pub(crate) fn spawn_heartbeat(
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
-    latency_rx: Option<tokio::sync::mpsc::Receiver<f64>>,
     peer_name: String,
     peers: Arc<Registry>,
 ) -> tokio::task::JoinHandle<()> {
@@ -125,22 +124,15 @@ pub(crate) fn spawn_heartbeat(
             return;
         }
 
-        let mut latency_rx = latency_rx.unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
         let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         heartbeat.tick().await; // consume first immediate tick
 
         loop {
-            tokio::select! {
-                Some(ms) = latency_rx.recv() => {
-                    peers.update_latency(&peer_name, ms);
-                }
-                _ = heartbeat.tick() => {
-                    if let Err(e) = send_ping(&control_tx).await {
-                        tracing::debug!("Heartbeat ping failed: {e}");
-                        break;
-                    }
-                }
+            heartbeat.tick().await;
+            if let Err(e) = send_ping(&control_tx).await {
+                tracing::debug!("Heartbeat ping failed: {e}");
+                break;
             }
         }
 

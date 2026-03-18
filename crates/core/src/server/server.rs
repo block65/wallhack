@@ -65,9 +65,6 @@ pub struct AcceptResult<T: Transport> {
     transport: Arc<T>,
     /// Channel for injecting messages into the control stream.
     control_tx: mpsc::Sender<ControlMessage>,
-    /// Receiver for pong-derived latency measurements (milliseconds) from the
-    /// control loop. Used by one-shot ping callers.
-    latency_rx: Option<mpsc::Receiver<f64>>,
     /// TLS channel binding bytes for PSK proof verification.
     channel_binding: Option<[u8; crate::psk::CHANNEL_BINDING_LEN]>,
 }
@@ -80,7 +77,6 @@ pub struct ErasedAcceptResult {
     pub peer_handshake: Option<Handshake>,
     pub transport: Arc<dyn ErasedTransport>,
     pub control_tx: mpsc::Sender<ControlMessage>,
-    pub latency_rx: Option<mpsc::Receiver<f64>>,
     pub channel_binding: Option<[u8; crate::psk::CHANNEL_BINDING_LEN]>,
 }
 
@@ -100,7 +96,6 @@ where
             peer_handshake: self.peer_handshake.take(),
             transport: self.transport as Arc<dyn ErasedTransport>,
             control_tx: self.control_tx,
-            latency_rx: self.latency_rx.take(),
             channel_binding: self.channel_binding,
         }
     }
@@ -110,7 +105,6 @@ impl<T: Transport> AcceptResult<T> {
     /// Creates a new accept result with an already-received peer `Handshake`
     /// and a latency receiver for pong-derived RTT measurements.
     #[must_use]
-    #[allow(clippy::too_many_arguments)] // accept result construction; will be simplified when builder pattern is adopted
     pub fn with_handshake(
         transport: Arc<T>,
         channels: DataChannels,
@@ -118,7 +112,6 @@ impl<T: Transport> AcceptResult<T> {
         metrics: SharedMetrics,
         peer_handshake: Option<Handshake>,
         control_tx: mpsc::Sender<ControlMessage>,
-        latency_rx: mpsc::Receiver<f64>,
         channel_binding: Option<[u8; crate::psk::CHANNEL_BINDING_LEN]>,
     ) -> Self {
         Self {
@@ -128,7 +121,6 @@ impl<T: Transport> AcceptResult<T> {
             peer_handshake,
             transport,
             control_tx,
-            latency_rx: Some(latency_rx),
             channel_binding,
         }
     }
@@ -176,11 +168,6 @@ impl<T: Transport> AcceptResult<T> {
     #[must_use]
     pub fn control_tx(&self) -> &mpsc::Sender<ControlMessage> {
         &self.control_tx
-    }
-
-    /// Takes the latency receiver for pong-derived RTT measurements.
-    pub fn take_latency_rx(&mut self) -> Option<mpsc::Receiver<f64>> {
-        self.latency_rx.take()
     }
 
     /// Returns the TLS channel binding bytes for this connection.

@@ -64,6 +64,9 @@ pub struct QuicClient {
     name: Option<String>,
     psk: Option<zeroize::Zeroizing<String>>,
     local_handshake: Option<Handshake>,
+    /// Peer registry for direct latency updates in the control loop.
+    /// Set by the daemon mode before calling `connect()`.
+    pub peer_registry: Option<std::sync::Arc<crate::control::peers::Registry>>,
 }
 
 impl Client for QuicClient {
@@ -101,6 +104,7 @@ impl Client for QuicClient {
             name: config.name,
             psk: config.psk,
             local_handshake: config.local_handshake,
+            peer_registry: None,
         })
     }
 
@@ -170,18 +174,17 @@ impl Client for QuicClient {
 
         // Create oneshot for receiving server's Handshake via the control loop.
         let (handshake_tx, handshake_rx) = tokio::sync::oneshot::channel::<Handshake>();
-        let (latency_tx, latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
-
         // Spawn control stream task
         let control_handle = {
             let transport = Arc::clone(&transport);
+            let peer_registry = self.peer_registry.clone();
             tokio::spawn(async move {
                 let mut channels = protocol::ControlChannels {
                     outgoing_rx: control_rx,
                     handshake_tx: Some(handshake_tx),
-                    latency_tx: Some(latency_tx),
                     control_response_tx: None,
-                    peer_registry: None,
+                    peer_registry,
+                    peer_name: None,
                 };
                 match protocol::run_control_stream_initiator(
                     &*transport,
@@ -235,7 +238,6 @@ impl Client for QuicClient {
             tasks,
             control_tx,
             Some(handshake_rx),
-            Some(latency_rx),
         ))
     }
 

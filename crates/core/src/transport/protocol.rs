@@ -137,13 +137,15 @@ pub struct ControlChannels {
     pub outgoing_rx: mpsc::Receiver<ControlMessage>,
     /// One-shot for the first `Handshake` received from the peer.
     pub handshake_tx: Option<oneshot::Sender<Handshake>>,
-    /// Pong-derived latency measurements (milliseconds).
-    pub latency_tx: Option<mpsc::Sender<f64>>,
     /// `ControlResponse` forwarding (client side, for correlating requests).
     pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
-    /// Peer registry for handling relay `PeerAnnouncement` messages.
-    /// Announced peers are registered/unregistered directly in the registry.
+    /// Peer registry for latency updates (Pong) and relay `PeerAnnouncement`
+    /// handling. Set on both client and server sides when available.
     pub peer_registry: Option<std::sync::Arc<crate::control::peers::Registry>>,
+    /// Peer name for latency updates. On the server side this is set at
+    /// construction (from the already-read handshake). On the client side
+    /// it is populated from the first received `Handshake` message.
+    pub peer_name: Option<String>,
 }
 
 impl ControlChannels {
@@ -235,6 +237,10 @@ impl ControlChannels {
         match msg.message {
             Some(control_message::Message::Handshake(hs)) => {
                 tracing::info!("Handshake from {} ({})", hs.name, hs.version);
+                // Store peer name for Pong-driven latency updates.
+                if self.peer_name.is_none() {
+                    self.peer_name = Some(hs.name.clone());
+                }
                 if let Some(tx) = self.handshake_tx.take() {
                     let _ = tx.send(hs);
                 }
@@ -261,8 +267,10 @@ impl ControlChannels {
                 // ms-resolution latency; f64 mantissa exceeds plausible RTT range
                 let latency_ms = now_ms.saturating_sub(pong.timestamp_ms) as f64;
                 tracing::trace!(latency_ms, "Control: received Pong");
-                if let Some(ref tx) = self.latency_tx {
-                    let _ = tx.send(latency_ms).await;
+                if let Some(ref registry) = self.peer_registry
+                    && let Some(ref name) = self.peer_name
+                {
+                    registry.update_latency(name, latency_ms);
                 }
             }
             Some(control_message::Message::ControlRequest(req)) => {
@@ -701,9 +709,9 @@ mod tests {
             let mut channels = ControlChannels {
                 outgoing_rx: a_ctrl_rx,
                 handshake_tx: Some(a_hs_tx),
-                latency_tx: None,
                 control_response_tx: None,
                 peer_registry: None,
+                peer_name: None,
             };
             let mut stream_a = BoxBiStream::new(stream_a);
             channels
@@ -715,9 +723,9 @@ mod tests {
             let mut channels = ControlChannels {
                 outgoing_rx: b_ctrl_rx,
                 handshake_tx: Some(b_hs_tx),
-                latency_tx: None,
                 control_response_tx: None,
                 peer_registry: None,
+                peer_name: None,
             };
             let mut stream_b = BoxBiStream::new(stream_b);
             channels
@@ -769,9 +777,9 @@ mod tests {
         let mut channels = ControlChannels {
             outgoing_rx: ctrl_rx,
             handshake_tx: Some(hs_tx),
-            latency_tx: None,
             control_response_tx: None,
             peer_registry: None,
+            peer_name: None,
         };
 
         let mut stream_b = BoxBiStream::new(stream_b);
@@ -785,20 +793,27 @@ mod tests {
         assert!(hs_rx.try_recv().is_err());
     }
 
-    /// Pong latency is computed and forwarded via `latency_tx`.
+    /// Pong latency is computed and written to the peer registry.
     #[tokio::test]
     async fn test_ping_latency() {
         let (mut stream_a, stream_b) = bidi_pair();
 
-        let (latency_tx, mut latency_rx) = tokio::sync::mpsc::channel::<f64>(4);
+        let registry = std::sync::Arc::new(crate::control::peers::Registry::new());
+        registry.register(
+            "test-peer".to_string(),
+            "127.0.0.1:9999".to_string(),
+            crate::NodeRole::Exit,
+            wallhack_wire::data::Capabilities::default(),
+            crate::control::peers::ConnectionSide::Connect,
+        );
         let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
 
         let mut channels = ControlChannels {
             outgoing_rx: ctrl_rx,
             handshake_tx: None,
-            latency_tx: Some(latency_tx),
             control_response_tx: None,
-            peer_registry: None,
+            peer_registry: Some(std::sync::Arc::clone(&registry)),
+            peer_name: Some("test-peer".to_string()),
         };
 
         // Spawn the control loop on side B (will read from stream_b).
@@ -856,11 +871,12 @@ mod tests {
             .await
             .unwrap();
 
-        // The control loop should forward the latency via latency_tx.
-        let ms = tokio::time::timeout(std::time::Duration::from_secs(2), latency_rx.recv())
-            .await
-            .expect("timed out")
-            .expect("channel closed");
+        // Give the control loop a moment to process the Pong.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // The control loop should update latency directly in the registry.
+        let peer = registry.get("test-peer").expect("peer should exist");
+        let ms = peer.latency_ms.expect("latency should be set");
         // Latency should be approximately 100ms (within ±50ms tolerance for CI).
         assert!((50.0..=200.0).contains(&ms), "expected ~100ms, got {ms}ms");
 
@@ -877,9 +893,9 @@ mod tests {
         let mut channels = ControlChannels {
             outgoing_rx: ctrl_rx,
             handshake_tx: None,
-            latency_tx: None,
             control_response_tx: None,
             peer_registry: None,
+            peer_name: None,
         };
 
         // Control loop with 1-second ping interval.
@@ -950,9 +966,9 @@ mod tests {
         let mut channels = ControlChannels {
             outgoing_rx: ctrl_rx,
             handshake_tx: None,
-            latency_tx: None,
             control_response_tx: None,
             peer_registry: None,
+            peer_name: None,
         };
 
         let server_handle = tokio::spawn(async move {
@@ -1081,9 +1097,9 @@ mod tests {
         let mut channels = ControlChannels {
             outgoing_rx: ctrl_rx,
             handshake_tx: None,
-            latency_tx: None,
             control_response_tx: None,
             peer_registry: None,
+            peer_name: None,
         };
 
         let server_handle = tokio::spawn(async move {
