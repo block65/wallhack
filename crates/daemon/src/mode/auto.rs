@@ -256,10 +256,11 @@ async fn run_auto_connector(
                 let route_updates = route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
                             use wallhack_core::client::client::Client;
-                            let mut client = wallhack_core::client::quic::QuicClient::try_new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::quic::QuicClient::try_new(client_config)?;
                             client.connect(NodeRole::Indeterminate).await
                         }
                     },
@@ -307,9 +308,10 @@ async fn run_auto_connector(
                 let route_updates = route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
-                            let mut client = wallhack_core::client::ws::WsClient::new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::ws::WsClient::new(client_config)?;
                             client.connect(NodeRole::Indeterminate).await
                         }
                     },
@@ -928,7 +930,7 @@ async fn run_auto_accept_session_inner(
 
             // Spawn route update listener
             if let Some(mut updates) = route_updates {
-                let tun = tun_name.clone();
+                let tun_name = tun_name.clone();
                 let peer = if peer_hs.name.is_empty() {
                     None
                 } else {
@@ -938,7 +940,7 @@ async fn run_auto_accept_session_inner(
                     tracing::info!(
                         "Route update listener started for peer {} on tun {}",
                         peer.as_deref().unwrap_or("<unknown>"),
-                        tun
+                        tun_name
                     );
                     loop {
                         match updates.recv().await {
@@ -946,9 +948,10 @@ async fn run_auto_accept_session_inner(
                                 // REASON: peer match is a route filter; OS call error is a separate concern
                                 #[allow(clippy::collapsible_if)]
                                 if Some(entry.peer.as_str()) == peer.as_deref() {
-                                    if let Err(e) =
-                                        crate::netlink::add_os_route(&entry.cidr.to_string(), &tun)
-                                    {
+                                    if let Err(e) = crate::netlink::add_os_route(
+                                        &entry.cidr.to_string(),
+                                        &tun_name,
+                                    ) {
                                         tracing::error!("Failed to add OS route: {}", e);
                                     }
                                 }
@@ -959,7 +962,7 @@ async fn run_auto_accept_session_inner(
                                 if Some(entry.peer.as_str()) == peer.as_deref() {
                                     if let Err(e) = crate::netlink::remove_os_route(
                                         &entry.cidr.to_string(),
-                                        &tun,
+                                        &tun_name,
                                     ) {
                                         tracing::error!("Failed to remove OS route: {}", e);
                                     }

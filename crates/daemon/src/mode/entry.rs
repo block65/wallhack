@@ -370,10 +370,11 @@ pub(crate) async fn run_entry_connect(
                 let route_updates = res.route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
                             use wallhack_core::client::client::Client;
-                            let mut client = wallhack_core::client::quic::QuicClient::try_new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::quic::QuicClient::try_new(client_config)?;
                             client.connect(NodeRole::Entry).await
                         }
                     },
@@ -416,9 +417,10 @@ pub(crate) async fn run_entry_connect(
                 let route_updates = res.route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
-                            let mut client = wallhack_core::client::ws::WsClient::new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::ws::WsClient::new(client_config)?;
                             client.connect(NodeRole::Entry).await
                         }
                     },
@@ -597,19 +599,19 @@ pub(crate) async fn run_entry_connected_inner(
 
     // Spawn route update listener
     if let Some(mut updates) = route_updates {
-        let tun = name.clone();
+        let name = name.clone();
         let peer = peer_name.map(std::string::ToString::to_string);
         tokio::spawn(async move {
             loop {
                 match updates.recv().await {
                     Ok(wallhack_core::control::routes::RouteUpdate::Add(entry)) => {
                         if Some(entry.peer.as_str()) == peer.as_deref() {
-                            let _ = add_os_route(&entry.cidr.to_string(), &tun);
+                            let _ = add_os_route(&entry.cidr.to_string(), &name);
                         }
                     }
                     Ok(wallhack_core::control::routes::RouteUpdate::Remove(entry)) => {
                         if Some(entry.peer.as_str()) == peer.as_deref() {
-                            let _ = remove_os_route(&entry.cidr.to_string(), &tun);
+                            let _ = remove_os_route(&entry.cidr.to_string(), &name);
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -707,7 +709,7 @@ where
                 };
 
                 let conn_metrics = accept_result.metrics();
-                let conn_sessions = sessions.clone();
+                let sessions = sessions.clone();
                 let peers = Arc::clone(&peers);
                 let routes = Arc::clone(&routes);
                 let peer_route_updates = route_updates.resubscribe();
@@ -757,7 +759,7 @@ where
                         transport,
                         channels,
                         control_tx,
-                        sessions: conn_sessions.clone(),
+                        sessions: sessions.clone(),
                         peers: Arc::clone(&peers),
                         routes: Arc::clone(&routes),
                         route_updates: peer_route_updates,
@@ -774,7 +776,7 @@ where
                     // remove_os_route can still resolve the interface index.
                     let removed_routes = routes.remove_by_peer(&peer_name);
                     for entry in &removed_routes {
-                        if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_name) {
+                        if let Some(tun) = sessions.get_tun_for_peer(&peer_name) {
                             let _ = remove_os_route(&entry.cidr.to_string(), &tun);
                         }
                     }

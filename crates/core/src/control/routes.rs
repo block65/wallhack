@@ -81,14 +81,14 @@ impl RouteTable {
             create_time: Instant::now(),
             auto_managed,
         };
-        let new_entry = entry.clone();
+        let entry = entry.clone();
         let mut old_entry = None;
         self.routes.rcu(|old| {
             let mut new = (**old).clone();
             old_entry = new.insert(cidr, entry.clone());
             new
         });
-        (old_entry, new_entry)
+        (old_entry, entry)
     }
 
     /// Remove a route by CIDR. Returns the removed entry if it existed.

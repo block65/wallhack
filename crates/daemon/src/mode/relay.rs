@@ -151,10 +151,11 @@ pub async fn run(
                 let peers = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
                             use wallhack_core::client::client::Client;
-                            let mut client = wallhack_core::client::quic::QuicClient::try_new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::quic::QuicClient::try_new(client_config)?;
                             client.connect(NodeRole::Relay).await
                         }
                     },
@@ -206,9 +207,10 @@ pub async fn run(
                 let peers = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
-                            let mut client = wallhack_core::client::ws::WsClient::new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::ws::WsClient::new(client_config)?;
                             client.connect(NodeRole::Relay).await
                         }
                     },
@@ -290,9 +292,6 @@ async fn run_relay_loop_inner(
         .and_then(|h| h.capabilities)
         .unwrap_or_default();
 
-    // Clone before heartbeat takes ownership — used for peer announcements.
-    let announce_tx = source_control_tx.clone();
-
     peers.register(
         peer_name.clone(),
         peer_addr.clone(),
@@ -302,7 +301,7 @@ async fn run_relay_loop_inner(
     );
 
     let _source_heartbeat = super::spawn_heartbeat(
-        source_control_tx,
+        source_control_tx.clone(),
         latency_rx,
         peer_name.clone(),
         Arc::clone(&peers),
@@ -389,7 +388,8 @@ async fn run_relay_loop_inner(
     // The source (entry) registers these peers for topology visibility.
     {
         let mut peer_events = peers.subscribe();
-        let source_peer_name = peer_name.clone();
+        let peer_name = peer_name.clone();
+        let source_control_tx = source_control_tx.clone();
         tokio::spawn(async move {
             use wallhack_core::control::peers::PeerEvent;
             use wallhack_wire::control::{
@@ -398,7 +398,7 @@ async fn run_relay_loop_inner(
 
             loop {
                 match peer_events.recv().await {
-                    Ok(PeerEvent::Connected { name, addr, role }) if name != source_peer_name => {
+                    Ok(PeerEvent::Connected { name, addr, role }) if name != peer_name => {
                         let announcement = PeerAnnouncement {
                             event: peer_announcement::Event::Connected.into(),
                             name,
@@ -409,11 +409,11 @@ async fn run_relay_loop_inner(
                         let msg = ControlMessage {
                             message: Some(control_message::Message::PeerAnnouncement(announcement)),
                         };
-                        if announce_tx.send(msg).await.is_err() {
+                        if source_control_tx.send(msg).await.is_err() {
                             break;
                         }
                     }
-                    Ok(PeerEvent::Disconnected { name }) if name != source_peer_name => {
+                    Ok(PeerEvent::Disconnected { name }) if name != peer_name => {
                         let announcement = PeerAnnouncement {
                             event: peer_announcement::Event::Disconnected.into(),
                             name,
@@ -424,7 +424,7 @@ async fn run_relay_loop_inner(
                         let msg = ControlMessage {
                             message: Some(control_message::Message::PeerAnnouncement(announcement)),
                         };
-                        if announce_tx.send(msg).await.is_err() {
+                        if source_control_tx.send(msg).await.is_err() {
                             break;
                         }
                     }
@@ -705,9 +705,8 @@ fn handle_relay_connection(
         ConnectionSide::Accept,
     );
 
-    let heartbeat_control_tx = control_tx.clone();
     let _accepted_heartbeat = super::spawn_heartbeat(
-        heartbeat_control_tx,
+        control_tx.clone(),
         latency_rx,
         peer_name.clone(),
         Arc::clone(peers),
@@ -717,12 +716,12 @@ fn handle_relay_connection(
     // Exit peers send ExitNodeResponses which are dispatched via responses_tx.
     {
         let transport = std::sync::Arc::clone(&transport);
-        let instr_tx = instructions_tx.clone();
-        let resp_tx = responses_tx.clone();
+        let instructions_tx = instructions_tx.clone();
+        let responses_tx = responses_tx.clone();
         tokio::spawn(async move {
             match transport.accept_uni_erased().await {
                 Ok(Some(mut recv)) => {
-                    if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
+                    if let Err(e) = run_data_in(&mut recv, &instructions_tx, &responses_tx).await {
                         tracing::debug!("Relay peer data-in finished: {e}");
                     }
                 }

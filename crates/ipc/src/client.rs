@@ -243,12 +243,10 @@ impl IpcConnection {
         let (notifications_tx, _) = broadcast::channel::<DaemonNotification>(64);
 
         let writer_task = tokio::spawn(Self::writer_task(writer, write_rx));
-        let reader_notifications_tx = notifications_tx.clone();
-        let reader_task = tokio::spawn(Self::reader_task(
-            reader,
-            response_tx,
-            reader_notifications_tx,
-        ));
+        let reader_task = {
+            let notifications_tx = notifications_tx.clone();
+            tokio::spawn(Self::reader_task(reader, response_tx, notifications_tx))
+        };
 
         Self {
             write_tx,

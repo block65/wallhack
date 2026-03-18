@@ -212,8 +212,8 @@ pub async fn handle_connection(
     });
 
     // Notification forwarder task (if subscribed).
-    let notify_tx = write_tx.clone();
     let notify_task = peer_events.map(|mut rx| {
+        let write_tx = write_tx.clone();
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -222,7 +222,7 @@ pub async fn handle_connection(
                         let msg = DaemonMessage {
                             message: Some(daemon_message::Message::Notification(notification)),
                         };
-                        if notify_tx.send(msg).await.is_err() {
+                        if write_tx.send(msg).await.is_err() {
                             break;
                         }
                     }
@@ -241,7 +241,7 @@ pub async fn handle_connection(
                                 },
                             )),
                         };
-                        if notify_tx.send(warning).await.is_err() {
+                        if write_tx.send(warning).await.is_err() {
                             break;
                         }
                     }

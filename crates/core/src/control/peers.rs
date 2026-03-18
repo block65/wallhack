@@ -160,11 +160,9 @@ impl Registry {
             // control channel closed and clean up.
             self.unregister(&id);
         }
-        let peer_id = id.clone();
-
         let info = PeerInfo {
-            id: peer_id.clone(),
-            name: id,
+            id: id.clone(),
+            name: id.clone(),
             addr,
             role,
             capabilities,
@@ -182,18 +180,20 @@ impl Registry {
         };
         let event_addr = info.addr.clone();
         let event_role = info.role;
-        let return_id = peer_id.clone();
-        self.peers.rcu(move |old| {
-            let mut new = (**old).clone();
-            new.insert(peer_id.clone(), info.clone());
-            new
-        });
+        {
+            let id = id.clone();
+            self.peers.rcu(move |old| {
+                let mut new = (**old).clone();
+                new.insert(id.clone(), info.clone());
+                new
+            });
+        }
         let _ = self.events_tx.send(PeerEvent::Connected {
-            name: return_id.clone(),
+            name: id.clone(),
             addr: event_addr,
             role: event_role,
         });
-        (return_id, connection_id)
+        (id, connection_id)
     }
 
     /// Set the TUN interface name for a peer.

@@ -128,10 +128,11 @@ async fn run_exit_connector(
                 let peer_addr = peer_addr.clone();
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
                             use wallhack_core::client::client::Client;
-                            let mut client = wallhack_core::client::quic::QuicClient::try_new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::quic::QuicClient::try_new(client_config)?;
                             client.connect(NodeRole::Exit).await
                         }
                     },
@@ -178,9 +179,10 @@ async fn run_exit_connector(
                 let peer_addr = peer_addr.clone();
                 crate::transport::connect_loop(
                     || {
-                        let cfg = client_config.clone();
+                        let client_config = client_config.clone();
                         async move {
-                            let mut client = wallhack_core::client::ws::WsClient::new(cfg)?;
+                            let mut client =
+                                wallhack_core::client::ws::WsClient::new(client_config)?;
                             client.connect(NodeRole::Exit).await
                         }
                     },
