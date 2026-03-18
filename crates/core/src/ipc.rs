@@ -61,11 +61,12 @@ pub fn socket_path(name: Option<&str>) -> PathBuf {
         Some(n) => format!("wallhackd-{n}.sock"),
         None => SOCKET_NAME.to_string(),
     };
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+    let non_empty = |key| std::env::var(key).ok().filter(|v| !v.is_empty());
+    if let Some(runtime_dir) = non_empty("XDG_RUNTIME_DIR") {
         Path::new(&runtime_dir).join("wallhack").join(&filename)
-    } else if let Ok(user) = std::env::var("USER") {
+    } else if let Some(user) = non_empty("USER") {
         PathBuf::from(format!("/tmp/wallhack-{user}")).join(&filename)
-    } else if let Ok(home) = std::env::var("HOME") {
+    } else if let Some(home) = non_empty("HOME") {
         Path::new(&home).join(".wallhack").join(&filename)
     } else {
         PathBuf::from("/tmp/wallhack-shared").join(&filename)
