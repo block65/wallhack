@@ -143,6 +143,11 @@ pub(crate) fn spawn_heartbeat(
                 }
             }
         }
+
+        // Heartbeat exits when the control channel is closed (peer gone).
+        // Unregister here so the registry stays clean regardless of which
+        // transport task exits first.
+        peers.unregister(&peer_name);
     })
 }
 
