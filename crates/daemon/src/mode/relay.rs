@@ -705,10 +705,15 @@ fn handle_relay_connection(
 
     // Incoming: accept uni stream from exit peer, dispatch data messages.
     // Exit peers send ExitNodeResponses which are dispatched via responses_tx.
+    // This task exits when the peer's transport dies, making it the canonical
+    // place to unregister — the send-instructions task never exits on its own
+    // because the fan-out channel outlives the peer's transport.
     {
         let transport = std::sync::Arc::clone(&transport);
         let instr_tx = instructions_tx.clone();
         let resp_tx = responses_tx.clone();
+        let peer_name = peer_name.clone();
+        let peers = Arc::clone(peers);
         tokio::spawn(async move {
             match transport.accept_uni_erased().await {
                 Ok(Some(mut recv)) => {
@@ -719,6 +724,9 @@ fn handle_relay_connection(
                 Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
                 Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
             }
+            // Peer transport is dead — unregister so the registry stays clean
+            // and PeerEvent::Disconnected fires to the source peer.
+            peers.unregister(&peer_name);
         });
     }
 
@@ -726,8 +734,6 @@ fn handle_relay_connection(
     // instructions_rx receives instructions distributed by the fan-out task.
     {
         let transport = std::sync::Arc::clone(&transport);
-        let peer_name = peer_name.clone();
-        let peers = Arc::clone(peers);
         tokio::spawn(async move {
             match transport.open_uni_erased().await {
                 Ok(mut send) => {
@@ -737,7 +743,9 @@ fn handle_relay_connection(
                 }
                 Err(e) => tracing::debug!("Relay peer failed to open send stream: {e}"),
             }
-            peers.unregister(&peer_name);
+            // Unregistration is handled by the data-in task above, which exits
+            // when the transport dies. This task does not unregister because
+            // the fan-out channel keeps instructions_rx alive past peer death.
         });
     }
 
