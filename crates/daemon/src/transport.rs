@@ -213,7 +213,6 @@ mod tests {
     #[tokio::test]
     async fn connect_loop_reconnects_after_session_ends() {
         let connect_count = Arc::new(AtomicUsize::new(0));
-        let cc = Arc::clone(&connect_count);
 
         // connect_loop runs forever, so we timeout after it has reconnected
         // multiple times.
@@ -221,9 +220,9 @@ mod tests {
             Duration::from_millis(200),
             connect_loop(
                 || {
-                    let cc = Arc::clone(&cc);
+                    let connect_count = Arc::clone(&connect_count);
                     async move {
-                        cc.fetch_add(1, Ordering::SeqCst);
+                        connect_count.fetch_add(1, Ordering::SeqCst);
                         Ok::<_, std::io::Error>(())
                     }
                 },

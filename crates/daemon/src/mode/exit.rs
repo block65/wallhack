@@ -125,7 +125,7 @@ async fn run_exit_connector(
                     Some(local_handshake.clone()),
                 );
                 let ctx = Arc::clone(ctx);
-                let pa = peer_addr.clone();
+                let peer_addr = peer_addr.clone();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -136,20 +136,20 @@ async fn run_exit_connector(
                         }
                     },
                     |connect_result| {
-                        let e = connect_result.erase();
+                        let erased = connect_result.erase();
                         let ctx = Arc::clone(&ctx);
-                        let pa = pa.clone();
+                        let peer_addr = peer_addr.clone();
                         async move {
                             run_exit_loop_inner(
-                                e.transport,
-                                e.channels.instructions_rx,
-                                e.channels.responses_tx,
-                                e.channels.responses_rx,
-                                e.control_tx,
-                                e.tasks,
-                                e.peer_handshake_rx,
-                                e.latency_rx,
-                                &pa,
+                                erased.transport,
+                                erased.channels.instructions_rx,
+                                erased.channels.responses_tx,
+                                erased.channels.responses_rx,
+                                erased.control_tx,
+                                erased.tasks,
+                                erased.peer_handshake_rx,
+                                erased.latency_rx,
+                                &peer_addr,
                                 &ctx,
                             )
                             .await
@@ -175,7 +175,7 @@ async fn run_exit_connector(
                     Some(local_handshake),
                 );
                 let ctx = Arc::clone(ctx);
-                let pa = peer_addr.clone();
+                let peer_addr = peer_addr.clone();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -185,20 +185,20 @@ async fn run_exit_connector(
                         }
                     },
                     |connect_result| {
-                        let e = connect_result.erase();
+                        let erased = connect_result.erase();
                         let ctx = Arc::clone(&ctx);
-                        let pa = pa.clone();
+                        let peer_addr = peer_addr.clone();
                         async move {
                             run_exit_loop_inner(
-                                e.transport,
-                                e.channels.instructions_rx,
-                                e.channels.responses_tx,
-                                e.channels.responses_rx,
-                                e.control_tx,
-                                e.tasks,
-                                e.peer_handshake_rx,
-                                e.latency_rx,
-                                &pa,
+                                erased.transport,
+                                erased.channels.instructions_rx,
+                                erased.channels.responses_tx,
+                                erased.channels.responses_rx,
+                                erased.control_tx,
+                                erased.tasks,
+                                erased.peer_handshake_rx,
+                                erased.latency_rx,
+                                &peer_addr,
                                 &ctx,
                             )
                             .await
@@ -292,6 +292,7 @@ async fn run_exit_listener(
 }
 
 /// Server accept loop for listen-only mode.
+// REASON: spawns transport, orchestrator, and stream listener tasks per connection; inherently broad
 #[allow(clippy::too_many_lines)]
 async fn run_accept_loop<S: Server>(mut server: S, ctx: &Arc<ExitContext>) -> Result<(), NodeError>
 where
@@ -351,33 +352,37 @@ where
                 ) = accept_result.into_channels();
 
                 // Incoming: accept uni stream from entry peer, dispatch instructions.
-                let transport_in = Arc::clone(&transport);
-                let instr_in = instructions_tx.clone();
-                let resp_in = responses_tx.clone();
-                tokio::spawn(async move {
-                    match transport_in.accept_uni_erased().await {
-                        Ok(Some(mut recv)) => {
-                            if let Err(e) = run_data_in(&mut recv, &instr_in, &resp_in).await {
-                                tracing::debug!("Data-in handler finished: {e}");
+                {
+                    let transport = Arc::clone(&transport);
+                    let instr_in = instructions_tx.clone();
+                    let resp_in = responses_tx.clone();
+                    tokio::spawn(async move {
+                        match transport.accept_uni_erased().await {
+                            Ok(Some(mut recv)) => {
+                                if let Err(e) = run_data_in(&mut recv, &instr_in, &resp_in).await {
+                                    tracing::debug!("Data-in handler finished: {e}");
+                                }
                             }
+                            Ok(None) => tracing::debug!("Transport closed before data-in stream"),
+                            Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
                         }
-                        Ok(None) => tracing::debug!("Transport closed before data-in stream"),
-                        Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
-                    }
-                });
+                    });
+                }
 
                 // Outgoing: open uni stream to entry peer, send responses.
-                let transport_out = Arc::clone(&transport);
-                tokio::spawn(async move {
-                    match transport_out.open_uni_erased().await {
-                        Ok(mut send) => {
-                            if let Err(e) = run_send_responses(&mut send, responses_rx).await {
-                                tracing::debug!("Send-responses handler finished: {e}");
+                {
+                    let transport = Arc::clone(&transport);
+                    tokio::spawn(async move {
+                        match transport.open_uni_erased().await {
+                            Ok(mut send) => {
+                                if let Err(e) = run_send_responses(&mut send, responses_rx).await {
+                                    tracing::debug!("Send-responses handler finished: {e}");
+                                }
                             }
+                            Err(e) => tracing::debug!("Failed to open send stream: {e}"),
                         }
-                        Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-                    }
-                });
+                    });
+                }
 
                 let stream_fut = run_stream_listener(transport);
                 let ctx = Arc::clone(ctx);
@@ -421,6 +426,7 @@ where
 }
 
 /// Non-generic exit loop: monomorphized once regardless of transport type.
+// REASON: threading transport, instructions, responses, control, tasks, handshake, latency, peer_addr, ctx
 #[allow(clippy::too_many_arguments)]
 async fn run_exit_loop_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -462,17 +468,19 @@ async fn run_exit_loop_inner(
         .update_capabilities(&peer_name, &peer_capabilities);
 
     // Outgoing: open uni stream to entry peer, send responses.
-    let transport_out = Arc::clone(&transport);
-    tokio::spawn(async move {
-        match transport_out.open_uni_erased().await {
-            Ok(mut send) => {
-                if let Err(e) = run_send_responses(&mut send, responses_rx).await {
-                    tracing::debug!("Send-responses handler finished: {e}");
+    {
+        let transport = Arc::clone(&transport);
+        tokio::spawn(async move {
+            match transport.open_uni_erased().await {
+                Ok(mut send) => {
+                    if let Err(e) = run_send_responses(&mut send, responses_rx).await {
+                        tracing::debug!("Send-responses handler finished: {e}");
+                    }
                 }
+                Err(e) => tracing::debug!("Failed to open send stream: {e}"),
             }
-            Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-        }
-    });
+        });
+    }
 
     let adapter = SyscallExitAdapter::new();
     let _reaper = adapter.start_reaper(
@@ -589,6 +597,7 @@ async fn tcp_connect_with_retry(
     Err(last_err.unwrap_or_else(|| std::io::Error::other("retry exhausted")))
 }
 
+// REASON: symmetric TCP and UDP session protocol arms each with connect, status, and data relay logic
 #[allow(clippy::too_many_lines)]
 async fn handle_stream<S: BiStream>(stream: &mut S) -> Result<(), NodeError> {
     let header: wallhack_wire::data::TcpStreamHeader = stream

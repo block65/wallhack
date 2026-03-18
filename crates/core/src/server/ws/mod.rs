@@ -280,7 +280,6 @@ impl Server for WebSocketServer {
 
         // Spawn control stream task with handler
         let handler_config = self.options.handler_config.clone();
-        let metrics_ctrl = Arc::clone(&metrics);
         let peers_ctrl = self
             .options
             .peers
@@ -300,27 +299,32 @@ impl Server for WebSocketServer {
             tx
         });
 
-        tokio::spawn(async move {
-            let handler = Handler::new(
-                handler_config,
-                metrics_ctrl,
-                peers_ctrl,
-                routes_ctrl,
-                route_updates,
-            );
-            let mut channels = protocol::ControlChannels {
-                outgoing_rx: control_rx,
-                handshake_tx: None, // Handshake already read above
-                latency_tx: Some(latency_tx),
-                control_response_tx: None, // server doesn't issue ControlRequests
-                role_transition_tx: None,
-            };
-            let mut control_stream = wallhack_transport::erased::BoxBiStream::new(control_stream);
-            let exit = channels
-                .run(&mut control_stream, Some(&handler), Duration::from_secs(30))
-                .await;
-            tracing::debug!("Control stream finished: {exit:?}");
-        });
+        {
+            let metrics = Arc::clone(&metrics);
+            tokio::spawn(async move {
+                let handler = Handler::new(
+                    handler_config,
+                    metrics,
+                    peers_ctrl,
+                    routes_ctrl,
+                    route_updates,
+                );
+                let mut channels = protocol::ControlChannels {
+                    outgoing_rx: control_rx,
+                    handshake_tx: None, // Handshake already read above
+                    latency_tx: Some(latency_tx),
+                    control_response_tx: None, // server doesn't issue ControlRequests
+                    role_transition_tx: None,
+                    peer_announcement_tx: None,
+                };
+                let mut control_stream =
+                    wallhack_transport::erased::BoxBiStream::new(control_stream);
+                let exit = channels
+                    .run(&mut control_stream, Some(&handler), Duration::from_secs(30))
+                    .await;
+                tracing::debug!("Control stream finished: {exit:?}");
+            });
+        }
 
         // Data tasks are NOT spawned here — the caller does that after PSK validation.
         Ok(Some(AcceptResult::with_handshake(

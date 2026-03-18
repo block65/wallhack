@@ -154,6 +154,7 @@ const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(50
 /// # Errors
 ///
 /// Returns error if server or connection setup fails.
+// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, node_state through mode dispatch
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     global: &GlobalConfig,
@@ -311,6 +312,7 @@ where
 /// Run entry node in connect mode.
 ///
 /// DNS resolve once, then retry loop with exponential backoff.
+// REASON: symmetric quic/ws connect arms each with API start, session loop, and route cleanup
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn run_entry_connect(
     global: &GlobalConfig,
@@ -365,7 +367,7 @@ pub(crate) async fn run_entry_connect(
                     &security,
                     Some(entry_handshake),
                 );
-                let r_updates = res.route_updates.resubscribe();
+                let route_updates = res.route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -376,14 +378,22 @@ pub(crate) async fn run_entry_connect(
                         }
                     },
                     move |connect_result| {
-                        let e = connect_result.erase();
-                        let m = Arc::clone(&metrics);
-                        let p = Arc::clone(&peers);
-                        let r = Arc::clone(&routes);
-                        let ru = r_updates.resubscribe();
-                        let pa = peer_addr.clone();
+                        let erased = connect_result.erase();
+                        let metrics = Arc::clone(&metrics);
+                        let peers = Arc::clone(&peers);
+                        let routes = Arc::clone(&routes);
+                        let route_updates = route_updates.resubscribe();
+                        let peer_addr = peer_addr.clone();
                         async move {
-                            run_entry_connected_erased(e, &m, &pa, Some(p), Some(r), Some(ru)).await
+                            run_entry_connected_erased(
+                                erased,
+                                &metrics,
+                                &peer_addr,
+                                Some(peers),
+                                Some(routes),
+                                Some(route_updates),
+                            )
+                            .await
                         }
                     },
                     RECONNECT_DELAY,
@@ -403,7 +413,7 @@ pub(crate) async fn run_entry_connect(
                     &security,
                     Some(entry_handshake),
                 );
-                let r_updates = res.route_updates.resubscribe();
+                let route_updates = res.route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -413,14 +423,22 @@ pub(crate) async fn run_entry_connect(
                         }
                     },
                     move |connect_result| {
-                        let e = connect_result.erase();
-                        let m = Arc::clone(&metrics);
-                        let p = Arc::clone(&peers);
-                        let r = Arc::clone(&routes);
-                        let ru = r_updates.resubscribe();
-                        let pa = peer_addr.clone();
+                        let erased = connect_result.erase();
+                        let metrics = Arc::clone(&metrics);
+                        let peers = Arc::clone(&peers);
+                        let routes = Arc::clone(&routes);
+                        let route_updates = route_updates.resubscribe();
+                        let peer_addr = peer_addr.clone();
                         async move {
-                            run_entry_connected_erased(e, &m, &pa, Some(p), Some(r), Some(ru)).await
+                            run_entry_connected_erased(
+                                erased,
+                                &metrics,
+                                &peer_addr,
+                                Some(peers),
+                                Some(routes),
+                                Some(route_updates),
+                            )
+                            .await
                         }
                     },
                     RECONNECT_DELAY,
@@ -478,6 +496,7 @@ pub(crate) async fn run_entry_connected_erased(
 
     // Wait for the server's handshake to get the peer name
     let peer_name = if let Some(rx) = peer_handshake_rx {
+        // REASON: the else arm logs a warning and returns None — collapsing loses the diagnostic
         #[allow(clippy::single_match_else)]
         match rx.await {
             Ok(h) => Some(h.name),
@@ -518,6 +537,7 @@ pub(crate) async fn run_entry_connected_erased(
 }
 
 /// Non-generic inner: monomorphized once regardless of transport type.
+// REASON: threading transport, channels, control, metrics, peer info, peers, routes, route_updates
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) async fn run_entry_connected_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -538,22 +558,24 @@ pub(crate) async fn run_entry_connected_inner(
     tracing::info!("Connected to {peer_addr}");
 
     // Spawn outgoing data task: open uni stream, send instructions to peer.
-    let transport_out = Arc::clone(&transport);
-    tokio::spawn(async move {
-        match transport_out.open_uni_erased().await {
-            Ok(mut send) => {
-                if let Err(e) = wallhack_core::transport::protocol::run_send_instructions(
-                    &mut send,
-                    instructions_rx,
-                )
-                .await
-                {
-                    tracing::debug!("Send-instructions handler finished: {e}");
+    {
+        let transport = Arc::clone(&transport);
+        tokio::spawn(async move {
+            match transport.open_uni_erased().await {
+                Ok(mut send) => {
+                    if let Err(e) = wallhack_core::transport::protocol::run_send_instructions(
+                        &mut send,
+                        instructions_rx,
+                    )
+                    .await
+                    {
+                        tracing::debug!("Send-instructions handler finished: {e}");
+                    }
                 }
+                Err(e) => tracing::debug!("Failed to open send stream: {e}"),
             }
-            Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-        }
-    });
+        });
+    }
 
     let name = peer_name
         .filter(|n| !n.is_empty())
@@ -561,6 +583,7 @@ pub(crate) async fn run_entry_connected_inner(
     let actor = create_tun_with_retry(name.clone()).await?;
 
     // Apply existing routes
+    // REASON: outer guard is optional routes; inner guard is a distinct peer identity check
     #[allow(clippy::collapsible_if)]
     if let Some(r) = &routes {
         if let Some(pn) = peer_name {
@@ -639,6 +662,7 @@ struct EntryListenOptions {
 }
 
 /// Generic entry server loop that works with any `Server` implementation.
+// REASON: per-connection setup spans PSK validation, peer registration, transport extraction, and spawn
 #[allow(clippy::too_many_lines)]
 async fn run_entry_server<S: Server>(
     mut server: S,
@@ -684,8 +708,8 @@ where
 
                 let conn_metrics = accept_result.metrics();
                 let conn_sessions = sessions.clone();
-                let conn_peers = Arc::clone(&peers);
-                let conn_routes = Arc::clone(&routes);
+                let peers = Arc::clone(&peers);
+                let routes = Arc::clone(&routes);
                 let peer_route_updates = route_updates.resubscribe();
                 let peer_addr = accept_result.peer_addr().to_string();
 
@@ -708,13 +732,13 @@ where
                 let peer_name = identity.name.as_deref().unwrap_or(&peer_addr).to_string();
 
                 // Register peer in the registry and apply handshake capabilities.
-                let (peer_id, connection_id) = conn_peers.register(
+                let (peer_id, connection_id) = peers.register(
                     peer_name.clone(),
                     peer_addr.clone(),
                     identity.role,
                     wallhack_core::control::peers::ConnectionSide::Accept,
                 );
-                conn_peers.update_capabilities(&peer_id, &identity.capabilities);
+                peers.update_capabilities(&peer_id, &identity.capabilities);
 
                 // Extract transport and channels from the generic AcceptResult before
                 // spawning so the spawned future is non-generic.
@@ -734,8 +758,8 @@ where
                         channels,
                         control_tx,
                         sessions: conn_sessions.clone(),
-                        peers: Arc::clone(&conn_peers),
-                        routes: Arc::clone(&conn_routes),
+                        peers: Arc::clone(&peers),
+                        routes: Arc::clone(&routes),
                         route_updates: peer_route_updates,
                         peer: identity.name,
                         peer_addr: peer_addr.clone(),
@@ -744,11 +768,11 @@ where
 
                     // Unregister peer — connection ID check prevents evicting a
                     // newer connection that re-registered under the same name.
-                    conn_peers.unregister_if_current(&peer_name, connection_id);
+                    peers.unregister_if_current(&peer_name, connection_id);
 
                     // Clean up routes BEFORE deleting the TUN so that
                     // remove_os_route can still resolve the interface index.
-                    let removed_routes = conn_routes.remove_by_peer(&peer_name);
+                    let removed_routes = routes.remove_by_peer(&peer_name);
                     for entry in &removed_routes {
                         if let Some(tun) = conn_sessions.get_tun_for_peer(&peer_name) {
                             let _ = remove_os_route(&entry.cidr.to_string(), &tun);
@@ -914,6 +938,7 @@ pub(crate) fn spawn_data_tasks(
 /// On exit (normal or error), the manager task is aborted and joined so
 /// the `ConnectionManager` (and its TUN fd Arcs) are dropped before the
 /// caller runs `delete_tun`.
+// REASON: threading manager_handle, control, latency, route_updates, peer info, peers, tun_name
 #[allow(clippy::too_many_arguments)]
 async fn run_connection_loop(
     mut manager_handle: tokio::task::JoinHandle<Result<(), wallhack_core::entry::manager::Error>>,
@@ -1082,6 +1107,7 @@ impl ConnectionParams {
 }
 
 #[cfg(feature = "http-api")]
+// REASON: threading api_addr, metrics, peers, routes, tls_config, username, secret, version into API state
 #[allow(clippy::too_many_arguments)]
 fn start_api(
     api_addr: std::net::SocketAddr,

@@ -156,7 +156,7 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
 
     let (shutdown_tx, _shutdown_rx) = watch::channel(());
 
-    let handle_peers = Arc::clone(&peers);
+    let peers_for_handle = Arc::clone(&peers);
     let config = config.clone();
     let resources = mode::NodeResources {
         metrics,
@@ -168,5 +168,10 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
     };
     let task = tokio::spawn(async move { mode::run(&config, resources).await.map_err(Into::into) });
 
-    Ok(DaemonHandle::new(node_api, handle_peers, shutdown_tx, task))
+    Ok(DaemonHandle::new(
+        node_api,
+        peers_for_handle,
+        shutdown_tx,
+        task,
+    ))
 }
