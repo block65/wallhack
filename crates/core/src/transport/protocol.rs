@@ -143,8 +143,9 @@ pub struct ControlChannels {
     pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
     /// `RoleTransition` forwarding to the mode task for re-evaluation.
     pub role_transition_tx: Option<mpsc::Sender<wallhack_wire::control::RoleTransition>>,
-    /// `PeerAnnouncement` forwarding — relays announce accepted peers to the source.
-    pub peer_announcement_tx: Option<mpsc::Sender<wallhack_wire::control::PeerAnnouncement>>,
+    /// Peer registry for handling relay `PeerAnnouncement` messages.
+    /// Announced peers are registered/unregistered directly in the registry.
+    pub peer_registry: Option<std::sync::Arc<crate::control::peers::Registry>>,
 }
 
 impl ControlChannels {
@@ -294,14 +295,31 @@ impl ControlChannels {
                 }
             }
             Some(control_message::Message::PeerAnnouncement(announcement)) => {
-                tracing::info!(
-                    "Control: peer announcement: {:?} {} ({})",
-                    announcement.event(),
-                    announcement.name,
-                    announcement.addr,
-                );
-                if let Some(ref tx) = self.peer_announcement_tx {
-                    let _ = tx.send(announcement).await;
+                use wallhack_wire::control::peer_announcement;
+                if let Some(ref registry) = self.peer_registry {
+                    match announcement.event() {
+                        peer_announcement::Event::Connected => {
+                            let role = wallhack_wire::data::NodeRole::try_from(announcement.role)
+                                .unwrap_or_default()
+                                .into();
+                            tracing::info!(
+                                "Peer announced: {} ({}) role={role:?}",
+                                announcement.name,
+                                announcement.addr,
+                            );
+                            registry.register(
+                                announcement.name,
+                                announcement.addr,
+                                role,
+                                crate::control::peers::ConnectionSide::Accept,
+                            );
+                        }
+                        peer_announcement::Event::Disconnected => {
+                            tracing::info!("Peer departed: {}", announcement.name);
+                            registry.unregister(&announcement.name);
+                        }
+                        _ => {}
+                    }
                 }
             }
             None => {
@@ -684,7 +702,7 @@ mod tests {
                 latency_tx: None,
                 control_response_tx: None,
                 role_transition_tx: None,
-                peer_announcement_tx: None,
+                peer_registry: None,
             };
             let mut stream_a = BoxBiStream::new(stream_a);
             channels
@@ -699,7 +717,7 @@ mod tests {
                 latency_tx: None,
                 control_response_tx: None,
                 role_transition_tx: None,
-                peer_announcement_tx: None,
+                peer_registry: None,
             };
             let mut stream_b = BoxBiStream::new(stream_b);
             channels
@@ -754,7 +772,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
-            peer_announcement_tx: None,
+            peer_registry: None,
         };
 
         let mut stream_b = BoxBiStream::new(stream_b);
@@ -782,7 +800,7 @@ mod tests {
             latency_tx: Some(latency_tx),
             control_response_tx: None,
             role_transition_tx: None,
-            peer_announcement_tx: None,
+            peer_registry: None,
         };
 
         // Spawn the control loop on side B (will read from stream_b).
@@ -864,7 +882,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
-            peer_announcement_tx: None,
+            peer_registry: None,
         };
 
         // Control loop with 1-second ping interval.
@@ -938,7 +956,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
-            peer_announcement_tx: None,
+            peer_registry: None,
         };
 
         let server_handle = tokio::spawn(async move {
@@ -1070,7 +1088,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
-            peer_announcement_tx: None,
+            peer_registry: None,
         };
 
         let server_handle = tokio::spawn(async move {

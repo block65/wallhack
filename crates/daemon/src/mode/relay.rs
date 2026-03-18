@@ -286,6 +286,9 @@ async fn run_relay_loop_inner(
     };
     let (peer_name, peer_role) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
 
+    // Clone before heartbeat takes ownership — used for peer announcements.
+    let announce_tx = source_control_tx.clone();
+
     peers.register(
         peer_name.clone(),
         peer_addr.clone(),
@@ -374,6 +377,59 @@ async fn run_relay_loop_inner(
             }
         }
     });
+
+    // Forward accepted peer events to the source peer as PeerAnnouncements.
+    // The source (entry) registers these peers for topology visibility.
+    {
+        let mut peer_events = peers.subscribe();
+        let source_peer_name = peer_name.clone();
+        tokio::spawn(async move {
+            use wallhack_core::control::peers::PeerEvent;
+            use wallhack_wire::control::{
+                ControlMessage, PeerAnnouncement, control_message, peer_announcement,
+            };
+
+            loop {
+                match peer_events.recv().await {
+                    Ok(PeerEvent::Connected { name, addr, role }) if name != source_peer_name => {
+                        let announcement = PeerAnnouncement {
+                            event: peer_announcement::Event::Connected.into(),
+                            name,
+                            addr,
+                            role: wallhack_wire::data::NodeRole::from(role).into(),
+                            routes: Vec::new(),
+                        };
+                        let msg = ControlMessage {
+                            message: Some(control_message::Message::PeerAnnouncement(announcement)),
+                        };
+                        if announce_tx.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(PeerEvent::Disconnected { name }) if name != source_peer_name => {
+                        let announcement = PeerAnnouncement {
+                            event: peer_announcement::Event::Disconnected.into(),
+                            name,
+                            addr: String::new(),
+                            role: 0,
+                            routes: Vec::new(),
+                        };
+                        let msg = ControlMessage {
+                            message: Some(control_message::Message::PeerAnnouncement(announcement)),
+                        };
+                        if announce_tx.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(_) => {} // skip source peer events
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("Peer announcement forwarder lagged {n} events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
 
     let listener_fut = run_listener(
         global,

@@ -302,6 +302,7 @@ impl Server for WebSocketServer {
         {
             let metrics = Arc::clone(&metrics);
             tokio::spawn(async move {
+                let peer_registry = Arc::clone(&peers_ctrl);
                 let handler = Handler::new(
                     handler_config,
                     metrics,
@@ -315,7 +316,7 @@ impl Server for WebSocketServer {
                     latency_tx: Some(latency_tx),
                     control_response_tx: None, // server doesn't issue ControlRequests
                     role_transition_tx: None,
-                    peer_announcement_tx: None,
+                    peer_registry: Some(peer_registry),
                 };
                 let mut control_stream =
                     wallhack_transport::erased::BoxBiStream::new(control_stream);
