@@ -303,7 +303,7 @@ impl ControlChannels {
                                 .unwrap_or_default()
                                 .into();
                             tracing::info!(
-                                "Peer announced: {} ({}) role={role:?}",
+                                "connected with {} ({}) via relay, role={role:?}",
                                 announcement.name,
                                 announcement.addr,
                             );
@@ -315,7 +315,11 @@ impl ControlChannels {
                             );
                         }
                         peer_announcement::Event::Disconnected => {
-                            tracing::info!("Peer disconnected (via relay): {}", announcement.name);
+                            tracing::info!(
+                                "disconnected from {} ({}) via relay",
+                                announcement.name,
+                                announcement.addr,
+                            );
                             registry.unregister(&announcement.name);
                         }
                         _ => {}
