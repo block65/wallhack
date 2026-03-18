@@ -143,6 +143,8 @@ pub struct ControlChannels {
     pub control_response_tx: Option<mpsc::Sender<wallhack_wire::control::ControlResponse>>,
     /// `RoleTransition` forwarding to the mode task for re-evaluation.
     pub role_transition_tx: Option<mpsc::Sender<wallhack_wire::control::RoleTransition>>,
+    /// `PeerAnnouncement` forwarding — relays announce accepted peers to the source.
+    pub peer_announcement_tx: Option<mpsc::Sender<wallhack_wire::control::PeerAnnouncement>>,
 }
 
 impl ControlChannels {
@@ -289,6 +291,17 @@ impl ControlChannels {
                 tracing::info!("Control: received RoleTransition: {:?}", rt.new_role());
                 if let Some(ref tx) = self.role_transition_tx {
                     let _ = tx.send(rt).await;
+                }
+            }
+            Some(control_message::Message::PeerAnnouncement(announcement)) => {
+                tracing::info!(
+                    "Control: peer announcement: {:?} {} ({})",
+                    announcement.event(),
+                    announcement.name,
+                    announcement.addr,
+                );
+                if let Some(ref tx) = self.peer_announcement_tx {
+                    let _ = tx.send(announcement).await;
                 }
             }
             None => {
@@ -671,6 +684,7 @@ mod tests {
                 latency_tx: None,
                 control_response_tx: None,
                 role_transition_tx: None,
+                peer_announcement_tx: None,
             };
             let mut stream_a = BoxBiStream::new(stream_a);
             channels
@@ -685,6 +699,7 @@ mod tests {
                 latency_tx: None,
                 control_response_tx: None,
                 role_transition_tx: None,
+                peer_announcement_tx: None,
             };
             let mut stream_b = BoxBiStream::new(stream_b);
             channels
@@ -739,6 +754,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
+            peer_announcement_tx: None,
         };
 
         let mut stream_b = BoxBiStream::new(stream_b);
@@ -766,6 +782,7 @@ mod tests {
             latency_tx: Some(latency_tx),
             control_response_tx: None,
             role_transition_tx: None,
+            peer_announcement_tx: None,
         };
 
         // Spawn the control loop on side B (will read from stream_b).
@@ -847,6 +864,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
+            peer_announcement_tx: None,
         };
 
         // Control loop with 1-second ping interval.
@@ -920,6 +938,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
+            peer_announcement_tx: None,
         };
 
         let server_handle = tokio::spawn(async move {
@@ -1051,6 +1070,7 @@ mod tests {
             latency_tx: None,
             control_response_tx: None,
             role_transition_tx: None,
+            peer_announcement_tx: None,
         };
 
         let server_handle = tokio::spawn(async move {
