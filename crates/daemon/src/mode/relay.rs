@@ -686,12 +686,12 @@ fn handle_relay_connection(
         responses_rx,
     } = channels;
 
-    let (peer_name, peer_role) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
+    let (peer_name, _) = resolve_peer(peer_handshake.as_ref(), &peer_addr);
 
     peers.register(
         peer_name.clone(),
         peer_addr,
-        peer_role,
+        NodeRole::Exit, // relay's Fixed(Entry) hint forces accepted peers to Exit
         ConnectionSide::Accept,
     );
 
