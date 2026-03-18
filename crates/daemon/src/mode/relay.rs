@@ -92,7 +92,8 @@ fn build_server_options(cfg: &RelayConfig, version: &str, metrics: Arc<Metrics>)
 /// # Errors
 ///
 /// Returns error if a non-retryable connection error occurs.
-#[allow(clippy::too_many_lines)] // symmetric quic/ws dispatch arms
+// REASON: symmetric quic/ws dispatch arms
+#[allow(clippy::too_many_lines)]
 pub async fn run(
     global: &GlobalConfig,
     cfg: &RelayConfig,
@@ -147,7 +148,7 @@ pub async fn run(
                 );
                 let listen_spec = cfg.listen.clone();
                 let global = global.clone();
-                let peers_quic = Arc::clone(&peers);
+                let peers = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -158,20 +159,20 @@ pub async fn run(
                         }
                     },
                     |connect_result| {
-                        let e = connect_result.erase();
+                        let erased = connect_result.erase();
                         let global = global.clone();
                         let listen_spec = listen_spec.clone();
                         let server_options = server_options.clone();
-                        let peers = Arc::clone(&peers_quic);
+                        let peers = Arc::clone(&peers);
                         async move {
                             run_relay_loop_inner(
-                                e.peer_addr,
-                                e.transport,
-                                e.channels,
-                                e.tasks,
-                                e.control_tx,
-                                e.peer_handshake_rx,
-                                e.latency_rx,
+                                erased.peer_addr,
+                                erased.transport,
+                                erased.channels,
+                                erased.tasks,
+                                erased.control_tx,
+                                erased.peer_handshake_rx,
+                                erased.latency_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -202,7 +203,7 @@ pub async fn run(
                 );
                 let listen_spec = cfg.listen.clone();
                 let global = global.clone();
-                let peers_ws = Arc::clone(&peers);
+                let peers = Arc::clone(&peers);
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -212,20 +213,20 @@ pub async fn run(
                         }
                     },
                     |connect_result| {
-                        let e = connect_result.erase();
+                        let erased = connect_result.erase();
                         let global = global.clone();
                         let listen_spec = listen_spec.clone();
                         let server_options = server_options.clone();
-                        let peers = Arc::clone(&peers_ws);
+                        let peers = Arc::clone(&peers);
                         async move {
                             run_relay_loop_inner(
-                                e.peer_addr,
-                                e.transport,
-                                e.channels,
-                                e.tasks,
-                                e.control_tx,
-                                e.peer_handshake_rx,
-                                e.latency_rx,
+                                erased.peer_addr,
+                                erased.transport,
+                                erased.channels,
+                                erased.tasks,
+                                erased.control_tx,
+                                erased.peer_handshake_rx,
+                                erased.latency_rx,
                                 &global,
                                 &listen_spec,
                                 addr,
@@ -252,6 +253,7 @@ pub async fn run(
 /// Starts the listener, bridges channels, and returns `Ok(())` when the
 /// source peer disconnects so `connect_loop` reconnects.
 /// Non-generic relay loop: monomorphized once regardless of transport type.
+// REASON: threading source transport, channels, and shutdown signal; body spans source peer setup + listener spawn
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_relay_loop_inner(
     peer_addr: String,
@@ -308,17 +310,19 @@ async fn run_relay_loop_inner(
     // Outgoing: open uni stream to source, send exit-peer responses (relay → entry).
     // The connect() incoming task already handles entry→relay instructions via
     // source_instr_tx; here we send the collected exit responses back to the entry.
-    let transport_resp = std::sync::Arc::clone(&transport);
-    tokio::spawn(async move {
-        match transport_resp.open_uni_erased().await {
-            Ok(mut send) => {
-                if let Err(e) = run_send_responses(&mut send, source_resp_rx).await {
-                    tracing::debug!("Send-responses to source finished: {e}");
+    {
+        let transport = std::sync::Arc::clone(&transport);
+        tokio::spawn(async move {
+            match transport.open_uni_erased().await {
+                Ok(mut send) => {
+                    if let Err(e) = run_send_responses(&mut send, source_resp_rx).await {
+                        tracing::debug!("Send-responses to source finished: {e}");
+                    }
                 }
+                Err(e) => tracing::debug!("Failed to open send stream to source: {e}"),
             }
-            Err(e) => tracing::debug!("Failed to open send stream to source: {e}"),
-        }
-    });
+        });
+    }
 
     // Spawn the instruction fan-out task: reads from source_instr_rx and
     // forwards each instruction to all connected exit peers.
@@ -333,12 +337,12 @@ async fn run_relay_loop_inner(
     // Source→peer bidi bridge: single accept loop on the source transport.
     // When a bidi stream arrives from the source, opens a matching bidi to
     // the current peer and splices them together.
-    let source_transport_bi = Arc::clone(&transport);
+    let transport_for_bidi = Arc::clone(&transport);
     let mut shutdown_bidi = shutdown_rx.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                result = source_transport_bi.accept_bi_erased() => {
+                result = transport_for_bidi.accept_bi_erased() => {
                     match result {
                         Ok(Some(source_stream)) => {
                             let current_peer = peer_transport_rx.borrow().clone();
@@ -643,29 +647,31 @@ fn handle_relay_connection(
 
     // Incoming: accept uni stream from exit peer, dispatch data messages.
     // Exit peers send ExitNodeResponses which are dispatched via responses_tx.
-    let peer_transport_uni = std::sync::Arc::clone(&transport);
-    let instr_tx = instructions_tx.clone();
-    let resp_tx = responses_tx.clone();
-    tokio::spawn(async move {
-        match peer_transport_uni.accept_uni_erased().await {
-            Ok(Some(mut recv)) => {
-                if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
-                    tracing::debug!("Relay peer data-in finished: {e}");
+    {
+        let transport = std::sync::Arc::clone(&transport);
+        let instr_tx = instructions_tx.clone();
+        let resp_tx = responses_tx.clone();
+        tokio::spawn(async move {
+            match transport.accept_uni_erased().await {
+                Ok(Some(mut recv)) => {
+                    if let Err(e) = run_data_in(&mut recv, &instr_tx, &resp_tx).await {
+                        tracing::debug!("Relay peer data-in finished: {e}");
+                    }
                 }
+                Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
+                Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
             }
-            Ok(None) => tracing::debug!("Relay peer transport closed before data-in"),
-            Err(e) => tracing::debug!("Relay peer failed to accept data-in: {e}"),
-        }
-    });
+        });
+    }
 
     // Outgoing: open uni stream to exit peer, send instructions from the entry.
     // instructions_rx receives instructions distributed by the fan-out task.
-    let peer_transport_instr = std::sync::Arc::clone(&transport);
     {
+        let transport = std::sync::Arc::clone(&transport);
         let peer_name = peer_name.clone();
         let peers = Arc::clone(peers);
         tokio::spawn(async move {
-            match peer_transport_instr.open_uni_erased().await {
+            match transport.open_uni_erased().await {
                 Ok(mut send) => {
                     if let Err(e) = run_send_instructions(&mut send, instructions_rx).await {
                         tracing::debug!("Relay peer send-instructions finished: {e}");

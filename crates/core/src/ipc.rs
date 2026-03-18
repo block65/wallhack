@@ -115,10 +115,10 @@ pub async fn run_ipc_listener(
             }
             result = listener.accept() => {
                 let (stream, _addr) = result.context("accepting IPC connection")?;
-                let api = Arc::clone(&node_api);
+                let node_api = Arc::clone(&node_api);
                 let events_rx = peer_events.subscribe();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, api, Some(events_rx)).await {
+                    if let Err(e) = handle_connection(stream, node_api, Some(events_rx)).await {
                         tracing::debug!(error = %e, "IPC connection ended");
                     }
                 });
@@ -167,10 +167,10 @@ pub async fn run_vsock_listener(
                 match result {
                     Ok((stream, addr)) => {
                         tracing::debug!(cid = addr.cid(), port = addr.port(), "vsock IPC connection");
-                        let api = Arc::clone(&node_api);
+                        let node_api = Arc::clone(&node_api);
                         let events_rx = peer_events.subscribe();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_connection(stream, api, Some(events_rx)).await {
+                            if let Err(e) = handle_connection(stream, node_api, Some(events_rx)).await {
                                 tracing::debug!(error = %e, "vsock IPC connection ended");
                             }
                         });

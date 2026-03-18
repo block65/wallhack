@@ -45,6 +45,7 @@ const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// # Errors
 ///
 /// Returns error if the connection setup fails non-retryably.
+// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, node_state through mode dispatch
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     global: &GlobalConfig,
@@ -165,9 +166,9 @@ fn is_routable_cidr(cidr: &wallhack_core::Cidr) -> bool {
         && !addr.is_loopback()
         && !match addr {
             IpAddr::V4(a) => a.is_link_local(),
-            IpAddr::V6(a) => {
-                let o = a.octets();
-                o[0] == 0xfe && (o[1] & 0xc0) == 0x80
+            IpAddr::V6(addr) => {
+                let octets = addr.octets();
+                octets[0] == 0xfe && (octets[1] & 0xc0) == 0x80
             }
         }
         && !addr.is_unspecified()
@@ -205,6 +206,7 @@ fn install_advertised_routes(
 // ============================================================================
 
 /// Auto connector: connect to a peer, negotiate role, run the session.
+// REASON: threading transport, metrics, peers, routes, route_updates through protocol-specific quic/ws arms
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 async fn run_auto_connector(
     global: &GlobalConfig,
@@ -251,8 +253,7 @@ async fn run_auto_connector(
                     &security,
                     Some(local_hs.clone()),
                 );
-                let lhs = local_hs;
-                let ru = route_updates.resubscribe();
+                let route_updates = route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -264,24 +265,24 @@ async fn run_auto_connector(
                     },
                     move |connect_result| {
                         // erase() is sync — runs before async move captures anything generic
-                        let e = connect_result.erase();
+                        let connect_result = connect_result.erase();
                         let metrics = Arc::clone(&metrics);
                         let peers = Arc::clone(&peers);
-                        let pa = peer_addr.clone();
-                        let lhs = lhs.clone();
-                        let ns = node_state.clone();
-                        let r = Arc::clone(&routes);
-                        let ru = ru.resubscribe();
+                        let peer_addr = peer_addr.clone();
+                        let local_hs = local_hs.clone();
+                        let node_state = node_state.clone();
+                        let routes = Arc::clone(&routes);
+                        let route_updates = route_updates.resubscribe();
                         async move {
                             run_auto_connect_session_dispatch(
-                                e,
-                                &lhs,
-                                &pa,
+                                connect_result,
+                                &local_hs,
+                                &peer_addr,
                                 metrics,
                                 peers,
-                                ns,
-                                Some(r),
-                                Some(ru),
+                                node_state,
+                                Some(routes),
+                                Some(route_updates),
                             )
                             .await
                         }
@@ -303,8 +304,7 @@ async fn run_auto_connector(
                     &security,
                     Some(local_hs.clone()),
                 );
-                let lhs = local_hs;
-                let ru = route_updates.resubscribe();
+                let route_updates = route_updates.resubscribe();
                 crate::transport::connect_loop(
                     || {
                         let cfg = client_config.clone();
@@ -315,24 +315,24 @@ async fn run_auto_connector(
                     },
                     move |connect_result| {
                         // erase() is sync — runs before async move captures anything generic
-                        let e = connect_result.erase();
+                        let connect_result = connect_result.erase();
                         let metrics = Arc::clone(&metrics);
                         let peers = Arc::clone(&peers);
-                        let pa = peer_addr.clone();
-                        let lhs = lhs.clone();
-                        let ns = node_state.clone();
-                        let r = Arc::clone(&routes);
-                        let ru = ru.resubscribe();
+                        let peer_addr = peer_addr.clone();
+                        let local_hs = local_hs.clone();
+                        let node_state = node_state.clone();
+                        let routes = Arc::clone(&routes);
+                        let route_updates = route_updates.resubscribe();
                         async move {
                             run_auto_connect_session_dispatch(
-                                e,
-                                &lhs,
-                                &pa,
+                                connect_result,
+                                &local_hs,
+                                &peer_addr,
                                 metrics,
                                 peers,
-                                ns,
-                                Some(r),
-                                Some(ru),
+                                node_state,
+                                Some(routes),
+                                Some(route_updates),
                             )
                             .await
                         }
@@ -348,6 +348,7 @@ async fn run_auto_connector(
 }
 
 /// Non-generic auto-connector dispatch: negotiates role and runs the session.
+// REASON: symmetric entry/exit/relay/indeterminate negotiation arms, each with distinct session logic
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_connect_session_dispatch(
     connect_result: wallhack_core::client::client::ErasedConnectResult,
@@ -418,8 +419,8 @@ async fn run_auto_connect_session_dispatch(
             // applies routes from the table when it creates the TUN, so they
             // must be in the table before we call it.
             let peer_name = peer_hs.name.as_str();
-            let routes_for_cleanup = routes.as_ref().map(Arc::clone);
-            let tun_name_for_cleanup = if peer_name.is_empty() {
+            let routes = routes.as_ref().map(Arc::clone);
+            let tun_name = if peer_name.is_empty() {
                 None
             } else {
                 Some(super::entry::peer_name_to_iface(peer_name))
@@ -442,14 +443,14 @@ async fn run_auto_connect_session_dispatch(
                 Some(peer_name),
                 Some(Arc::clone(&peers)),
                 latency_rx,
-                routes,
+                routes.clone(),
                 route_updates,
             )
             .await;
 
             // Remove auto-managed routes and their OS entries now that the
             // session has ended.
-            if let (Some(r), Some(tun)) = (routes_for_cleanup, tun_name_for_cleanup) {
+            if let (Some(r), Some(tun)) = (routes, tun_name) {
                 let removed = r.remove_auto_by_peer(peer_name);
                 if !removed.is_empty() {
                     tracing::info!(
@@ -482,18 +483,21 @@ async fn run_auto_connect_session_dispatch(
                 peer_hs.name
             };
             // Spawn the outgoing data task (send responses to entry peer).
-            let transport_out = Arc::clone(&transport);
-            tokio::spawn(async move {
-                match transport_out.open_uni_erased().await {
-                    Ok(mut send) => {
-                        if let Err(e) = protocol::run_send_responses(&mut send, responses_rx).await
-                        {
-                            tracing::debug!("Auto exit send-responses finished: {e}");
+            {
+                let transport = Arc::clone(&transport);
+                tokio::spawn(async move {
+                    match transport.open_uni_erased().await {
+                        Ok(mut send) => {
+                            if let Err(e) =
+                                protocol::run_send_responses(&mut send, responses_rx).await
+                            {
+                                tracing::debug!("Auto exit send-responses finished: {e}");
+                            }
                         }
+                        Err(e) => tracing::debug!("Auto exit failed to open send stream: {e}"),
                     }
-                    Err(e) => tracing::debug!("Auto exit failed to open send stream: {e}"),
-                }
-            });
+                });
+            }
             drop(tasks);
             let heartbeat = super::spawn_heartbeat(
                 control_tx,
@@ -563,6 +567,7 @@ async fn hold_until_disconnect(mut tasks: wallhack_core::client::client::Connect
 }
 
 /// Non-generic exit session handler for the auto-connector path.
+// REASON: threading transport, instructions, responses, heartbeat, role, peer info, metrics, peers
 #[allow(clippy::too_many_arguments)]
 async fn run_auto_exit_session_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -614,6 +619,7 @@ async fn run_auto_exit_session_inner(
 // ============================================================================
 
 /// Auto listener: accept connections, negotiate role, dispatch.
+// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, node_state through listener
 #[allow(clippy::too_many_arguments)]
 async fn run_auto_listener(
     global: &GlobalConfig,
@@ -665,16 +671,16 @@ async fn run_auto_listener(
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
                 let bound = server.local_addr()?;
                 node_state.set_listen_addr(bound);
-                let ru = route_updates.resubscribe();
-                let r = Arc::clone(&routes);
+                let route_updates = route_updates.resubscribe();
+                let routes = Arc::clone(&routes);
                 run_auto_accept_loop(
                     server,
                     local_hs,
                     global.psk.clone(),
                     metrics,
                     peers,
-                    r,
-                    ru,
+                    routes,
+                    route_updates,
                     node_state,
                 )
                 .await
@@ -691,16 +697,16 @@ async fn run_auto_listener(
                 )?;
                 let bound = server.local_addr()?;
                 node_state.set_listen_addr(bound);
-                let ru = route_updates.resubscribe();
-                let r = Arc::clone(&routes);
+                let route_updates = route_updates.resubscribe();
+                let routes = Arc::clone(&routes);
                 run_auto_accept_loop(
                     server,
                     local_hs,
                     global.psk.clone(),
                     metrics,
                     peers,
-                    r,
-                    ru,
+                    routes,
+                    route_updates,
                     node_state,
                 )
                 .await
@@ -712,6 +718,7 @@ async fn run_auto_listener(
 }
 
 /// Accept loop for auto-negotiation listener.
+// REASON: threading local_hs, psk, metrics, peers, routes, route_updates, node_state through generic accept loop
 #[allow(clippy::too_many_arguments)]
 async fn run_auto_accept_loop<S: Server>(
     mut server: S,
@@ -784,8 +791,8 @@ where
                 let metrics = Arc::clone(&metrics);
                 let peers = Arc::clone(&peers);
                 let routes = Arc::clone(&routes);
-                let ru = route_updates.resubscribe();
-                let ns = node_state.clone();
+                let route_updates = route_updates.resubscribe();
+                let node_state = node_state.clone();
 
                 tokio::spawn(async move {
                     if let Err(e) = run_auto_accept_session_inner(
@@ -800,9 +807,9 @@ where
                         metrics,
                         peers,
                         Some(routes),
-                        Some(ru),
+                        Some(route_updates),
                         peer_addr,
-                        ns,
+                        node_state,
                         latency_rx,
                     )
                     .await
@@ -828,6 +835,7 @@ where
 ///
 /// All generic extraction (transport, channels, handshake) happens in the
 /// caller before spawning, so this function is monomorphized only once.
+// REASON: symmetric entry/exit/relay/indeterminate negotiation arms, each with distinct session setup
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_accept_session_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -901,6 +909,7 @@ async fn run_auto_accept_session_inner(
             }
 
             // Apply all routes (user-configured and newly-advertised) to the TUN.
+            // REASON: outer guard is an option, inner guard is a separate semantic check on peer identity
             #[allow(clippy::collapsible_if)]
             if let Some(r) = &routes {
                 if !peer_hs.name.is_empty() {
@@ -930,6 +939,7 @@ async fn run_auto_accept_session_inner(
                     loop {
                         match updates.recv().await {
                             Ok(wallhack_core::control::routes::RouteUpdate::Add(entry)) => {
+                                // REASON: peer match is a route filter; OS call error is a separate concern
                                 #[allow(clippy::collapsible_if)]
                                 if Some(entry.peer.as_str()) == peer.as_deref() {
                                     if let Err(e) =
@@ -939,8 +949,8 @@ async fn run_auto_accept_session_inner(
                                     }
                                 }
                             }
-                            Ok(wallhack_core::control::routes::RouteUpdate::Remove(entry)) =>
-                            {
+                            Ok(wallhack_core::control::routes::RouteUpdate::Remove(entry)) => {
+                                // REASON: peer match is a route filter; OS call error is a separate concern
                                 #[allow(clippy::collapsible_if)]
                                 if Some(entry.peer.as_str()) == peer.as_deref() {
                                     if let Err(e) = crate::netlink::remove_os_route(
@@ -1037,34 +1047,40 @@ async fn run_auto_accept_session_inner(
             node_state.update_role(NodeRole::Exit);
 
             // Spawn data tasks for exit: incoming (peer→broadcasts) + outgoing (responses→peer).
-            let transport_in = Arc::clone(&transport);
-            let instructions_in = instructions_tx.clone();
-            let responses_in = responses_tx.clone();
-            tokio::spawn(async move {
-                match transport_in.accept_uni_erased().await {
-                    Ok(Some(mut recv)) => {
-                        if let Err(e) =
-                            protocol::run_data_in(&mut recv, &instructions_in, &responses_in).await
-                        {
-                            tracing::debug!("Auto exit data-in finished: {e}");
+            {
+                let transport = Arc::clone(&transport);
+                let instructions_in = instructions_tx.clone();
+                let responses_in = responses_tx.clone();
+                tokio::spawn(async move {
+                    match transport.accept_uni_erased().await {
+                        Ok(Some(mut recv)) => {
+                            if let Err(e) =
+                                protocol::run_data_in(&mut recv, &instructions_in, &responses_in)
+                                    .await
+                            {
+                                tracing::debug!("Auto exit data-in finished: {e}");
+                            }
                         }
+                        Ok(None) => tracing::debug!("Transport closed before data-in"),
+                        Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
                     }
-                    Ok(None) => tracing::debug!("Transport closed before data-in"),
-                    Err(e) => tracing::debug!("Failed to accept data-in stream: {e}"),
-                }
-            });
-            let transport_out = Arc::clone(&transport);
-            tokio::spawn(async move {
-                match transport_out.open_uni_erased().await {
-                    Ok(mut send) => {
-                        if let Err(e) = protocol::run_send_responses(&mut send, responses_rx).await
-                        {
-                            tracing::debug!("Auto exit send-responses finished: {e}");
+                });
+            }
+            {
+                let transport = Arc::clone(&transport);
+                tokio::spawn(async move {
+                    match transport.open_uni_erased().await {
+                        Ok(mut send) => {
+                            if let Err(e) =
+                                protocol::run_send_responses(&mut send, responses_rx).await
+                            {
+                                tracing::debug!("Auto exit send-responses finished: {e}");
+                            }
                         }
+                        Err(e) => tracing::debug!("Failed to open send stream: {e}"),
                     }
-                    Err(e) => tracing::debug!("Failed to open send stream: {e}"),
-                }
-            });
+                });
+            }
 
             let peer_name = if peer_hs.name.is_empty() {
                 peer_addr.clone()

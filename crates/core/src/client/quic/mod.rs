@@ -181,6 +181,7 @@ impl Client for QuicClient {
                 latency_tx: Some(latency_tx),
                 control_response_tx: None,
                 role_transition_tx: None,
+                peer_announcement_tx: None,
             };
             match protocol::run_control_stream_initiator(
                 &*transport_ctrl,
