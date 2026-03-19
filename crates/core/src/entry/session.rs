@@ -5,7 +5,10 @@ use wallhack_entry_stack::async_stack::tcp_stream::TcpStream;
 use wallhack_transport::{BiStream as _, ErasedTransport, TransportError};
 use wallhack_wire::data::{ResponseStatus, SessionProtocol, TcpStreamHeader, TcpStreamStatus};
 
-use crate::transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _};
+use crate::{
+    control::metrics::SharedMetrics,
+    transport::protocol::{AsyncProtoRead as _, AsyncProtoWrite as _},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -19,6 +22,7 @@ pub enum Error {
 pub async fn run_tcp_session<D>(
     mut local: TcpStream<D>,
     transport: Arc<dyn ErasedTransport>,
+    metrics: SharedMetrics,
 ) -> Result<(), Error>
 where
     D: smoltcp::phy::Device + Send + 'static,
@@ -64,6 +68,8 @@ where
     match copy_bidirectional_with_sizes(&mut local, &mut remote, 64 * 1024, 64 * 1024).await {
         Ok((to_remote, to_local)) => {
             tracing::debug!(?target, to_remote, to_local, "copy_bidirectional completed");
+            metrics.inc_bytes_out(to_remote);
+            metrics.inc_bytes_in(to_local);
         }
         Err(e) => {
             tracing::debug!(?target, error = %e, "copy_bidirectional failed");
