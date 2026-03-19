@@ -392,11 +392,15 @@ pub async fn add_route(
 
     match resp {
         Ok(r) => match r.response {
-            Some(management_response::Response::Ok(_)) => (
+            Some(management_response::Response::Ok(ok)) => (
                 StatusCode::CREATED,
                 Json(SuccessResponse {
                     success: true,
-                    message: None,
+                    message: if ok.warning.is_empty() {
+                        None
+                    } else {
+                        Some(ok.warning)
+                    },
                 }),
             ),
             Some(management_response::Response::Error(e)) => (

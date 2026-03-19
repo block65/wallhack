@@ -430,15 +430,32 @@ impl crate::node_api::NodeApi for Handler {
         ))
     }
 
-    fn add_route(&self, cidr: crate::Cidr, peer: String) -> crate::node_api::Result<()> {
+    fn add_route(
+        &self,
+        cidr: crate::Cidr,
+        peer: String,
+    ) -> crate::node_api::Result<Option<String>> {
         // Resolve peer name by prefix (will error if not found or ambiguous)
         let peer_info = self.peers.find_by_prefix(&peer)?;
 
-        let (_, new_entry) = self.routes.add(cidr, peer_info.name);
+        let (_, new_entry) = self.routes.add(cidr, peer_info.name.clone());
         let _ = self
             .route_updates
             .send(super::routes::RouteUpdate::Add(new_entry));
-        Ok(())
+
+        // Warn if the peer advertises routes but none of them cover the new CIDR.
+        // If the peer has no auto-routes at all, it may not advertise routes at all
+        // (e.g. an explicit-mode peer), so silence the warning in that case.
+        let auto_routes = self.routes.auto_routes_for_peer(&peer_info.name);
+        if !auto_routes.is_empty() && !auto_routes.iter().any(|r| r.cidr.contains(&cidr)) {
+            let warning = format!(
+                "peer {} does not advertise a route covering {cidr}; traffic may not reach the destination",
+                peer_info.name,
+            );
+            return Ok(Some(warning));
+        }
+
+        Ok(None)
     }
 
     fn route_del(&self, cidr: &crate::Cidr) -> crate::node_api::Result<()> {

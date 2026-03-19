@@ -356,7 +356,14 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
         Some(management_request::Request::RouteAdd(req)) => match req.cidr.parse() {
             Ok(cidr) => match api.add_route(cidr, req.peer.clone()) {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Ok(warning) => {
+                    if let Some(ref msg) = warning {
+                        tracing::warn!("{msg}");
+                    }
+                    management_response::Response::Ok(OkResponse {
+                        warning: warning.unwrap_or_default(),
+                    })
+                }
                 Err(e) => error_response(&e),
             },
             Err(_) => management_response::Response::Error(ErrorResponse {
@@ -367,7 +374,9 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
 
         Some(management_request::Request::RouteDel(req)) => match req.cidr.parse() {
             Ok(cidr) => match api.route_del(&cidr) {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Ok(()) => management_response::Response::Ok(OkResponse {
+                    warning: String::new(),
+                }),
                 Err(e) => error_response(&e),
             },
             Err(_) => management_response::Response::Error(ErrorResponse {
@@ -383,7 +392,9 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 api.peer_disconnect(req.peer.clone())
             };
             match result {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Ok(()) => management_response::Response::Ok(OkResponse {
+                    warning: String::new(),
+                }),
                 Err(ref e) => error_response(e),
             }
         }
@@ -412,7 +423,9 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         },
 
         Some(management_request::Request::Disconnect(_)) => match api.disconnect() {
-            Ok(()) => management_response::Response::Ok(OkResponse {}),
+            Ok(()) => management_response::Response::Ok(OkResponse {
+                warning: String::new(),
+            }),
             Err(e) => error_response(&e),
         },
 
@@ -420,7 +433,9 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             // Shutdown is handled by the caller via DaemonHandle, not NodeApi.
             // Return Ok here — the daemon layer should intercept ShutdownRequest
             // before it reaches dispatch, or handle it after dispatch returns.
-            management_response::Response::Ok(OkResponse {})
+            management_response::Response::Ok(OkResponse {
+                warning: String::new(),
+            })
         }
 
         Some(management_request::Request::HintSet(req)) => {
@@ -431,13 +446,17 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 target: target.into(),
             };
             match api.hint_set(hint) {
-                Ok(()) => management_response::Response::Ok(OkResponse {}),
+                Ok(()) => management_response::Response::Ok(OkResponse {
+                    warning: String::new(),
+                }),
                 Err(e) => error_response(&e),
             }
         }
 
         Some(management_request::Request::HintSetAuto(_)) => match api.hint_set_auto() {
-            Ok(()) => management_response::Response::Ok(OkResponse {}),
+            Ok(()) => management_response::Response::Ok(OkResponse {
+                warning: String::new(),
+            }),
             Err(e) => error_response(&e),
         },
 
