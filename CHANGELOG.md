@@ -1,6 +1,16 @@
 
 # Changelog
 
+## [0.11.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.11.0...wallhack-cli-v0.11.1) (2026-03-19)
+
+### Bug Fixes
+
+* **entry:** track TCP session bytes in traffic statistics ([16a1d65](https://github.com/block65/wallhack/commit/16a1d65323b5d634811e51601caf2a9952990590))
+* **transport:** use microsecond timestamps for sub-millisecond latency precision ([c06b5d5](https://github.com/block65/wallhack/commit/c06b5d5ddca57d720ae73c7f7e0395256d1037ad))
+
+6 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.11.0...wallhack-cli-v0.11.1)
+
+
 ## [0.11.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.10.0...wallhack-cli-v0.11.0) (2026-03-18)
 
 ### Features
