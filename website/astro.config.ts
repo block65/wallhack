@@ -1,9 +1,9 @@
 import markdoc from "@astrojs/markdoc";
 import sitemap from "@astrojs/sitemap";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "astro/config";
 import icon from "astro-icon";
 import pagefind from "astro-pagefind";
+import { defineConfig } from "astro/config";
 import { syncer } from "./vite-plugin-syncer.ts";
 
 export default defineConfig({

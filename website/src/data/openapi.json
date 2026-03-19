@@ -271,25 +271,6 @@
 					}
 				}
 			},
-			"PingResponse": {
-				"type": "object",
-				"required": ["uptime_ms", "version", "role"],
-				"properties": {
-					"uptime_ms": {
-						"type": "integer",
-						"description": "Node uptime in milliseconds."
-					},
-					"version": {
-						"type": "string",
-						"description": "Binary version string."
-					},
-					"role": {
-						"type": "string",
-						"enum": ["entry", "exit", "relay", "indeterminate", "unknown"],
-						"description": "Current operational role of the node or peer."
-					}
-				}
-			},
 			"HintSetRequest": {
 				"type": "object",
 				"required": ["level", "role"],
@@ -581,55 +562,6 @@
 					},
 					"400": { "description": "Not connected." },
 					"401": { "description": "Unauthorized." }
-				}
-			}
-		},
-		"/ping": {
-			"get": {
-				"summary": "Ping daemon",
-				"description": "Retrieves daemon liveness info: uptime, version, and role.",
-				"operationId": "ping",
-				"security": [{ "basicAuth": [] }],
-				"responses": {
-					"200": {
-						"description": "Daemon is alive.",
-						"content": {
-							"application/json": {
-								"schema": { "$ref": "#/components/schemas/PingResponse" }
-							}
-						}
-					},
-					"401": { "description": "Unauthorized." }
-				}
-			}
-		},
-		"/ping/{peer}": {
-			"get": {
-				"summary": "Ping peer",
-				"description": "Pings a specific connected peer by name or prefix.",
-				"operationId": "peerPing",
-				"security": [{ "basicAuth": [] }],
-				"parameters": [
-					{
-						"name": "peer",
-						"in": "path",
-						"required": true,
-						"schema": { "type": "string" },
-						"description": "Peer name or unambiguous prefix."
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "Peer responded.",
-						"content": {
-							"application/json": {
-								"schema": { "$ref": "#/components/schemas/PingResponse" }
-							}
-						}
-					},
-					"401": { "description": "Unauthorized." },
-					"404": { "description": "Peer not found." },
-					"501": { "description": "Peer ping not yet implemented." }
 				}
 			}
 		},

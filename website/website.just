@@ -4,7 +4,7 @@ set working-directory := "website"
 deps:
     pnpm install --frozen-lockfile --silent
 
-# Website lint (biome)
+# Website lint (oxlint)
 lint: deps
     pnpm check
 
