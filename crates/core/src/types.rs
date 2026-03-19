@@ -87,6 +87,44 @@ impl Cidr {
     pub fn prefix_len(&self) -> u8 {
         self.prefix_len
     }
+
+    /// Returns `true` if `other` is a subnet of (or equal to) `self`.
+    ///
+    /// Requires the same IP family. A CIDR contains another when the
+    /// other's prefix length is at least as long (i.e. it is more specific
+    /// or equal), and the other's network address falls within this network.
+    #[must_use]
+    pub fn contains(&self, other: &Cidr) -> bool {
+        match (self.addr, other.addr) {
+            (IpAddr::V4(self_v4), IpAddr::V4(other_v4)) => {
+                if other.prefix_len < self.prefix_len {
+                    return false;
+                }
+                let self_bits = u32::from(self_v4);
+                let other_bits = u32::from(other_v4);
+                if self.prefix_len == 0 {
+                    true
+                } else {
+                    let shift = 32u32.saturating_sub(u32::from(self.prefix_len));
+                    (self_bits >> shift) == (other_bits >> shift)
+                }
+            }
+            (IpAddr::V6(self_v6), IpAddr::V6(other_v6)) => {
+                if other.prefix_len < self.prefix_len {
+                    return false;
+                }
+                let self_bits = u128::from(self_v6);
+                let other_bits = u128::from(other_v6);
+                if self.prefix_len == 0 {
+                    true
+                } else {
+                    let shift = 128u32.saturating_sub(u32::from(self.prefix_len));
+                    (self_bits >> shift) == (other_bits >> shift)
+                }
+            }
+            _ => false, // mixed IP families never contain each other
+        }
+    }
 }
 
 impl FromStr for Cidr {
@@ -244,6 +282,72 @@ mod tests {
         assert_eq!(NodeRole::Entry.to_string(), "entry");
         assert_eq!(NodeRole::Relay.to_string(), "relay");
         assert_eq!(NodeRole::Exit.to_string(), "exit");
+    }
+
+    #[test]
+    fn test_cidr_contains_ipv4() {
+        let wide: Cidr = "10.0.0.0/8".parse().unwrap();
+        let narrow: Cidr = "10.99.3.0/24".parse().unwrap();
+        let equal: Cidr = "10.0.0.0/8".parse().unwrap();
+        let unrelated: Cidr = "192.168.0.0/16".parse().unwrap();
+        let broader: Cidr = "10.0.0.0/4".parse().unwrap();
+        let host: Cidr = "10.99.3.42/32".parse().unwrap();
+
+        assert!(
+            wide.contains(&narrow),
+            "10.0.0.0/8 should contain 10.99.3.0/24"
+        );
+        assert!(wide.contains(&equal), "a CIDR should contain itself");
+        assert!(
+            !wide.contains(&unrelated),
+            "10.0.0.0/8 should not contain 192.168.0.0/16"
+        );
+        assert!(
+            !wide.contains(&broader),
+            "10.0.0.0/8 should not contain 10.0.0.0/4"
+        );
+        assert!(
+            wide.contains(&host),
+            "10.0.0.0/8 should contain a host address within it"
+        );
+        assert!(
+            !narrow.contains(&wide),
+            "subnet should not contain supernet"
+        );
+    }
+
+    #[test]
+    fn test_cidr_contains_default_route() {
+        let default_route: Cidr = "0.0.0.0/0".parse().unwrap();
+        let any: Cidr = "192.168.100.0/24".parse().unwrap();
+        assert!(
+            default_route.contains(&any),
+            "0.0.0.0/0 should contain any IPv4 CIDR"
+        );
+    }
+
+    #[test]
+    fn test_cidr_contains_ipv6() {
+        let wide: Cidr = "fd00::/8".parse().unwrap();
+        let narrow: Cidr = "fd00:1234::/32".parse().unwrap();
+        let unrelated: Cidr = "2001:db8::/32".parse().unwrap();
+
+        assert!(
+            wide.contains(&narrow),
+            "fd00::/8 should contain fd00:1234::/32"
+        );
+        assert!(
+            !wide.contains(&unrelated),
+            "fd00::/8 should not contain 2001:db8::/32"
+        );
+    }
+
+    #[test]
+    fn test_cidr_contains_mixed_families() {
+        let v4: Cidr = "10.0.0.0/8".parse().unwrap();
+        let v6: Cidr = "fd00::/8".parse().unwrap();
+        assert!(!v4.contains(&v6), "IPv4 CIDR should not contain IPv6 CIDR");
+        assert!(!v6.contains(&v4), "IPv6 CIDR should not contain IPv4 CIDR");
     }
 
     #[test]

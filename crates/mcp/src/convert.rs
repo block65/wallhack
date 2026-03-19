@@ -89,7 +89,13 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             }
             Ok(out)
         }
-        Some(management_response::Response::Ok(_)) => Ok("OK".to_string()),
+        Some(management_response::Response::Ok(ok)) => {
+            if ok.warning.is_empty() {
+                Ok("OK".to_string())
+            } else {
+                Ok(format!("OK\nwarning: {}", ok.warning))
+            }
+        }
         Some(management_response::Response::Error(e)) => Err(e.message.clone()),
         None => Err("empty response from daemon".to_string()),
     }

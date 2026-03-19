@@ -157,8 +157,11 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                 println!("Fingerprint: {}", l.fingerprint);
             }
         }
-        Some(management_response::Response::Ok(_)) => {
+        Some(management_response::Response::Ok(ok)) => {
             println!("OK");
+            if !ok.warning.is_empty() {
+                eprintln!("warning: {}", ok.warning);
+            }
         }
         Some(management_response::Response::Error(e)) => {
             return Err(CtlError::Daemon(e.message.clone()));

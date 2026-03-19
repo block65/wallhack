@@ -215,7 +215,9 @@ enum ErrorCode {
   ERROR_CODE_PEER_AMBIGUOUS = 9;
 }
 
-message OkResponse {}
+message OkResponse {
+  string warning = 1; // non-fatal advisory (e.g. route reachability warning); empty when none
+}
 
 message ConnectResponse {
   string peer_addr = 1;    // resolved peer address

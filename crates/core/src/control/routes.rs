@@ -144,6 +144,21 @@ impl RouteTable {
         removed
     }
 
+    /// List all auto-managed routes for a specific peer.
+    ///
+    /// Returns routes that were installed from the peer's handshake
+    /// advertisement. Used to check whether a manually added route is
+    /// covered by what the peer actually advertises.
+    #[must_use]
+    pub fn auto_routes_for_peer(&self, peer: &str) -> Vec<RouteEntry> {
+        self.routes
+            .load()
+            .values()
+            .filter(|entry| entry.peer == peer && entry.auto_managed)
+            .cloned()
+            .collect()
+    }
+
     /// Look up a route by CIDR.
     #[must_use]
     pub fn get(&self, cidr: &Cidr) -> Option<RouteEntry> {
@@ -257,5 +272,32 @@ mod tests {
         let table = RouteTable::new();
         let removed = table.remove_by_peer("no-such-peer");
         assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_auto_routes_for_peer() {
+        let table = RouteTable::new();
+        let cidr_auto: Cidr = "10.99.1.0/24".parse().unwrap();
+        let cidr_manual: Cidr = "10.99.3.0/24".parse().unwrap();
+        let cidr_other: Cidr = "10.99.2.0/24".parse().unwrap();
+
+        table.add_auto(cidr_auto, "peer-1".into());
+        table.add(cidr_manual, "peer-1".into());
+        table.add_auto(cidr_other, "peer-2".into());
+
+        let peer1_auto = table.auto_routes_for_peer("peer-1");
+        assert_eq!(
+            peer1_auto.len(),
+            1,
+            "only auto routes for peer-1 should be returned"
+        );
+        assert_eq!(peer1_auto[0].cidr, cidr_auto);
+
+        let peer2_auto = table.auto_routes_for_peer("peer-2");
+        assert_eq!(peer2_auto.len(), 1);
+        assert_eq!(peer2_auto[0].cidr, cidr_other);
+
+        let no_auto = table.auto_routes_for_peer("unknown-peer");
+        assert!(no_auto.is_empty());
     }
 }

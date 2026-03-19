@@ -195,7 +195,11 @@ pub trait NodeApi: Send + Sync {
     ///
     /// Only supported on entry nodes. Returns error for exit/relay nodes.
     /// Peer must be directly connected.
-    fn add_route(&self, cidr: Cidr, peer: String) -> Result<()>;
+    ///
+    /// Returns `Ok(Some(warning))` when the route was added but the peer's
+    /// advertised routes do not cover the requested CIDR, meaning traffic
+    /// may be silently dropped. Returns `Ok(None)` on clean success.
+    fn add_route(&self, cidr: Cidr, peer: String) -> Result<Option<String>>;
 
     /// Delete a route by CIDR.
     ///
