@@ -343,6 +343,24 @@ mod tests {
     }
 
     #[test]
+    fn test_cidr_contains_ipv6_default_route() {
+        let default: Cidr = "::/0".parse().unwrap();
+        let any: Cidr = "2001:db8::/32".parse().unwrap();
+        assert!(default.contains(&any), "::/0 should contain any IPv6 CIDR");
+    }
+
+    #[test]
+    fn test_cidr_contains_ipv6_host_route() {
+        let net: Cidr = "fd00::/16".parse().unwrap();
+        let host: Cidr = "fd00::1/128".parse().unwrap();
+        assert!(net.contains(&host), "fd00::/16 should contain fd00::1/128");
+        assert!(
+            !host.contains(&net),
+            "fd00::1/128 should not contain fd00::/16"
+        );
+    }
+
+    #[test]
     fn test_cidr_contains_mixed_families() {
         let v4: Cidr = "10.0.0.0/8".parse().unwrap();
         let v6: Cidr = "fd00::/8".parse().unwrap();
