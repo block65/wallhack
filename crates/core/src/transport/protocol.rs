@@ -203,14 +203,14 @@ impl ControlChannels {
 
                 // Periodic ping
                 _ = ping_timer.tick() => {
-                    #[allow(clippy::cast_possible_truncation)] // millis since epoch fits u64 until ~year 584M
+                    #[allow(clippy::cast_possible_truncation)] // micros since epoch fits u64 until ~year 584K
                     let ts = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
-                        .as_millis() as u64;
+                        .as_micros() as u64;
                     let ping = ControlMessage {
                         message: Some(control_message::Message::Ping(
-                            wallhack_wire::data::Ping { timestamp_ms: ts },
+                            wallhack_wire::data::Ping { timestamp_us: ts },
                         )),
                     };
                     if let Err(e) = write_length_delimited_buf(stream, &ping, &mut write_buf).await {
@@ -249,7 +249,7 @@ impl ControlChannels {
                 tracing::trace!("Control: received Ping, auto-replying Pong");
                 let reply = ControlMessage {
                     message: Some(control_message::Message::Pong(wallhack_wire::data::Pong {
-                        timestamp_ms: ping_msg.timestamp_ms,
+                        timestamp_us: ping_msg.timestamp_us,
                     })),
                 };
                 if let Err(e) = write_length_delimited_buf(stream, &reply, write_buf).await {
@@ -259,13 +259,13 @@ impl ControlChannels {
             }
             Some(control_message::Message::Pong(pong)) => {
                 #[allow(clippy::cast_possible_truncation)]
-                let now_ms = std::time::SystemTime::now()
+                let now_us = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_millis() as u64;
+                    .as_micros() as u64;
                 #[allow(clippy::cast_precision_loss)]
-                // ms-resolution latency; f64 mantissa exceeds plausible RTT range
-                let latency_ms = now_ms.saturating_sub(pong.timestamp_ms) as f64;
+                // us-resolution latency; f64 mantissa exceeds plausible RTT range
+                let latency_ms = now_us.saturating_sub(pong.timestamp_us) as f64 / 1000.0;
                 tracing::trace!(latency_ms, "Control: received Pong");
                 if let Some(ref registry) = self.peer_registry
                     && let Some(ref name) = self.peer_name
@@ -762,7 +762,7 @@ mod tests {
         // Send a Ping instead of a Handshake as the first message.
         let bad_msg = ControlMessage {
             message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
-                timestamp_ms: 0,
+                timestamp_us: 0,
             })),
         };
         let mut buf = Vec::new();
@@ -829,11 +829,11 @@ mod tests {
         let ping_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_millis() as u64;
+            .as_micros() as u64;
 
         let outgoing_ping = ControlMessage {
             message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
-                timestamp_ms: ping_ts,
+                timestamp_us: ping_ts,
             })),
         };
         let mut buf = Vec::new();
@@ -848,23 +848,23 @@ mod tests {
             .unwrap();
         match pong.message {
             Some(control_message::Message::Pong(p)) => {
-                assert_eq!(p.timestamp_ms, ping_ts);
+                assert_eq!(p.timestamp_us, ping_ts);
             }
             other => panic!("expected Pong, got: {other:?}"),
         }
 
-        // Now send a Pong with a timestamp 100ms in the past to test latency
-        // computation. The control loop uses SystemTime, so we subtract from now.
+        // Now send a Pong with a timestamp 100ms (100_000us) in the past to test
+        // latency computation. The control loop uses SystemTime, so we subtract from now.
         #[allow(clippy::cast_possible_truncation)]
         let past_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_millis() as u64
-            - 100;
+            .as_micros() as u64
+            - 100_000;
 
         let incoming_pong = ControlMessage {
             message: Some(control_message::Message::Pong(wallhack_wire::data::Pong {
-                timestamp_ms: past_ts,
+                timestamp_us: past_ts,
             })),
         };
         write_length_delimited_buf(&mut stream_a, &incoming_pong, &mut buf)
@@ -922,7 +922,7 @@ mod tests {
 
         match msg.message {
             Some(control_message::Message::Ping(p)) => {
-                assert!(p.timestamp_ms > 0, "ping timestamp should be non-zero");
+                assert!(p.timestamp_us > 0, "ping timestamp should be non-zero");
             }
             other => panic!("expected Ping, got: {other:?}"),
         }
@@ -985,7 +985,7 @@ mod tests {
         // Send Ping, expect Pong back.
         let outgoing = ControlMessage {
             message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
-                timestamp_ms: 42,
+                timestamp_us: 42,
             })),
         };
         let mut buf = Vec::new();
@@ -1003,7 +1003,7 @@ mod tests {
 
         match reply.message {
             Some(control_message::Message::Pong(p)) => {
-                assert_eq!(p.timestamp_ms, 42);
+                assert_eq!(p.timestamp_us, 42);
             }
             other => panic!("expected Pong, got: {other:?}"),
         }
@@ -1118,7 +1118,7 @@ mod tests {
         for seq in 0..5_u64 {
             let outgoing = ControlMessage {
                 message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
-                    timestamp_ms: seq,
+                    timestamp_us: seq,
                 })),
             };
             write_length_delimited_buf(&mut client_stream, &outgoing, &mut buf)
@@ -1135,7 +1135,7 @@ mod tests {
 
             match reply.message {
                 Some(control_message::Message::Pong(p)) => {
-                    assert_eq!(p.timestamp_ms, seq);
+                    assert_eq!(p.timestamp_us, seq);
                 }
                 other => panic!("expected Pong #{seq}, got: {other:?}"),
             }

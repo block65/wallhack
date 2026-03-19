@@ -89,11 +89,11 @@ pub(crate) async fn send_ping(
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64;
+        .as_micros() as u64;
 
     let ping_msg = ControlMessage {
         message: Some(control_message::Message::Ping(wallhack_wire::data::Ping {
-            timestamp_ms: ts,
+            timestamp_us: ts,
         })),
     };
 
