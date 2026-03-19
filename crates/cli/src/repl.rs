@@ -255,7 +255,7 @@ fn print_help() {
 
     let mut tw = TabWriter::new(std::io::stdout());
     let _ = writeln!(tw, "Commands:");
-    let _ = writeln!(tw, "  ping [<peer>]\tPing a peer");
+    let _ = writeln!(tw, "  ping\tPing the daemon (peer ping not yet supported)");
     let _ = writeln!(tw, "  info\tShow daemon info");
     let _ = writeln!(tw, "  version\tShow version");
     let _ = writeln!(tw, "  stats\tShow traffic statistics");
@@ -265,14 +265,20 @@ fn print_help() {
     let _ = writeln!(tw, "  route del <cidr>\tRemove a route");
     let _ = writeln!(tw, "  connect <addr>\tConnect to a peer");
     let _ = writeln!(tw, "  listen <addr>\tStart listening for connections");
-    let _ = writeln!(tw, "  disconnect [peer]\tDisconnect peer");
+    let _ = writeln!(
+        tw,
+        "  disconnect [peer]\tDrop peer session (peer may reconnect)"
+    );
     let _ = writeln!(tw, "  role\tShow current role");
     let _ = writeln!(tw, "  role <entry|exit|relay>\tSet role hint");
     let _ = writeln!(
         tw,
-        "  hint <prefer|exclude|fixed> <role>\tApply a role hint"
+        "  hint <prefer|exclude|fixed> <role>\tSet hint to influence auto-negotiation"
     );
-    let _ = writeln!(tw, "  hint auto\tReturn to capability-based negotiation");
+    let _ = writeln!(
+        tw,
+        "  hint auto\tRemove all hints, return to automatic negotiation"
+    );
     let _ = writeln!(tw, "  shutdown\tShut down the daemon");
     let _ = writeln!(tw, "  help / ?\tShow this help");
     let _ = writeln!(tw, "  quit \tQuit the REPL");

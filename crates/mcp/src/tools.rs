@@ -11,7 +11,7 @@ use crate::convert;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PingParams {
-    /// Peer name prefix to ping. Omit to ping the daemon itself.
+    /// Reserved — peer-specific ping is not yet supported. Leave empty.
     pub peer: Option<String>,
 }
 
@@ -43,7 +43,7 @@ pub struct AddrParams {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct HintSetParams {
-    /// Hint level: "prefer", "exclude", or "fixed"
+    /// How strongly to apply the hint: "prefer" (soft), "exclude" (avoid), or "fixed" (force)
     pub level: String,
     /// Target role: "entry", "exit", or "relay"
     pub role: String,
@@ -75,7 +75,9 @@ impl WallhackServer {
         ipc_call(management_request::Request::Info(InfoRequest {})).await
     }
 
-    #[tool(description = "Ping the daemon (or a specific peer by name prefix)")]
+    #[tool(
+        description = "Ping the daemon to check liveness. Returns role, version, and uptime. (Peer-specific ping is not yet supported.)"
+    )]
     async fn ping(
         &self,
         Parameters(params): Parameters<PingParams>,
@@ -151,7 +153,7 @@ impl WallhackServer {
     }
 
     #[tool(
-        description = "Disconnect a peer by name, or disconnect the transport if no peer specified"
+        description = "Disconnect a peer by name (drops the current session; the peer may reconnect automatically). If no peer specified, disconnect the local transport."
     )]
     async fn disconnect(
         &self,
@@ -179,7 +181,7 @@ impl WallhackServer {
     }
 
     #[tool(
-        description = "Set a role hint to influence auto-negotiation (prefer/exclude/fixed + entry/exit/relay)"
+        description = "Set a role hint to influence auto-negotiation: \"prefer\" makes the role more likely, \"exclude\" prevents it, \"fixed\" forces it"
     )]
     async fn hint_set(
         &self,
@@ -214,7 +216,9 @@ impl WallhackServer {
         .await
     }
 
-    #[tool(description = "Return to capability-based negotiation by removing all role hints")]
+    #[tool(
+        description = "Remove all role hints and return to automatic role negotiation based on peer capabilities. Use to undo a previous hint_set."
+    )]
     async fn hint_set_auto(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::HintSetAuto(
             HintSetAutoRequest {},
