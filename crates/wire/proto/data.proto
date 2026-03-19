@@ -260,10 +260,10 @@ message RoleHint {
 
 // Ping request for latency measurement.
 message Ping {
-  uint64 timestamp_ms = 1;  // Optional timestamp for sender's reference
+  uint64 timestamp_us = 1;  // Optional timestamp for sender's reference (microseconds since UNIX epoch)
 }
 
 // Pong response to ping.
 message Pong {
-  uint64 timestamp_ms = 1;  // Echo back the ping timestamp
+  uint64 timestamp_us = 1;  // Echo back the ping timestamp (microseconds since UNIX epoch)
 }
