@@ -1,7 +1,7 @@
-import { getCollection } from "astro:content";
 import { readFile } from "node:fs/promises";
 import { Resvg } from "@resvg/resvg-js";
 import type { APIContext, InferGetStaticPropsType } from "astro";
+import { getCollection } from "astro:content";
 import satori from "satori";
 import { SITE_NAME } from "../../consts.ts";
 

@@ -73,12 +73,14 @@ import Search from "astro-pagefind/components/Search";
       document.getElementById("search-trigger-mobile"),
     ];
 
-    if (!dialog) return;
+    if (!dialog) {
+      return;
+    }
 
     function openDialog() {
-      dialog!.showModal();
-      dialog!
-        .querySelector<HTMLInputElement>('input[type="text"]')
+      dialog?.showModal();
+      dialog
+        ?.querySelector<HTMLInputElement>('input[type="text"]')
         ?.focus();
     }
 
@@ -87,7 +89,9 @@ import Search from "astro-pagefind/components/Search";
     }
 
     dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) dialog.close();
+      if (e.target === dialog) {
+        dialog.close();
+      }
     });
 
     document.addEventListener("keydown", (e) => {

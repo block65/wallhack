@@ -19,28 +19,32 @@ export function syncer(files: SyncDocEntry[]): Plugin {
 	}));
 
 	const sync = async () => {
-		for (const { src, dst, frontmatter } of resolved) {
-			const raw = await readFile(src, "utf-8");
-			const lines = raw.split("\n");
+		await Promise.all(
+			resolved.map(async ({ src, dst, frontmatter }) => {
+				const raw = await readFile(src, "utf-8");
+				const lines = raw.split("\n");
 
-			const title = lines.find((l) => l.startsWith("# "))?.replace(/^#\s+/, "");
+				const title = lines
+					.find((l) => l.startsWith("# "))
+					?.replace(/^#\s+/, "");
 
-			const description = lines.find(
-				(l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("!["),
-			);
+				const description = lines.find(
+					(l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("!["),
+				);
 
-			const fm = { title, description, ...frontmatter };
-			const header = [
-				"---",
-				...Object.entries(fm)
-					.filter(([_, v]) => v !== undefined)
-					.map(([k, v]) => `${k}: ${v}`),
-				"---",
-				"",
-			].join("\n");
+				const fm = { title, description, ...frontmatter };
+				const header = [
+					"---",
+					...Object.entries(fm)
+						.filter(([_, v]) => v !== undefined)
+						.map(([k, v]) => `${k}: ${v}`),
+					"---",
+					"",
+				].join("\n");
 
-			await writeFile(dst, header + raw, "utf-8");
-		}
+				await writeFile(dst, header + raw, "utf-8");
+			}),
+		);
 	};
 
 	return {

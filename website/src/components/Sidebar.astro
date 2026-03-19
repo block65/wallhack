@@ -52,7 +52,9 @@ const sections = [
 ];
 
 function isActive(href: string): boolean {
-  if (href === '/') return currentPath === '/' || currentPath === '';
+  if (href === '/') {
+    return currentPath === '/' || currentPath === '';
+  }
   return currentPath.startsWith(href);
 }
 ---

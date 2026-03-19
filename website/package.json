@@ -1,24 +1,17 @@
 {
 	"name": "@wallhack/website",
-	"type": "module",
 	"version": "0.0.1",
-	"packageManager": "pnpm@10.30.2",
+	"type": "module",
 	"scripts": {
-		"dev": "astro dev",
-		"build": "astro build",
-		"preview": "wrangler dev",
-		"deploy": "astro build && wrangler deploy",
 		"astro": "astro",
-		"check": "biome check",
-		"format": "biome check --write"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^2.4.7",
-		"vite": "^7.3.1",
-		"wrangler": "^4.73.0"
+		"build": "astro build",
+		"check": "oxlint && oxfmt --check .",
+		"deploy": "astro build && wrangler deploy",
+		"dev": "astro dev",
+		"preview": "wrangler dev"
 	},
 	"dependencies": {
-		"@astrojs/markdoc": "^0.15.11",
+		"@astrojs/markdoc": "^1.0.2",
 		"@astrojs/sitemap": "^3.7.1",
 		"@fontsource-variable/jetbrains-mono": "^5.2.8",
 		"@fontsource/dm-serif-display": "^5.2.8",
@@ -26,15 +19,22 @@
 		"@iconify-json/lucide": "^1.2.98",
 		"@iconify-json/ph": "^1.2.2",
 		"@resvg/resvg-js": "^2.6.2",
-		"@tailwindcss/vite": "^4.2.1",
-		"astro": "^5.18.1",
+		"@tailwindcss/vite": "^4.2.2",
+		"astro": "^6.0.6",
 		"astro-icon": "^1.1.5",
 		"astro-pagefind": "^1.8.5",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
-		"satori": "^0.19.3",
-		"shiki": "^3.23.0",
+		"satori": "^0.25.0",
+		"shiki": "^4.0.2",
 		"tailwind-merge": "^3.5.0",
-		"tailwindcss": "^4.2.1"
-	}
+		"tailwindcss": "^4.2.2"
+	},
+	"devDependencies": {
+		"oxfmt": "^0.41.0",
+		"oxlint": "^1.56.0",
+		"vite": "^8.0.1",
+		"wrangler": "^4.75.0"
+	},
+	"packageManager": "pnpm@10.30.2"
 }

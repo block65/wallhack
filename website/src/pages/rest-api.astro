@@ -27,12 +27,20 @@ function resolveRef(ref: string): Record<string, unknown> {
 }
 
 function schemaToFields(schema: Record<string, unknown>): { name: string; type: string; description: string }[] {
-  if (!schema.properties) return [];
+  if (!schema.properties) {
+    return [];
+  }
   return Object.entries(schema.properties as Record<string, { type?: string; $ref?: string; description?: string; nullable?: boolean; enum?: string[]; items?: { $ref?: string } }>).map(([name, prop]) => {
     let type = prop.type ?? (prop.$ref ? prop.$ref.replace('#/components/schemas/', '') : 'object');
-    if (prop.type === 'array' && prop.items?.$ref) type = `${prop.items.$ref.replace('#/components/schemas/', '')}[]`;
-    if (prop.enum) type = prop.enum.map(v => `"${v}"`).join(' | ');
-    if (prop.nullable) type = `${type} | null`;
+    if (prop.type === 'array' && prop.items?.$ref) {
+      type = `${prop.items.$ref.replace('#/components/schemas/', '')}[]`;
+    }
+    if (prop.enum) {
+      type = prop.enum.map(v => `"${v}"`).join(' | ');
+    }
+    if (prop.nullable) {
+      type = `${type} | null`;
+    }
     return { name, type, description: prop.description ?? '' };
   });
 }
