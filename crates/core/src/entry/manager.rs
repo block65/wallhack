@@ -135,7 +135,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     let transport = Arc::clone(&self.transport);
                     let metrics = self.metrics.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = run_tcp_session(stream, transport).await {
+                        if let Err(e) = run_tcp_session(stream, transport, metrics.clone()).await {
                             tracing::debug!("TCP session ended: {e}");
                         }
                         metrics.dec_active_connections();
