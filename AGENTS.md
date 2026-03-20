@@ -61,9 +61,13 @@ add, remove, or change any route, request body, or response shape in
   (source, destination, target) and concrete entities (peer, tun, device).
 - Explicit identifiers: Code and logs must use explicit, fixed IDs (e.g., peer1,
   dmz1, nodeA). Do not use network roles as variable names.
-- CLI consistency: eg REPL route add examples must explicitly include the --name
-  <peer> flag on exit/relay commands to ensure routing examples remain
-  self-documenting.
+- **Interface parity (STRICT):** All interfaces — REPL, CLI, MCP, REST API, and
+  OpenAPI spec — must expose identical operations with identical names,
+  parameters, and defaults. The REPL is the reference implementation. When
+  adding or changing any command, update ALL interfaces in the same commit.
+  Never create interface-specific names (e.g. `hint_set` in MCP when the REPL
+  uses `role`). Never split into separate tools what the REPL handles as one
+  command.
 
 ## TRIPLE PR Process for lead-agent only
 

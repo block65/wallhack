@@ -140,9 +140,7 @@ pub fn start_node(
         ModeConfig::Auto(cfg) => match &cfg.hint {
             Some(hint) if hint.level == wallhack_wire::data::HintLevel::Fixed as i32 => {
                 wallhack_wire::data::NodeRole::try_from(hint.target)
-                    .ok()
-                    .map(NodeRole::from)
-                    .unwrap_or(NodeRole::Indeterminate)
+                    .map_or(NodeRole::Indeterminate, NodeRole::from)
             }
             _ => NodeRole::Indeterminate,
         },

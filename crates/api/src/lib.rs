@@ -77,10 +77,7 @@ pub fn router(state: State) -> Router {
         .route("/listen", post(handlers::listen))
         .route("/disconnect", post(handlers::disconnect))
         .route("/shutdown", post(handlers::shutdown))
-        .route(
-            "/hints",
-            put(handlers::hint_set).delete(handlers::hint_set_auto),
-        )
+        .route("/role", put(handlers::role_set))
         .layer(middleware::from_fn(move |req, next| {
             let auth = auth.clone();
             auth::middleware(auth, req, next)

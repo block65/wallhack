@@ -18,11 +18,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             if !s.listen_addr.is_empty() {
                 let _ = writeln!(out, "listen addr: {}", s.listen_addr);
             }
-            let _ = writeln!(
-                out,
-                "capabilities: tun={} listen={} connect={}",
-                s.tun_capable, s.listening, s.connecting,
-            );
+            let _ = writeln!(out, "tun: {}", s.tun_capable);
             let _ = writeln!(out, "version: {}", s.version);
             let _ = writeln!(out, "uptime: {}", format_uptime(s.uptime_ms));
             Ok(out)
