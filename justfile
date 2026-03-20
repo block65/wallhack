@@ -28,6 +28,11 @@ test:
 build-release:
     cargo build --quiet --release --features full
 
+# Build musl binary for range VMs (slim + vsock for IPC) and glibc MCP binary for host
+build-range:
+    cargo build --quiet --release --target x86_64-unknown-linux-musl -p wallhack-cli --no-default-features --features slim,vsock
+    cargo build --quiet --release -p wallhack-mcp
+
 # Delete local branches that have been merged and deleted on origin
 clean-branches:
     git fetch -p
