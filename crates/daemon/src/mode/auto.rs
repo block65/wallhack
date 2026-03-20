@@ -419,8 +419,9 @@ async fn run_auto_connect_session_dispatch(
             ..
         } => {
             tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=entry",
+                "Role resolved: peer={} addr={peer_addr} local_role=entry peer_role={}",
                 peer_hs.name,
+                super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default()),
             );
             node_state.update_role(NodeRole::Entry);
 
@@ -478,8 +479,9 @@ async fn run_auto_connect_session_dispatch(
             ..
         } => {
             tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=exit",
+                "Role resolved: peer={} addr={peer_addr} local_role=exit peer_role={}",
                 peer_hs.name,
+                super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default()),
             );
             node_state.update_role(NodeRole::Exit);
             let peer_caps = peer_hs.capabilities.unwrap_or_default();
@@ -877,8 +879,9 @@ async fn run_auto_accept_session_inner(
             ..
         } => {
             tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=entry",
+                "Role resolved: peer={} addr={peer_addr} local_role=entry peer_role={}",
                 peer_hs.name,
+                super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default()),
             );
             node_state.update_role(NodeRole::Entry);
 
@@ -1041,8 +1044,9 @@ async fn run_auto_accept_session_inner(
             ..
         } => {
             tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=exit",
+                "Role resolved: peer={} addr={peer_addr} local_role=exit peer_role={}",
                 peer_hs.name,
+                super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default()),
             );
             node_state.update_role(NodeRole::Exit);
 
