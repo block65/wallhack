@@ -412,18 +412,17 @@ async fn run_auto_connect_session_dispatch(
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
     node_state.update_role(negotiated_role);
+    let peer_role = super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default());
+    tracing::info!(
+        "Role resolved: peer={} addr={peer_addr} local_role={negotiated_role} peer_role={peer_role}",
+        peer_hs.name,
+    );
 
     match result {
         NegotiationResult::Resolved {
             role: NodeRole::Entry,
             ..
         } => {
-            tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=entry",
-                peer_hs.name,
-            );
-            node_state.update_role(NodeRole::Entry);
-
             // Install routes advertised by the exit peer. The inner function
             // applies routes from the table when it creates the TUN, so they
             // must be in the table before we call it.
@@ -477,11 +476,6 @@ async fn run_auto_connect_session_dispatch(
             role: NodeRole::Exit,
             ..
         } => {
-            tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=exit",
-                peer_hs.name,
-            );
-            node_state.update_role(NodeRole::Exit);
             let peer_caps = peer_hs.capabilities.unwrap_or_default();
             let peer_role = super::peer_role_from_capabilities(peer_caps);
             let peer_name = if peer_hs.name.is_empty() {
@@ -870,18 +864,17 @@ async fn run_auto_accept_session_inner(
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
     node_state.update_role(negotiated_role);
+    let peer_role = super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default());
+    tracing::info!(
+        "Role resolved: peer={} addr={peer_addr} local_role={negotiated_role} peer_role={peer_role}",
+        peer_hs.name,
+    );
 
     match result {
         NegotiationResult::Resolved {
             role: NodeRole::Entry,
             ..
         } => {
-            tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=entry",
-                peer_hs.name,
-            );
-            node_state.update_role(NodeRole::Entry);
-
             // Spawn data tasks: incoming (peer→instructions/responses) + outgoing (instructions→peer).
             super::entry::spawn_data_tasks(
                 &transport,
@@ -1040,12 +1033,6 @@ async fn run_auto_accept_session_inner(
             role: NodeRole::Exit,
             ..
         } => {
-            tracing::info!(
-                "Role resolved: name={} addr={peer_addr} role=exit",
-                peer_hs.name,
-            );
-            node_state.update_role(NodeRole::Exit);
-
             // Spawn data tasks for exit: incoming (peer→broadcasts) + outgoing (responses→peer).
             {
                 let transport = Arc::clone(&transport);
