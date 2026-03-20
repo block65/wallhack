@@ -4,15 +4,15 @@ use std::{net::IpAddr, str::FromStr};
 
 use neli::{
     consts::{
-        nl::{NlmF, NlmFFlags},
-        rtnl::{Ifa, IfaFFlags, RtAddrFamily, RtScope, RtTable, Rta, Rtm, RtmFFlags, Rtn, Rtprot},
+        nl::NlmF,
+        rtnl::{Ifa, IfaF, RtAddrFamily, RtScope, RtTable, Rta, Rtm, RtmF, Rtn, Rtprot},
         socket::NlFamily,
     },
-    err::Nlmsgerr,
-    nl::{NlPayload, Nlmsghdr},
-    rtnl::{Ifaddrmsg, Rtattr, Rtmsg},
-    socket::NlSocketHandle,
+    nl::{NlPayload, NlmsghdrBuilder},
+    rtnl::{Ifaddrmsg, IfaddrmsgBuilder, RtattrBuilder, RtmsgBuilder},
+    socket::synchronous::NlSocketHandle,
     types::RtBuffer,
+    utils::Groups,
 };
 
 use wallhack_core::Cidr;
@@ -32,7 +32,7 @@ pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
     let if_index =
         get_if_index(dev).map_err(|e| format!("Failed to resolve interface {dev}: {e}"))?;
 
-    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, &[])
+    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, Groups::empty())
         .map_err(|e| format!("Netlink connect failed: {e}"))?;
 
     let (rt_family, dst_bytes) = match cidr.addr() {
@@ -41,57 +41,47 @@ pub(crate) fn remove_os_route(cidr: &str, dev: &str) -> Result<(), String> {
     };
 
     let mut rtattrs = RtBuffer::new();
-    rtattrs.push(Rtattr::new(None, Rta::Dst, dst_bytes).unwrap());
+    rtattrs.push(
+        RtattrBuilder::default()
+            .rta_type(Rta::Dst)
+            .rta_payload(dst_bytes)
+            .build()
+            .unwrap(),
+    );
     #[allow(clippy::cast_possible_wrap)]
-    rtattrs.push(Rtattr::new(None, Rta::Oif, if_index as i32).unwrap());
-
-    let rtmsg = Rtmsg {
-        rtm_family: rt_family,
-        rtm_dst_len: cidr.prefix_len(),
-        rtm_src_len: 0,
-        rtm_tos: 0,
-        rtm_table: RtTable::Main,
-        rtm_protocol: Rtprot::Boot,
-        rtm_scope: RtScope::Universe,
-        rtm_type: Rtn::Unicast,
-        rtm_flags: RtmFFlags::empty(),
-        rtattrs,
-    };
-
-    let nlmsg = Nlmsghdr::new(
-        None,
-        Rtm::Delroute,
-        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
-        None,
-        None,
-        NlPayload::Payload(rtmsg),
+    rtattrs.push(
+        RtattrBuilder::default()
+            .rta_type(Rta::Oif)
+            .rta_payload(if_index as i32)
+            .build()
+            .unwrap(),
     );
 
-    match socket.send(nlmsg) {
-        Ok(()) => match socket.recv::<u16, Nlmsgerr<Rtm, Rtmsg>>() {
-            Ok(Some(msg)) => {
-                if msg.nl_type == 2 {
-                    if let NlPayload::Payload(e) = msg.nl_payload {
-                        if e.error == 0 || e.error == -3 {
-                            // Success or ESRCH (not found — already gone)
-                            Ok(())
-                        } else {
-                            let err_msg = format!("Netlink error: {}", e.error);
-                            tracing::warn!("Failed to remove OS route: {}", err_msg);
-                            Err(err_msg)
-                        }
-                    } else {
-                        Err("Unexpected payload in ACK".into())
-                    }
-                } else {
-                    Err(format!("Unexpected message type: {}", msg.nl_type))
-                }
-            }
-            Ok(None) => Err("Netlink socket closed unexpectedly".into()),
-            Err(e) => Err(format!("Failed to receive Netlink ACK: {e}")),
-        },
-        Err(e) => Err(format!("Failed to send Netlink request: {e}")),
-    }
+    let rtmsg = RtmsgBuilder::default()
+        .rtm_family(rt_family)
+        .rtm_dst_len(cidr.prefix_len())
+        .rtm_src_len(0)
+        .rtm_tos(0)
+        .rtm_table(RtTable::Main)
+        .rtm_protocol(Rtprot::Boot)
+        .rtm_scope(RtScope::Universe)
+        .rtm_type(Rtn::Unicast)
+        .rtm_flags(RtmF::empty())
+        .rtattrs(rtattrs)
+        .build()
+        .unwrap();
+
+    let nlmsg = NlmsghdrBuilder::default()
+        .nl_type(Rtm::Delroute)
+        .nl_flags(NlmF::REQUEST | NlmF::ACK)
+        .nl_payload(NlPayload::Payload(rtmsg))
+        .build()
+        .map_err(|e| format!("Failed to build netlink message: {e}"))?;
+
+    socket
+        .send(&nlmsg)
+        .map_err(|e| format!("Failed to send Netlink request: {e}"))?;
+    recv_netlink_ack(&mut socket, "remove OS route")
 }
 
 /// Add an OS-level route via Netlink.
@@ -100,7 +90,7 @@ pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
     let if_index =
         get_if_index(dev).map_err(|e| format!("Failed to resolve interface {dev}: {e}"))?;
 
-    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, &[])
+    let mut socket = NlSocketHandle::connect(NlFamily::Route, None, Groups::empty())
         .map_err(|e| format!("Netlink connect failed: {e}"))?;
 
     let (rt_family, dst_bytes) = match cidr.addr() {
@@ -109,56 +99,87 @@ pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
     };
 
     let mut rtattrs = RtBuffer::new();
-    rtattrs.push(Rtattr::new(None, Rta::Dst, dst_bytes).unwrap());
+    rtattrs.push(
+        RtattrBuilder::default()
+            .rta_type(Rta::Dst)
+            .rta_payload(dst_bytes)
+            .build()
+            .unwrap(),
+    );
     #[allow(clippy::cast_possible_wrap)]
-    rtattrs.push(Rtattr::new(None, Rta::Oif, if_index as i32).unwrap());
-
-    let rtmsg = Rtmsg {
-        rtm_family: rt_family,
-        rtm_dst_len: cidr.prefix_len(),
-        rtm_src_len: 0,
-        rtm_tos: 0,
-        rtm_table: RtTable::Main,
-        rtm_protocol: Rtprot::Boot,
-        rtm_scope: RtScope::Universe,
-        rtm_type: Rtn::Unicast,
-        rtm_flags: RtmFFlags::empty(),
-        rtattrs,
-    };
-
-    let nlmsg = Nlmsghdr::new(
-        None,
-        Rtm::Newroute,
-        NlmFFlags::new(&[NlmF::Request, NlmF::Create, NlmF::Excl, NlmF::Ack]),
-        None,
-        None,
-        NlPayload::Payload(rtmsg),
+    rtattrs.push(
+        RtattrBuilder::default()
+            .rta_type(Rta::Oif)
+            .rta_payload(if_index as i32)
+            .build()
+            .unwrap(),
     );
 
-    match socket.send(nlmsg) {
-        Ok(()) => match socket.recv::<u16, Nlmsgerr<Rtm, Rtmsg>>() {
-            Ok(Some(msg)) => {
-                if msg.nl_type == 2 {
-                    if let NlPayload::Payload(e) = msg.nl_payload {
-                        if e.error == 0 || e.error == -17 {
-                            // Success or EEXIST (route already present)
-                            Ok(())
-                        } else {
-                            let err_msg = format!("Netlink error: {}", e.error);
-                            tracing::warn!("Failed to add OS route: {}", err_msg);
-                            Err(err_msg)
-                        }
-                    } else {
-                        Err("Unexpected payload in ACK".into())
-                    }
+    let rtmsg = RtmsgBuilder::default()
+        .rtm_family(rt_family)
+        .rtm_dst_len(cidr.prefix_len())
+        .rtm_src_len(0)
+        .rtm_tos(0)
+        .rtm_table(RtTable::Main)
+        .rtm_protocol(Rtprot::Boot)
+        .rtm_scope(RtScope::Universe)
+        .rtm_type(Rtn::Unicast)
+        .rtm_flags(RtmF::empty())
+        .rtattrs(rtattrs)
+        .build()
+        .unwrap();
+
+    let nlmsg = NlmsghdrBuilder::default()
+        .nl_type(Rtm::Newroute)
+        .nl_flags(NlmF::REQUEST | NlmF::CREATE | NlmF::EXCL | NlmF::ACK)
+        .nl_payload(NlPayload::Payload(rtmsg))
+        .build()
+        .map_err(|e| format!("Failed to build netlink message: {e}"))?;
+
+    socket
+        .send(&nlmsg)
+        .map_err(|e| format!("Failed to send Netlink request: {e}"))?;
+    recv_netlink_ack(&mut socket, "add OS route")
+}
+
+/// Receive and check the Netlink ACK/error response.
+///
+/// `NLMSG_ERROR` (type 2) carries a 4-byte `i32` error code at the start of its
+/// payload. Error 0 = success (pure ACK), negative = errno.
+/// `-3` (ESRCH) after route delete and `-17` (EEXIST) after route add are
+/// treated as success (idempotent operations).
+fn recv_netlink_ack(socket: &mut NlSocketHandle, op: &str) -> Result<(), String> {
+    let (mut iter, _groups) = socket
+        .recv::<u16, neli::types::Buffer>()
+        .map_err(|e| format!("Failed to receive Netlink ACK: {e}"))?;
+
+    let Some(msg_result) = iter.next() else {
+        return Err("Netlink socket closed unexpectedly".into());
+    };
+    let msg = msg_result.map_err(|e| format!("Netlink recv error: {e}"))?;
+
+    // NLMSG_ERROR = 2
+    if *msg.nl_type() == 2 {
+        if let NlPayload::Payload(buf) = msg.nl_payload() {
+            let bytes: &[u8] = buf.as_ref();
+            if bytes.len() >= 4 {
+                let error = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                // 0 = success, -3 = ESRCH (already gone), -17 = EEXIST (already present)
+                if error == 0 || error == -3 || error == -17 {
+                    Ok(())
                 } else {
-                    Err(format!("Unexpected message type: {}", msg.nl_type))
+                    let err_msg = format!("Netlink error: {error}");
+                    tracing::warn!("Failed to {op}: {err_msg}");
+                    Err(err_msg)
                 }
+            } else {
+                Err("Netlink ACK payload too short".into())
             }
-            Ok(None) => Err("Netlink socket closed unexpectedly".into()),
-            Err(e) => Err(format!("Failed to receive Netlink ACK: {e}")),
-        },
-        Err(e) => Err(format!("Failed to send Netlink request: {e}")),
+        } else {
+            Err("Unexpected payload in ACK".into())
+        }
+    } else {
+        Err(format!("Unexpected message type: {}", msg.nl_type()))
     }
 }
 
@@ -197,7 +218,7 @@ pub(crate) fn delete_tun(name: &str) {
 /// Only `RT_SCOPE_UNIVERSE` (globally routable) addresses are included.
 /// Loopback, link-local, unspecified, and multicast addresses are skipped.
 pub(crate) fn enumerate_local_cidrs() -> Vec<String> {
-    let mut socket = match NlSocketHandle::connect(NlFamily::Route, None, &[]) {
+    let socket = match NlSocketHandle::connect(NlFamily::Route, None, Groups::empty()) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!("netlink: cannot open socket for address enumeration: {e}");
@@ -205,30 +226,45 @@ pub(crate) fn enumerate_local_cidrs() -> Vec<String> {
         }
     };
 
-    let request = Nlmsghdr::new(
-        None,
-        Rtm::Getaddr,
-        NlmFFlags::new(&[NlmF::Request, NlmF::Dump]),
-        None,
-        None,
-        NlPayload::Payload(Ifaddrmsg {
-            ifa_family: RtAddrFamily::Unspecified,
-            ifa_prefixlen: 0,
-            ifa_flags: IfaFFlags::empty(),
-            ifa_scope: 0,
-            ifa_index: 0,
-            rtattrs: RtBuffer::new(),
-        }),
-    );
+    let request = match NlmsghdrBuilder::default()
+        .nl_type(Rtm::Getaddr)
+        .nl_flags(NlmF::REQUEST | NlmF::DUMP)
+        .nl_payload(NlPayload::Payload(
+            IfaddrmsgBuilder::default()
+                .ifa_family(RtAddrFamily::Unspecified)
+                .ifa_prefixlen(0)
+                .ifa_flags(IfaF::empty())
+                .ifa_scope(RtScope::Universe)
+                .ifa_index(0)
+                .rtattrs(RtBuffer::new())
+                .build()
+                .unwrap(),
+        ))
+        .build()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("netlink: failed to build RTM_GETADDR request: {e}");
+            return Vec::new();
+        }
+    };
 
-    if let Err(e) = socket.send(request) {
+    if let Err(e) = socket.send(&request) {
         tracing::warn!("netlink: failed to send RTM_GETADDR: {e}");
         return Vec::new();
     }
 
     let mut cidrs = Vec::new();
 
-    for msg in socket.iter::<Rtm, Ifaddrmsg>(false) {
+    let (iter, _groups) = match socket.recv::<Rtm, Ifaddrmsg>() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("netlink: failed to recv RTM_GETADDR: {e}");
+            return Vec::new();
+        }
+    };
+
+    for msg in iter {
         let msg = match msg {
             Ok(m) => m,
             Err(e) => {
@@ -237,22 +273,22 @@ pub(crate) fn enumerate_local_cidrs() -> Vec<String> {
             }
         };
 
-        let NlPayload::Payload(ifaddrmsg) = msg.nl_payload else {
+        let NlPayload::Payload(ifaddrmsg) = msg.nl_payload() else {
             continue;
         };
 
-        // Only globally routable addresses (RT_SCOPE_UNIVERSE = 0).
-        if ifaddrmsg.ifa_scope != 0 {
+        // Only globally routable addresses.
+        if *ifaddrmsg.ifa_scope() != RtScope::Universe {
             continue;
         }
 
-        let prefix_len = ifaddrmsg.ifa_prefixlen;
+        let prefix_len = *ifaddrmsg.ifa_prefixlen();
         if prefix_len == 0 {
             // Skip default routes.
             continue;
         }
 
-        let handle = ifaddrmsg.rtattrs.get_attr_handle();
+        let handle = ifaddrmsg.rtattrs().get_attr_handle();
 
         // IFA_LOCAL is preferred for point-to-point links; IFA_ADDRESS is the
         // typical case for broadcast interfaces.
@@ -260,7 +296,7 @@ pub(crate) fn enumerate_local_cidrs() -> Vec<String> {
             .get_attribute(Ifa::Local)
             .or_else(|| handle.get_attribute(Ifa::Address))
         {
-            Some(attr) => attr.rta_payload.as_ref(),
+            Some(attr) => attr.rta_payload().as_ref(),
             None => continue,
         };
 
