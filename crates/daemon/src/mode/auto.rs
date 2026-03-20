@@ -757,8 +757,6 @@ where
         tracing::info!("PSK authentication configured");
     }
 
-    let mut psk_failures = super::PskFailTracker::new();
-
     loop {
         match server.accept(NodeRole::Indeterminate).await {
             Ok(Some(mut accept_result)) => {
@@ -774,7 +772,7 @@ where
                         .as_ref()
                         .is_some_and(|b| hs.verify_psk_proof(psk.as_bytes(), b));
                     if !valid {
-                        psk_failures.record(&peer_addr);
+                        tracing::warn!("PSK authentication failed for {peer_addr}");
                         continue;
                     }
                 }
