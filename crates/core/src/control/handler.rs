@@ -126,7 +126,6 @@ pub struct Handler {
 
 impl Handler {
     /// Creates a new control handler.
-    /// Creates a new control handler.
     ///
     /// `log_buffer`, when provided, is the shared ring buffer that the tracing
     /// subscriber also writes into — enabling the `logs` API to return recent

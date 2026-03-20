@@ -311,7 +311,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                 let (src_std, dst_std): (std::net::SocketAddr, std::net::SocketAddr) =
                     socket_set.into();
 
-                let client_endpoint = smoltcp::wire::IpEndpoint {
+                let source_endpoint = smoltcp::wire::IpEndpoint {
                     addr: src_std.ip().into(),
                     port: src_std.port(),
                 };
@@ -324,22 +324,22 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                     {
                         // Update session last_seen
                         if let Some(session) =
-                            self.udp_sessions.get_mut(&(client_endpoint, local_port))
+                            self.udp_sessions.get_mut(&(source_endpoint, local_port))
                         {
                             session.last_seen = Instant::now();
                         }
                         let meta = smoltcp::socket::udp::UdpMetadata {
-                            endpoint: client_endpoint,
+                            endpoint: source_endpoint,
                             local_address: local_ip,
                             meta: smoltcp::phy::PacketMeta::default(),
                         };
                         if let Err(e) = udp.send_to(local_port, &data_recv.data, meta) {
-                            tracing::warn!("Failed to send UDP response to client: {e}");
+                            tracing::warn!("Failed to send UDP response to source: {e}");
                         } else {
                             tracing::debug!(
                                 local_port,
-                                client = %client_endpoint,
-                                "UDP response sent to client"
+                                source = %source_endpoint,
+                                "UDP response sent to source"
                             );
                             self.metrics.inc_packets_in(1);
                             self.metrics.inc_bytes_in(data_recv.data.len() as u64);
@@ -363,7 +363,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                 };
                 let (src_std, dst_std): (std::net::SocketAddr, std::net::SocketAddr) =
                     socket_set.into();
-                let client_endpoint = smoltcp::wire::IpEndpoint {
+                let source_endpoint = smoltcp::wire::IpEndpoint {
                     addr: src_std.ip().into(),
                     port: src_std.port(),
                 };
@@ -374,7 +374,7 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                 tracing::debug!(
                     reason = %err.reason,
                     icmp_reason = ?reason,
-                    client = %client_endpoint,
+                    source = %source_endpoint,
                     target = %target_ip,
                     "UDP runtime error from exit, injecting ICMP unreachable"
                 );
@@ -386,10 +386,10 @@ impl<D: Device + Send + 'static> ConnectionManager<D> {
                 // are correctly reconstructed from the socket set below.
                 if let Some(packet) = build_icmp_dest_unreachable(
                     reason,
-                    client_endpoint.addr,
+                    source_endpoint.addr,
                     target_ip,
                     local_port,
-                    client_endpoint.port,
+                    source_endpoint.port,
                     &[],
                 ) && let Err(e) = self.tun_writer.get_ref().send(&packet)
                 {
@@ -605,11 +605,11 @@ fn build_icmpv4_echo_reply(
 
     // IP: src = target (where the ping went), dst = originator
     let target_ip: smoltcp::wire::Ipv4Address = *dst_v4.ip();
-    let client_ip: smoltcp::wire::Ipv4Address = *src_v4.ip();
+    let source_ip: smoltcp::wire::Ipv4Address = *src_v4.ip();
 
     let ip_repr = Ipv4Repr {
         src_addr: target_ip,
-        dst_addr: client_ip,
+        dst_addr: source_ip,
         next_header: IpProtocol::Icmp,
         payload_len: reply.buffer_len(),
         hop_limit: 64,
@@ -637,10 +637,10 @@ fn build_icmpv6_echo_reply(
     use smoltcp::wire::{Icmpv6Packet, Icmpv6Repr, IpProtocol, Ipv6Packet, Ipv6Repr};
 
     let target_ip: smoltcp::wire::Ipv6Address = *dst_v6.ip();
-    let client_ip: smoltcp::wire::Ipv6Address = *src_v6.ip();
+    let source_ip: smoltcp::wire::Ipv6Address = *src_v6.ip();
 
     let icmp_pkt = Icmpv6Packet::new_checked(raw_icmp).ok()?;
-    let repr = Icmpv6Repr::parse(&target_ip, &client_ip, &icmp_pkt, caps).ok()?;
+    let repr = Icmpv6Repr::parse(&target_ip, &source_ip, &icmp_pkt, caps).ok()?;
 
     let Icmpv6Repr::EchoReply { seq_no, data, .. } = repr else {
         return None;
@@ -654,7 +654,7 @@ fn build_icmpv6_echo_reply(
 
     let ip_repr = Ipv6Repr {
         src_addr: target_ip,
-        dst_addr: client_ip,
+        dst_addr: source_ip,
         next_header: IpProtocol::Icmpv6,
         payload_len: reply.buffer_len(),
         hop_limit: 64,
@@ -667,7 +667,7 @@ fn build_icmpv6_echo_reply(
     ip_repr.emit(&mut ip_pkt);
 
     let mut icmp_out = Icmpv6Packet::new_unchecked(&mut buf[ip_repr.buffer_len()..]);
-    reply.emit(&target_ip, &client_ip, &mut icmp_out, caps);
+    reply.emit(&target_ip, &source_ip, &mut icmp_out, caps);
 
     Some(buf)
 }

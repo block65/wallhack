@@ -13,27 +13,27 @@ use smoltcp::wire::{
 #[must_use]
 pub fn build_icmp_dest_unreachable(
     reason: IcmpUnreachableReason,
-    client_ip: IpAddress,
+    source_ip: IpAddress,
     target_ip: IpAddress,
     target_port: u16,
-    client_port: u16,
+    source_port: u16,
     original_payload: &[u8],
 ) -> Option<Vec<u8>> {
-    match (client_ip, target_ip) {
-        (IpAddress::Ipv4(client), IpAddress::Ipv4(target)) => Some(build_icmpv4(
+    match (source_ip, target_ip) {
+        (IpAddress::Ipv4(source), IpAddress::Ipv4(target)) => Some(build_icmpv4(
             reason,
-            client,
+            source,
             target,
             target_port,
-            client_port,
+            source_port,
             original_payload,
         )),
-        (IpAddress::Ipv6(client), IpAddress::Ipv6(target)) => Some(build_icmpv6(
+        (IpAddress::Ipv6(source), IpAddress::Ipv6(target)) => Some(build_icmpv6(
             reason,
-            client,
+            source,
             target,
             target_port,
-            client_port,
+            source_port,
             original_payload,
         )),
         _ => None,
@@ -79,10 +79,10 @@ fn build_udp_header_bytes(src_port: u16, dst_port: u16, payload_len: usize) -> [
 
 fn build_icmpv4(
     reason: IcmpUnreachableReason,
-    client: smoltcp::wire::Ipv4Address,
+    source: smoltcp::wire::Ipv4Address,
     target: smoltcp::wire::Ipv4Address,
     target_port: u16,
-    client_port: u16,
+    source_port: u16,
     original_payload: &[u8],
 ) -> Vec<u8> {
     let icmp_reason = match reason {
@@ -91,11 +91,11 @@ fn build_icmpv4(
         IcmpUnreachableReason::Net => Icmpv4DstUnreachable::NetUnreachable,
     };
 
-    let udp_header = build_udp_header_bytes(client_port, target_port, original_payload.len());
+    let udp_header = build_udp_header_bytes(source_port, target_port, original_payload.len());
 
     // The "original" IP header that was in the triggering packet
     let inner_ip = Ipv4Repr {
-        src_addr: client,
+        src_addr: source,
         dst_addr: target,
         next_header: IpProtocol::Udp,
         payload_len: 8 + original_payload.len(),
@@ -108,11 +108,11 @@ fn build_icmpv4(
         data: &udp_header,
     };
 
-    // Outer IP header: from the target back to the client
+    // Outer IP header: from the target back to the source
     let icmp_len = icmp_repr.buffer_len();
     let outer_ip = Ipv4Repr {
         src_addr: target,
-        dst_addr: client,
+        dst_addr: source,
         next_header: IpProtocol::Icmp,
         payload_len: icmp_len,
         hop_limit: 64,
@@ -140,10 +140,10 @@ fn build_icmpv4(
 
 fn build_icmpv6(
     reason: IcmpUnreachableReason,
-    client: smoltcp::wire::Ipv6Address,
+    source: smoltcp::wire::Ipv6Address,
     target: smoltcp::wire::Ipv6Address,
     target_port: u16,
-    client_port: u16,
+    source_port: u16,
     original_payload: &[u8],
 ) -> Vec<u8> {
     let icmp_reason = match reason {
@@ -152,11 +152,11 @@ fn build_icmpv6(
         IcmpUnreachableReason::Net => Icmpv6DstUnreachable::NoRoute,
     };
 
-    let udp_header = build_udp_header_bytes(client_port, target_port, original_payload.len());
+    let udp_header = build_udp_header_bytes(source_port, target_port, original_payload.len());
 
     // The "original" IP header that was in the triggering packet
     let inner_ip = Ipv6Repr {
-        src_addr: client,
+        src_addr: source,
         dst_addr: target,
         next_header: IpProtocol::Udp,
         payload_len: 8 + original_payload.len(),
@@ -169,11 +169,11 @@ fn build_icmpv6(
         data: &udp_header,
     };
 
-    // Outer IP header: from the target back to the client
+    // Outer IP header: from the target back to the source
     let icmp_len = icmp_repr.buffer_len();
     let outer_ip = Ipv6Repr {
         src_addr: target,
-        dst_addr: client,
+        dst_addr: source,
         next_header: IpProtocol::Icmpv6,
         payload_len: icmp_len,
         hop_limit: 64,
@@ -190,7 +190,7 @@ fn build_icmpv6(
     let mut icmp_packet = Icmpv6Packet::new_unchecked(&mut buf[outer_ip.buffer_len()..]);
     icmp_repr.emit(
         &target,
-        &client,
+        &source,
         &mut icmp_packet,
         &smoltcp::phy::ChecksumCapabilities::default(),
     );

@@ -185,10 +185,8 @@
       intent at the type level.
 - [x] ~~`Metrics` field visibility~~ — fields now private with `snapshot()`
       accessor returning `node_api::Metrics`.
-- [ ] Redundant role conversion helper — `crates/core/src/negotiate.rs` has
-      `proto_to_core_role()` even though `impl From<ProtoNodeRole> for NodeRole`
-      already exists in `crates/core/src/types.rs`. Replace the free helper with
-      `.into()` and remove the duplicate conversion logic.
+- [x] ~~Redundant role conversion helper~~ — done: `proto_to_core_role()`
+      already removed; `.into()` used everywhere.
 - [ ] **Field-threading anti-pattern** — six call sites thread individual fields
       from `ErasedConnectResult`/`ErasedAcceptResult` instead of passing the
       struct whole. The existing `ExitContext` in `exit.rs` is the correct
