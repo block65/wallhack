@@ -125,7 +125,15 @@ pub struct ListenResponse {
     pub fingerprint: String,
 }
 
-/// Hint set request body.
+/// Ping response.
+#[derive(Debug, Serialize)]
+pub struct PingResponseBody {
+    pub uptime_ms: u64,
+    pub version: String,
+    pub role: String,
+}
+
+/// Set hint request body.
 #[derive(Debug, Deserialize)]
 pub struct HintSetRequestBody {
     pub level: String,
@@ -627,6 +635,37 @@ pub async fn disconnect(State(state): State<ApiState>) -> (StatusCode, Json<Succ
             }),
         ),
     }
+}
+
+pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponseBody>, StatusCode> {
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Info(
+            wallhack_wire::management::InfoRequest {},
+        ))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match resp.response {
+        Some(management_response::Response::Info(info)) => {
+            let role = NodeRole::try_from(info.role).unwrap_or(NodeRole::Unspecified);
+            Ok(Json(PingResponseBody {
+                uptime_ms: info.uptime_ms,
+                version: info.version,
+                role: role.to_string(),
+            }))
+        }
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn peer_ping(
+    State(_state): State<ApiState>,
+    Path(_peer): Path<String>,
+) -> Result<Json<PingResponseBody>, StatusCode> {
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
 
 pub async fn shutdown(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {

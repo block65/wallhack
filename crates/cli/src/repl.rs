@@ -190,7 +190,14 @@ fn parse_route_command(parts: &[&str]) -> Option<management_request::Request> {
     }
 }
 
-/// Parse `role` command: `role` (show) or `role <entry|exit|relay>` (set fixed).
+/// Parse `role` command.
+///
+/// Forms:
+/// - `role` — show current role via info
+/// - `role auto` — return to capability-based negotiation
+/// - `role prefer <role>` — soft prefer a role
+/// - `role exclude <role>` — exclude a role
+/// - `role <entry|exit|relay>` — hard set role
 fn parse_role_command(parts: &[&str]) -> Option<management_request::Request> {
     match parts.get(1).copied() {
         None => {

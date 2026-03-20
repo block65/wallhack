@@ -4,7 +4,7 @@ set -e
 # Mount virtual filesystems
 mount -t proc none /proc
 mount -t sysfs none /sys
-mount -t devtmpfs none /dev 2>/dev/null || true
+mount -t devtmpfs none /dev || true
 
 # Loopback
 ip link set lo up
@@ -108,13 +108,8 @@ while true; do
         continue
     fi
     
-    echo "Starting MCP shell on $MCP_TTY..." > /dev/ttyS0
-    
-    # Configure serial port (ignore errors)
-    if command -v stty >/dev/null; then
-        stty -F $MCP_TTY 115200 cs8 -parenb -cstopb clocal cread >/dev/ttyS0 2>&1 || true
-        stty -F $MCP_TTY -a > /dev/ttyS0 2>&1 || true
-    fi
+    # Configure MCP serial port (ignore errors)
+    stty -F $MCP_TTY 115200 cs8 -parenb -cstopb clocal cread 2>/dev/null || true
     
     # Try setsid -c (set controlling terminal)
     if setsid -c /bin/sh -l < $MCP_TTY > $MCP_TTY 2>&1; then

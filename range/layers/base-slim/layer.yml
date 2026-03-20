@@ -1,0 +1,9 @@
+# Slim base — iptables-legacy only, busybox provides ip/route.
+# For router-class (64m) VMs that need egress rules but not the full
+# nft-backed iptables (which pulls in libcrypto, libzstd, etc.)
+# Strips apk and its deps (libcrypto/libssl) to save ~6MB.
+packages:
+  - iptables-legacy
+run:
+  - ln -sf iptables-legacy /usr/sbin/iptables
+  - apk del --no-cache apk-tools ssl_client 2>/dev/null; rm -rf /usr/lib/libcrypto* /usr/lib/libssl* /usr/lib/ossl-modules /var/cache/apk /lib/apk || true
