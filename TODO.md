@@ -392,16 +392,12 @@
 
 ## Code Quality & QOL
 
-- [ ] Remove `PskFailTracker` — replace with generic subscriber dedup by
-  including IP in the log message. `PskFailTracker` is a per-IP HashMap in
-  `daemon/src/mode/mod.rs`, used in `auto.rs` and `entry.rs`. The subscriber's
-  consecutive-dedup handles the common case (single attacker hammering from one
-  IP) just as well.
+- [x] ~~Remove `PskFailTracker`~~ — done: subscriber dedup handles the common
+  case; plain `tracing::warn!` with peer address is sufficient.
 - [x] ~~single character variable names anti-pattern~~ — done: full codebase
       sweep shadowed all non-shadowed clones and renamed opaque abbreviations.
-- [ ] `neli` pinned at `0.6` (`crates/daemon/Cargo.toml`) — 0.7.4 available.
-  Likely a breaking API change; needs migration of
-  `crates/daemon/src/netlink.rs`.
+- [x] ~~`neli` pinned at `0.6`~~ — done: migrated to 0.7 (builder API, private
+  fields, synchronous socket module).
 
 ### Channel sprawl refactor
 - [ ] `ControlChannels` — 6-field struct, most `None`. Replace with
@@ -429,7 +425,7 @@
 - [x] ~~`SetHintRequestBody` → `HintSetRequestBody`~~ — done.
 - [x] ~~MCP "Remove a route" → "Delete a route"~~ — done.
 - [x] ~~`downstream` in node_api.rs doc~~ — done.
-- [ ] `client` variable in entry/session.rs, icmp.rs → `source`
+- [x] ~~`client` variable in entry/session.rs, icmp.rs → `source`~~ — done.
 - [x] ~~OpenAPI operationId consistency~~ — done (peerPing moot: ping removed).
 
 ## Next batch: Phase 13f — Security Posture
