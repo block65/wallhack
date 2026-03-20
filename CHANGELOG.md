@@ -1,6 +1,14 @@
 
 # Changelog
 
+## [0.14.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.0...wallhack-cli-v0.14.1) (2026-03-20)
+
+### Bug Fixes
+
+* UAT-driven fixes — neli ACK parsing, MCP error codes, disconnect log ([508a7da](https://github.com/block65/wallhack/commit/508a7da319d1eff71a189ad65a55e22fa33cf471))
+* disambiguate "Role resolved" log line and route display ([a42181a](https://github.com/block65/wallhack/commit/a42181a3421ab0d88cf40bf7fd73223aaf56333b))
+
+
 ## [0.14.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.13.0...wallhack-cli-v0.14.0) (2026-03-20)
 
 ### Features
