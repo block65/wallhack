@@ -1,6 +1,39 @@
 
 # Changelog
 
+## [0.14.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.13.0...wallhack-cli-v0.14.0) (2026-03-20)
+
+### Features
+
+* **api:** full command parity for REST API and rename /status to /info ([9935250](https://github.com/block65/wallhack/commit/99352504e57491bee88f0eba7beaeb2c1a821e58))
+* **cli:** disconnect a specific peer without tearing down the transport ([799d458](https://github.com/block65/wallhack/commit/799d458fb34be2fb991e14fe8c6f30898b41a0dc))
+* **daemon:** advertise interactive capability when stdin is a terminal ([c881436](https://github.com/block65/wallhack/commit/c8814362d1db3301a348a6a9432bfcdfd1592c96))
+* **mcp:** expose role negotiation controls and rename status to info ([d155747](https://github.com/block65/wallhack/commit/d15574787521ef8a02b9bcf4082a594d5b8827c8))
+* **negotiate:** resolve TUN-capable ambiguity via interactive tiebreaker ([a9ae95c](https://github.com/block65/wallhack/commit/a9ae95c4ecadb39a64a8c48b2f5eb9550d73f126))
+* **relay:** announce accepted peers to source for topology visibility ([72877fe](https://github.com/block65/wallhack/commit/72877fe58c96b29fb0eed62955c70ca0cf34f094))
+* **wire:** support interactive capability for human-in-the-loop tiebreaker ([8f7f799](https://github.com/block65/wallhack/commit/8f7f799044c95af2c0a1bc7021e9d2a714afd7f8))
+* **wire:** PeerAnnouncement control message for relay topology visibility ([5b74bce](https://github.com/block65/wallhack/commit/5b74bce06551775dddb35ad810925a20e24ba78a))
+
+### Bug Fixes
+
+* align interactive capability and socket path with review findings ([ae3430e](https://github.com/block65/wallhack/commit/ae3430e5a57c41fafb4133427699f1c8fb68b4c5))
+* remove ping handlers reintroduced by clusterfuck merge ([3c7ac1d](https://github.com/block65/wallhack/commit/3c7ac1d8865d38ee03e5c14f5f8af19a1d8ca592))
+* **api:** return 501 for unimplemented peer ping instead of misleading 404 ([e3d79c3](https://github.com/block65/wallhack/commit/e3d79c333f6df17e444eab81510864efa1d135d6))
+* **auto:** update peer capabilities from handshake after registration ([08241c0](https://github.com/block65/wallhack/commit/08241c00a7f61764587602b448710f4eb432f819))
+* **heartbeat:** unregister peer when heartbeat exits on connection death ([c99a580](https://github.com/block65/wallhack/commit/c99a5802e183e283acc19dc38f62c46bd6bd97ce))
+* **ipc:** per-instance socket paths prevent collision between concurrent daemons ([b2aa40a](https://github.com/block65/wallhack/commit/b2aa40a1fc30bc1fa66c6c9e00605049ae1823b2))
+* **ipc:** skip empty env vars in socket path fallback chain ([77adf0a](https://github.com/block65/wallhack/commit/77adf0afc13e9e682a70e9736a4f5e058e0f98c1))
+* **lint:** add REASON to handle_message allow, use explicit match variant ([5197977](https://github.com/block65/wallhack/commit/5197977b56c535f918671ff12b0fa3830384e069))
+* **negotiate:** relay forces accepted peers to exit via peer-FIXED hint ([f8c300c](https://github.com/block65/wallhack/commit/f8c300c42868b96f301c2ae938067da063b1483c))
+* **relay:** identify accepted peers by handshake name instead of raw address ([088b07e](https://github.com/block65/wallhack/commit/088b07ef11de1250b92f00dbec577308d651075b))
+* **relay:** enable heartbeat and latency tracking for all relay peers ([4a2c3d3](https://github.com/block65/wallhack/commit/4a2c3d38cf72491b5ad84b7ce14153db1be75196))
+* **relay:** register accepted peers as Exit instead of capability-derived role ([4644084](https://github.com/block65/wallhack/commit/4644084d8347c618362c2babe2b3c6228aa25aad))
+* **relay:** detect accepted peer disconnect via transport liveness ([4c6c350](https://github.com/block65/wallhack/commit/4c6c35045f83887d3602a7650ac34d93518df369))
+* **relay:** detect accepted peer disconnect and consistent log wording ([644beb7](https://github.com/block65/wallhack/commit/644beb78c68f8ce5f24ad7edf43dee057b9517d9))
+
+16 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.13.0...wallhack-cli-v0.14.0)
+
+
 ## [0.13.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.12.0...wallhack-cli-v0.13.0) (2026-03-20)
 
 ### Features
