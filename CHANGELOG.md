@@ -1,6 +1,15 @@
 
 # Changelog
 
+## [0.12.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.11.1...wallhack-cli-v0.12.0) (2026-03-20)
+
+### Features
+
+* **routes:** warn when manual route targets a CIDR not advertised by the peer ([017e7c4](https://github.com/block65/wallhack/commit/017e7c4e7495432ae99da3dc7e01c4785a1f9555))
+
+2 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.11.1...wallhack-cli-v0.12.0)
+
+
 ## [0.11.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.11.0...wallhack-cli-v0.11.1) (2026-03-19)
 
 ### Bug Fixes
