@@ -1,6 +1,15 @@
 
 # Changelog
 
+## [0.13.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.12.0...wallhack-cli-v0.13.0) (2026-03-20)
+
+### Features
+
+* **daemon:** surface recent daemon logs via IPC for MCP/CLI/REST observability ([ab6ec4f](https://github.com/block65/wallhack/commit/ab6ec4f926cc81f06c1bf79d5d11956b453d1daa))
+
+3 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.12.0...wallhack-cli-v0.13.0)
+
+
 ## [0.12.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.11.1...wallhack-cli-v0.12.0) (2026-03-20)
 
 ### Features
