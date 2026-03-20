@@ -106,15 +106,6 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
     let cmd = *parts.first()?;
 
     match cmd {
-        "ping" => {
-            let peer = parts
-                .get(1)
-                .map(std::string::ToString::to_string)
-                .unwrap_or_default();
-            Some(management_request::Request::Ping(
-                wallhack_wire::management::PingRequest { peer },
-            ))
-        }
         "info" => Some(management_request::Request::Info(
             wallhack_wire::management::InfoRequest {},
         )),
@@ -124,6 +115,15 @@ fn parse_command(line: &str) -> Option<management_request::Request> {
         "peers" => Some(management_request::Request::Peers(
             wallhack_wire::management::PeersRequest {},
         )),
+        "logs" => {
+            let lines = parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            Some(management_request::Request::Logs(
+                wallhack_wire::management::LogsRequest { lines },
+            ))
+        }
         "route" => parse_route_command(&parts),
         "connect" => {
             let addr = parts.get(1)?;
@@ -255,10 +255,10 @@ fn print_help() {
 
     let mut tw = TabWriter::new(std::io::stdout());
     let _ = writeln!(tw, "Commands:");
-    let _ = writeln!(tw, "  ping\tPing the daemon (peer ping not yet supported)");
     let _ = writeln!(tw, "  info\tShow daemon info");
     let _ = writeln!(tw, "  version\tShow version");
     let _ = writeln!(tw, "  stats\tShow traffic statistics");
+    let _ = writeln!(tw, "  logs [N]\tShow recent daemon log lines");
     let _ = writeln!(tw, "  peers\tList connected peers");
     let _ = writeln!(tw, "  route\tList configured routes");
     let _ = writeln!(tw, "  route add <cidr> <peer>\tAdd a route");

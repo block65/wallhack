@@ -100,6 +100,7 @@ impl ControlServer {
             Arc::new(Registry::new()),
             RouteTable::shared(),
             route_updates,
+            None,
         ));
 
         Ok(Self { endpoint, handler })

@@ -10,7 +10,6 @@ package wallhack.management;
 message ManagementRequest {
   uint64 request_id = 1; // assigned by sender, echoed in response
   oneof request {
-    PingRequest ping = 2;
     InfoRequest info = 3;
     StatsRequest stats = 4;
     PeersRequest peers = 5;
@@ -24,6 +23,7 @@ message ManagementRequest {
     ShutdownRequest shutdown = 13;
     HintSetRequest hint_set = 14;
     HintSetAutoRequest hint_set_auto = 15;
+    LogsRequest logs = 16;
   }
 }
 
@@ -38,13 +38,13 @@ message DaemonMessage {
 message ManagementResponse {
   uint64 request_id = 1; // echoes the request
   oneof response {
-    PingResponse ping = 2;
     InfoResponse info = 3;
     StatsResponse stats = 4;
     PeersResponse peers = 5;
     RoutesResponse routes = 6;
     ConnectResponse connect = 7;
     ListenResponse listen = 8;
+    LogsResponse logs = 9;
     ErrorResponse error = 20;
     OkResponse ok = 21; // for void operations (route_add, disconnect, etc.)
   }
@@ -63,10 +63,6 @@ message DaemonNotification {
 }
 
 // ── Request messages ────────────────────────────────────────────────
-
-message PingRequest {
-  string peer = 1;  // prefix to match; empty = auto-select sole peer
-}
 
 message InfoRequest {}
 
@@ -117,6 +113,14 @@ message HintSetRequest {
 
 message HintSetAutoRequest {}
 
+message LogsRequest {
+  uint32 lines = 1; // number of recent lines to retrieve (0 = all buffered)
+}
+
+message LogsResponse {
+  repeated string lines = 1;
+}
+
 // ── Response messages ───────────────────────────────────────────────
 
 enum NodeRole {
@@ -133,12 +137,6 @@ enum PeerStatus {
   PEER_STATUS_DISCONNECTED = 2;
 }
 
-
-message PingResponse {
-  uint64 uptime_ms = 1;
-  string version = 2;
-  NodeRole node_role = 3;
-}
 
 message InfoResponse {
   NodeRole role = 1;

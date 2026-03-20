@@ -14,6 +14,7 @@ use std::{
 };
 
 use tracing::{Event, Level, Metadata, Subscriber, level_filters::LevelFilter};
+use wallhack_core::control::log_buffer::LogBuffer;
 
 pub type LogWriter = Arc<RwLock<Box<dyn Fn(&str, &str) + Send + Sync>>>;
 
@@ -28,6 +29,7 @@ pub struct SimpleSubscriber {
     max_level: LevelFilter,
     filters: Vec<String>,
     writer: LogWriter,
+    log_buffer: Option<LogBuffer>,
     dedup: Mutex<DedupeState>,
 }
 
@@ -49,6 +51,7 @@ impl SimpleSubscriber {
             max_level,
             filters,
             writer: Arc::new(RwLock::new(Box::new(|tag, msg| eprintln!("{tag}: {msg}")))),
+            log_buffer: None,
             dedup: Mutex::new(DedupeState {
                 last_hash: 0,
                 last_tag: "info",
@@ -61,6 +64,11 @@ impl SimpleSubscriber {
     #[must_use]
     pub fn writer(&self) -> LogWriter {
         Arc::clone(&self.writer)
+    }
+
+    /// Attach a [`LogBuffer`] so every emitted line is also stored in memory.
+    pub fn set_log_buffer(&mut self, buffer: LogBuffer) {
+        self.log_buffer = Some(buffer);
     }
 }
 
@@ -142,9 +150,16 @@ impl Subscriber for SimpleSubscriber {
 
         if let Ok(writer) = self.writer.read() {
             if flush_count > 0 {
-                writer(flush_tag, &format!("↑ repeated {flush_count}×"));
+                let repeat_line = format!("↑ repeated {flush_count}×");
+                writer(flush_tag, &repeat_line);
+                if let Some(ref buf) = self.log_buffer {
+                    buf.push(format!("{flush_tag}: {repeat_line}"));
+                }
             }
             writer(tag, &visitor.0);
+            if let Some(ref buf) = self.log_buffer {
+                buf.push(format!("{tag}: {}", visitor.0));
+            }
         }
     }
 

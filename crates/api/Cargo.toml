@@ -10,6 +10,7 @@ wallhack-wire = { path = "../wire" }
 axum = { version = "0.8", default-features = false, features = [
     "tokio",
     "json",
+    "query",
     "http1",
 ] }
 tower-http = { version = "0.6", default-features = false, features = ["cors"] }

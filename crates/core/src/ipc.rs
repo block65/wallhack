@@ -17,8 +17,8 @@ use tokio::{
 use wallhack_transport::TransportError;
 use wallhack_wire::management::{
     self, ConnectResponse, DaemonMessage, DaemonNotification, ErrorCode, ErrorResponse,
-    InfoResponse, ListenResponse, ManagementRequest, ManagementResponse, OkResponse, PeerConnected,
-    PeerDisconnected, PeersResponse, PingResponse, RoutesResponse, StatsResponse, daemon_message,
+    InfoResponse, ListenResponse, LogsResponse, ManagementRequest, ManagementResponse, OkResponse,
+    PeerConnected, PeerDisconnected, PeersResponse, RoutesResponse, StatsResponse, daemon_message,
     daemon_notification, management_request, management_response,
 };
 
@@ -287,27 +287,6 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
     let request_id = request.request_id;
 
     let response = match &request.request {
-        Some(management_request::Request::Ping(req)) => {
-            if req.peer.is_empty() {
-                // Ping the daemon itself
-                let status = api.info();
-                management_response::Response::Ping(PingResponse {
-                    uptime_ms: status.uptime_ms,
-                    version: status.version,
-                    node_role: management::NodeRole::from(status.role).into(),
-                })
-            } else {
-                // Peer pinging is not yet implemented
-                return ManagementResponse {
-                    request_id,
-                    response: Some(management_response::Response::Error(ErrorResponse {
-                        code: ErrorCode::NotSupported.into(),
-                        message: "peer ping not yet implemented".to_string(),
-                    })),
-                };
-            }
-        }
-
         Some(management_request::Request::Info(_)) => {
             let s = api.info();
             management_response::Response::Info(InfoResponse {
@@ -459,6 +438,11 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
             }),
             Err(e) => error_response(&e),
         },
+
+        Some(management_request::Request::Logs(req)) => {
+            let lines = api.logs(req.lines);
+            management_response::Response::Logs(LogsResponse { lines })
+        }
 
         None => management_response::Response::Error(ErrorResponse {
             code: ErrorCode::Internal.into(),

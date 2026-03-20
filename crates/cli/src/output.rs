@@ -148,6 +148,15 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
                 let _ = tw.flush();
             }
         }
+        Some(management_response::Response::Logs(l)) => {
+            if l.lines.is_empty() {
+                println!("No log lines available.");
+            } else {
+                for line in &l.lines {
+                    println!("{line}");
+                }
+            }
+        }
         Some(management_response::Response::Connect(c)) => {
             println!("Connected to {} ({})", c.peer_addr, c.protocol);
         }
@@ -165,12 +174,6 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
         }
         Some(management_response::Response::Error(e)) => {
             return Err(CtlError::Daemon(e.message.clone()));
-        }
-        Some(management_response::Response::Ping(_)) => {
-            // Ping response is handled by daemon; not used by CLI currently.
-            return Err(CtlError::Daemon(
-                "unexpected ping response from daemon".to_string(),
-            ));
         }
         None => {
             return Err(CtlError::EmptyResponse);

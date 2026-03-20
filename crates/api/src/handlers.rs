@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use wallhack_wire::management::{
     ConnectRequest, DisconnectRequest, HintLevel, HintSetAutoRequest, HintSetRequest, InfoRequest,
-    ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest,
+    ListenRequest, LogsRequest, NodeRole, PeerDisconnectRequest, PeersRequest,
     RouteAddRequest as ProtoRouteAddRequest, RouteDelRequest, RoutesRequest, ShutdownRequest,
     StatsRequest, management_request, management_response,
 };
@@ -125,19 +125,24 @@ pub struct ListenResponse {
     pub fingerprint: String,
 }
 
-/// Ping response.
-#[derive(Debug, Serialize)]
-pub struct PingResponseBody {
-    pub uptime_ms: u64,
-    pub version: String,
-    pub role: String,
-}
-
 /// Hint set request body.
 #[derive(Debug, Deserialize)]
 pub struct HintSetRequestBody {
     pub level: String,
     pub role: String,
+}
+
+/// Logs query parameters.
+#[derive(Debug, Deserialize)]
+pub struct LogsQuery {
+    /// Number of recent lines to return (default: all buffered).
+    pub lines: Option<u32>,
+}
+
+/// Logs response.
+#[derive(Debug, Serialize)]
+pub struct LogsResponse {
+    pub lines: Vec<String>,
 }
 
 pub async fn health() -> &'static str {
@@ -624,64 +629,6 @@ pub async fn disconnect(State(state): State<ApiState>) -> (StatusCode, Json<Succ
     }
 }
 
-pub async fn ping(State(state): State<ApiState>) -> Result<Json<PingResponseBody>, StatusCode> {
-    let resp = state
-        .ipc
-        .lock()
-        .await
-        .request(management_request::Request::Ping(PingRequest {
-            peer: String::new(),
-        }))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    match resp.response {
-        Some(management_response::Response::Ping(ping)) => {
-            let role = NodeRole::try_from(ping.node_role).unwrap_or(NodeRole::Unspecified);
-            Ok(Json(PingResponseBody {
-                uptime_ms: ping.uptime_ms,
-                version: ping.version,
-                role: role.to_string(),
-            }))
-        }
-        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-pub async fn peer_ping(
-    State(state): State<ApiState>,
-    Path(peer): Path<String>,
-) -> Result<Json<PingResponseBody>, StatusCode> {
-    let resp = state
-        .ipc
-        .lock()
-        .await
-        .request(management_request::Request::Ping(PingRequest { peer }))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    match resp.response {
-        Some(management_response::Response::Ping(ping)) => {
-            let role = NodeRole::try_from(ping.node_role).unwrap_or(NodeRole::Unspecified);
-            Ok(Json(PingResponseBody {
-                uptime_ms: ping.uptime_ms,
-                version: ping.version,
-                role: role.to_string(),
-            }))
-        }
-        Some(management_response::Response::Error(e)) => {
-            let not_supported: i32 = wallhack_wire::management::ErrorCode::NotSupported.into();
-            if e.code == not_supported {
-                Err(StatusCode::NOT_IMPLEMENTED)
-            } else {
-                tracing::warn!("Ping peer failed: {}", e.message);
-                Err(StatusCode::NOT_FOUND)
-            }
-        }
-        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
 pub async fn shutdown(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
     let resp = state
         .ipc
@@ -832,6 +779,25 @@ pub async fn hint_set_auto(State(state): State<ApiState>) -> (StatusCode, Json<S
                 message: None,
             }),
         ),
+    }
+}
+
+pub async fn logs(
+    State(state): State<ApiState>,
+    axum::extract::Query(query): axum::extract::Query<LogsQuery>,
+) -> Result<Json<LogsResponse>, StatusCode> {
+    let lines = query.lines.unwrap_or(0);
+    let resp = state
+        .ipc
+        .lock()
+        .await
+        .request(management_request::Request::Logs(LogsRequest { lines }))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match resp.response {
+        Some(management_response::Response::Logs(l)) => Ok(Json(LogsResponse { lines: l.lines })),
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 

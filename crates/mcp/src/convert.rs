@@ -27,14 +27,6 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             let _ = writeln!(out, "uptime: {}", format_uptime(s.uptime_ms));
             Ok(out)
         }
-        Some(management_response::Response::Ping(p)) => {
-            let role = p.node_role().to_string();
-            Ok(format!(
-                "pong — role: {role}, version: {}, uptime: {}",
-                p.version,
-                format_uptime(p.uptime_ms),
-            ))
-        }
         Some(management_response::Response::Stats(s)) => Ok(format!(
             "bytes in: {}\nbytes out: {}\npackets in: {}\npackets out: {}\n\
              connections: {}\nflows: {}\ndropped: {}",
@@ -78,6 +70,13 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
                 let _ = writeln!(out, "{} → {}{tag}", route.cidr, route.peer);
             }
             Ok(out)
+        }
+        Some(management_response::Response::Logs(l)) => {
+            if l.lines.is_empty() {
+                Ok("No log lines available.".to_string())
+            } else {
+                Ok(l.lines.join("\n"))
+            }
         }
         Some(management_response::Response::Connect(c)) => {
             Ok(format!("Connected to {} ({})", c.peer_addr, c.protocol))

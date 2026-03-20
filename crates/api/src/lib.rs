@@ -64,6 +64,7 @@ pub fn router(state: State) -> Router {
     let protected_routes = Router::new()
         .route("/info", get(handlers::info))
         .route("/stats", get(handlers::stats))
+        .route("/logs", get(handlers::logs))
         .route("/peers", get(handlers::peers))
         .route("/peers/{name}", delete(handlers::peer_disconnect))
         .route(
@@ -75,8 +76,6 @@ pub fn router(state: State) -> Router {
         .route("/connect", post(handlers::connect))
         .route("/listen", post(handlers::listen))
         .route("/disconnect", post(handlers::disconnect))
-        .route("/ping", get(handlers::ping))
-        .route("/ping/{peer}", get(handlers::peer_ping))
         .route("/shutdown", post(handlers::shutdown))
         .route(
             "/hints",

@@ -24,6 +24,7 @@ use wallhack_core::{
     NodeRole,
     control::{
         handler::{Handler, HandlerConfig},
+        log_buffer::LogBuffer,
         metrics::Metrics,
         peers::Registry,
         routes::RouteTable,
@@ -50,12 +51,13 @@ use wallhack_core::{
 pub async fn run_daemon_engine(
     config: DaemonConfig,
     socket_path_override: Option<std::path::PathBuf>,
+    log_buffer: Option<LogBuffer>,
 ) -> Result<(), NodeError> {
     tracing::info!("wallhack {}  {}", config.global.version, config.mode.name());
 
     sys::check_entropy_ready();
 
-    let handle = start_node(&config)?;
+    let handle = start_node(&config, log_buffer)?;
 
     // Start IPC listener for the management protocol.
     let socket_path = socket_path_override
@@ -127,7 +129,10 @@ pub async fn run_daemon_engine(
 /// # Errors
 ///
 /// Returns error if node setup fails.
-pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
+pub fn start_node(
+    config: &DaemonConfig,
+    log_buffer: Option<LogBuffer>,
+) -> Result<DaemonHandle, NodeError> {
     let role = match &config.mode {
         ModeConfig::Entry(_) => NodeRole::Entry,
         ModeConfig::Exit(_) => NodeRole::Exit,
@@ -150,6 +155,7 @@ pub fn start_node(config: &DaemonConfig) -> Result<DaemonHandle, NodeError> {
         Arc::clone(&peers),
         Arc::clone(&routes),
         route_update_tx.clone(),
+        log_buffer,
     );
     let node_state = handler.node_state();
     let node_api: Arc<dyn NodeApi> = Arc::new(handler);

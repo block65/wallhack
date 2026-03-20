@@ -227,4 +227,10 @@ pub trait NodeApi: Send + Sync {
 
     /// Remove all hints (both startup and runtime).
     fn hint_set_auto(&self) -> Result<()>;
+
+    /// Retrieve recent daemon log lines.
+    ///
+    /// Returns the most recent `count` lines from the in-memory log buffer.
+    /// If `count` is 0, returns all buffered lines.
+    fn logs(&self, count: u32) -> Vec<String>;
 }
