@@ -131,8 +131,63 @@ jobs:
           cp "target/${{ matrix.target }}/release/wallhack" "$ARTIFACT"
           gh release upload --clobber "$TAG_NAME" "$ARTIFACT"
 
+  build-mcp:
+    if: startsWith(github.event.inputs.tag_name, 'wallhack-cli-v')
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: wallhack-mcp-linux-x64
+          - target: aarch64-unknown-linux-gnu
+            artifact: wallhack-mcp-linux-arm64
+            cross: true
+
+    runs-on: self-hosted
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag_name }}
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! command -v cross &>/dev/null; then
+            gh release download "$CROSS_VERSION" --repo cross-rs/cross --pattern 'cross-x86_64-unknown-linux-musl.tar.gz' -D /tmp --clobber
+            tar xz -C ~/.cargo/bin cross < /tmp/cross-x86_64-unknown-linux-musl.tar.gz
+          fi
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} -p wallhack-mcp
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} -p wallhack-mcp
+
+      - name: Upload binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.inputs.tag_name }}
+        run: |
+          cp "target/${{ matrix.target }}/release/wallhack-mcp" "${{ matrix.artifact }}"
+          gh release upload --clobber "$TAG_NAME" "${{ matrix.artifact }}"
+
   publish:
-    needs: build
+    needs: [build, build-mcp]
     runs-on: self-hosted
     permissions:
       contents: write
