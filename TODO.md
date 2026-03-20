@@ -18,12 +18,9 @@
       streams`). Relay now bridges bidi streams between source and exit peers
       using `copy_bidirectional`. SYN probes and TCP data sessions work through
       relay chains.
-- [ ] **Topology visibility** — entry has no visibility into peers behind a
-      relay. `wallhack peers` shows the relay but not the exit nodes connected
-      to it. Relay should forward downstream peer identity (name, capabilities,
-      routes) upstream via a peer announcement control message or augmented
-      handshake. Needed for topology observability, debugging, and multi-hop
-      route selection.
+- [x] ~~**Topology visibility**~~ — done: relay sends `PeerAnnouncement` over
+      control stream; entry registers announced peers in its registry.
+      `wallhack peers` on entry shows exit nodes behind relays.
 
 ## Transports
 
@@ -53,14 +50,10 @@
 
 ## Auto-negotiation
 
-- [ ] **Tiebreaker for symmetric capabilities** — when both peers are
-      TUN-capable with identical connectivity (both connect-only or both
-      listen-only), the `negotiate()` function returns `Indeterminate`. Needs a
-      deterministic tiebreaker rule (e.g. lexicographic name ordering, or a
-      "prefer" hint with Fixed level). Current workaround: set `--prefer-role`
-      on one side. Design decision: should the tiebreaker be purely local (each
-      side picks independently but deterministically) or negotiated (extra
-      round-trip)?
+- [x] ~~**Tiebreaker for symmetric capabilities**~~ — done: interactive flag
+      (human at terminal) breaks TUN-capable ambiguity. Relay accept-side
+      Fixed(Entry) hint forces exit role on accepted peers. Both-interactive
+      still Indeterminate — use `--prefer-role`.
 
 ## REPL
 
@@ -100,11 +93,8 @@
 
 ## Bugs
 
-- [ ] **Auto-routing not implemented** — entry node does not inject kernel
-      routes for the exit peer's announced networks when a TUN is created. User
-      must run `ip route add <cidr> dev <tun>` manually after every connect.
-      This should be automatic and verified by the smoke test suite (add a smoke
-      test that checks routes exist after connect).
+- [x] ~~**Auto-routing not implemented**~~ — done: `auto.rs` auto-installs
+      kernel routes for peer-advertised CIDRs when TUN is created.
 - [ ] **`disconnect_peer` by address or connection ID** —
       `wallhack_disconnect_peer` only accepts a peer name. Unnamed peers (relays
       that don't propagate names) are impossible to disconnect. Need either
@@ -117,11 +107,8 @@
       `update_capabilities()` now called in exit connect mode.
 - [x] ~~**Latency not measured on connect**~~ — done: initial ping after
       handshake + 30s heartbeat on all connection paths (entry, exit, auto).
-- [ ] **Relay peer name not propagated to entry** — when a relay node connects,
-      the entry node sees it as an unnamed address (e.g. `10.99.1.10:48535`)
-      rather than the relay's declared name. This breaks deterministic TUN
-      naming (`peer_name_to_iface`) so TUN gets a random name instead of
-      `wh{hash}`.
+- [x] ~~**Relay peer name not propagated to entry**~~ — fixed: relay extracts
+      peer name from handshake instead of using raw socket address.
 - [x] ~~**Relay peer role reported as `exit`**~~ — fixed: relay data plane
       wiring and `update_capabilities()` now correct.
 - [x] ~~**Stale TUN interfaces not cleaned up on disconnect**~~ — fixed in PR
@@ -133,6 +120,10 @@
       `TunDropGuard` for panic safety.
 - [x] ~~No color in `[+]` notification messages~~ — done, uses `nu-ansi-term`
       behind `repl` feature gate.
+- [x] ~~**`ping` returns status info, not RTT**~~ — moot: `ping` command removed
+      in v0.12.0.
+- [x] ~~**Initial heartbeat latency delayed ~30s**~~ — fixed: microsecond
+      timestamp resolution in v0.11.1.
 - [ ] Log prefix inconsistency in REPL — mix of `warn:` prefix (from
       `tracing::warn!`) and `[+]`/`[-]`/`[!]` prefixes (from notifications).
       Consolidate into a consistent style. Broader fix: unified logging format —
@@ -150,10 +141,10 @@
 
 ## UX
 
-- [ ] **`--fixed-role` naming** — `--fixed-role relay` is confusing; "fixed"
-      implies overriding something. Prefer `--role relay` (or just make role a
-      positional subcommand). `--fixed-role` is used in static range setups as
-      the normal way to set a role.
+- [x] ~~**`--fixed-role` naming**~~ — done: `hint` command eliminated, unified
+      into `role` command. `role entry` (hard), `role prefer entry` (soft),
+      `role exclude entry`, `role auto` (clear). Daemon flags: `--role`,
+      `--prefer-role`, `--exclude-role`.
 - [ ] **Relay `--listen` address underdocumented** — relay mode accepts both
       `--connect` (upstream) and `--listen` (for downstream peers) but neither
       the help text nor any docs explain the relay topology model, which
@@ -408,11 +399,40 @@
   `daemon/src/mode/mod.rs`, used in `auto.rs` and `entry.rs`. The subscriber's
   consecutive-dedup handles the common case (single attacker hammering from one
   IP) just as well.
-- [ ] single character variable names anti-pattern: its pointless and confusing.
-      see the coding standards rules. shadow the original variable when cloning
+- [x] ~~single character variable names anti-pattern~~ — done: full codebase
+      sweep shadowed all non-shadowed clones and renamed opaque abbreviations.
 - [ ] `neli` pinned at `0.6` (`crates/daemon/Cargo.toml`) — 0.7.4 available.
   Likely a breaking API change; needs migration of
   `crates/daemon/src/netlink.rs`.
+
+### Channel sprawl refactor
+- [ ] `ControlChannels` — 6-field struct, most `None`. Replace with
+  Handler/Registry direct references. Control loop already has
+  `Option<&Handler>` on server side; extend to client side.
+- [x] ~~Eliminate `latency_tx`~~ — done in channel sprawl refactor.
+- [x] ~~Eliminate `role_transition_tx`~~ — done in channel sprawl refactor.
+- [x] ~~Deduplicate QUIC/WS client connect~~ — done (commit `624bc9c`).
+- [x] ~~Deduplicate QUIC/WS server accept~~ — done (commit `afc7671`).
+- [ ] IPC client: 3 channels → `IpcConnection` object with `request()` method
+- [ ] Source/sink naming: replace `_tx`/`_rx` convention with `_source`/`_sink`
+- [ ] `outgoing_rx` → `control_sink` or similar (oxymoron: receiving end of
+  outgoing messages)
+
+### Stale terminology (audit 2026-03-18)
+- [x] ~~`StatusResponse` → `InfoResponse`~~ — done.
+- [x] ~~`NodeStatus` → `NodeInfo`~~ — done.
+- [x] ~~`fn status()` → `fn info()`~~ — done.
+- [x] ~~`fn set_hint()` → `fn hint_set()`~~ — done.
+- [x] ~~`fn clear_hints()` → `fn hint_set_auto()`~~ — done.
+- [x] ~~`fn remove_route()` → `fn route_del()`~~ — done.
+- [x] ~~`fn disconnect_peer()` → `fn peer_disconnect()`~~ — done.
+- [x] ~~`fn ping_peer()` → `fn peer_ping()`~~ — moot: ping removed in v0.12.0.
+- [x] ~~`SetHintParams` → `HintSetParams`~~ — done.
+- [x] ~~`SetHintRequestBody` → `HintSetRequestBody`~~ — done.
+- [x] ~~MCP "Remove a route" → "Delete a route"~~ — done.
+- [x] ~~`downstream` in node_api.rs doc~~ — done.
+- [ ] `client` variable in entry/session.rs, icmp.rs → `source`
+- [x] ~~OpenAPI operationId consistency~~ — done (peerPing moot: ping removed).
 
 ## Next batch: Phase 13f — Security Posture
 - [ ] When any auth flag (`--psk`, `--cert`, etc.) is provided, automatically
