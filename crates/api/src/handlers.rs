@@ -125,7 +125,7 @@ pub struct ListenResponse {
     pub fingerprint: String,
 }
 
-/// Hint set request body.
+/// Set hint request body.
 #[derive(Debug, Deserialize)]
 pub struct HintSetRequestBody {
     pub level: String,

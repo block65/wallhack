@@ -84,7 +84,7 @@ services:
     cpus: 1
     deny_cp: true
     layers:
-      - base
+      - base-slim
       - egress-web-only
       - wallhack
     networks:
@@ -143,7 +143,7 @@ services:
     cpus: 1
     deny_cp: true
     layers:
-      - base
+      - base-slim
       - proxy-env
       - egress-ssh-only
       - ssh-bastion
@@ -309,7 +309,7 @@ services:
     cpus: 1
     deny_cp: true
     layers:
-      - base
+      - base-slim
       - egress-udp53-only
       - wallhack
     networks:
@@ -377,7 +377,7 @@ services:
     cpus: 1
     deny_cp: true
     layers:
-      - base
+      - base-slim
       - egress-none
       - wallhack
     networks:

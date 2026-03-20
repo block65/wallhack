@@ -4,7 +4,6 @@ busybox_ver := "1.35.0"
 socat_ver := "1.8.1.1"
 iproute2_ver := "6.12.0"
 musl_target := "x86_64-unknown-linux-musl"
-musl_target_dir := "target/musl"
 vm_dir := "vm"
 staging_dir := vm_dir / "staging"
 rootfs_dir := staging_dir / "rootfs"
@@ -13,7 +12,7 @@ vmlinuz := staging_dir / "vmlinuz"
 initrd_base := staging_dir / "initrd-base.gz"
 initrd_overlay := staging_dir / "initrd-overlay.gz"
 initrd := staging_dir / "initrd.gz"
-wallhack_bin := justfile_directory() / musl_target_dir / musl_target / "release" / "wallhack"
+wallhack_bin := justfile_directory() / "target" / musl_target / "release" / "wallhack"
 busybox_bin := tools_dir / "busybox"
 iperf3_bin := tools_dir / "iperf3"
 socat_bin := tools_dir / "socat"
@@ -108,7 +107,7 @@ build-tc:
 
 cargo-build-musl:
     echo "Building musl binary (slim)..."
-    CARGO_TARGET_DIR={{ musl_target_dir }} cross build --release --target "{{ musl_target }}" -p wallhack-cli --no-default-features --features slim
+    cross build --release --target "{{ musl_target }}" -p wallhack-cli --no-default-features --features slim
 
 clean:
     rm -rf "{{ staging_dir }}"

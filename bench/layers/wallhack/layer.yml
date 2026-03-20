@@ -1,0 +1,2 @@
+# Wallhack layer — binary only; bench runner starts wallhack via vm_exec
+binary: target/x86_64-unknown-linux-musl/release/wallhack -> /usr/local/bin/wallhack

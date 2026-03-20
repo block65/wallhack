@@ -1,0 +1,33 @@
+version: "1"
+
+
+defaults:
+  # Built by: cd bench && pontoon build-kernel
+  kernel: ./vm/build/vmlinuz
+  alpine: "3.21"
+
+networks:
+  bench-link:
+    link: true
+    subnet: 10.99.0.0/24
+
+services:
+  entry:
+    memory: 256m
+    cpus: 2
+    layers:
+      - base
+      - wallhack
+    networks:
+      bench-link:
+        ipv4_address: 10.99.0.1
+
+  exit:
+    memory: 256m
+    cpus: 2
+    layers:
+      - base
+      - wallhack
+    networks:
+      bench-link:
+        ipv4_address: 10.99.0.2
