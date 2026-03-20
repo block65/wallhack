@@ -697,8 +697,6 @@ where
         max_peers.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
     ));
 
-    let mut psk_failures = super::PskFailTracker::new();
-
     // Main loop: handle incoming connections
     loop {
         match server.accept(NodeRole::Entry).await {
@@ -726,11 +724,7 @@ where
                 ) {
                     Ok(id) => id,
                     Err(e) => {
-                        if matches!(&e, NodeError::PskAuth(_)) {
-                            psk_failures.record(&peer_addr);
-                        } else {
-                            tracing::warn!("Handshake validation failed for {peer_addr}: {e}");
-                        }
+                        tracing::warn!("Handshake failed for {peer_addr}: {e}");
                         continue;
                     }
                 };
@@ -1120,6 +1114,7 @@ fn start_api(
         Arc::clone(peers),
         Arc::clone(routes),
         route_updates,
+        None,
     );
     tracing::info!("REST API username: {username}");
     tracing::info!("REST API secret:   {secret}");

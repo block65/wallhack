@@ -1,0 +1,3 @@
+# Force merge conflicts on lock files so they are always regenerated, never
+# silently auto-merged with potentially wrong dependency resolution.
+Cargo.lock merge=binary

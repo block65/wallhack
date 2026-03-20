@@ -960,6 +960,7 @@ mod tests {
             std::sync::Arc::new(Registry::new()),
             RouteTable::shared(),
             tokio::sync::broadcast::channel(16).0,
+            None,
         );
 
         let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
@@ -1091,6 +1092,7 @@ mod tests {
             std::sync::Arc::new(Registry::new()),
             RouteTable::shared(),
             tokio::sync::broadcast::channel(16).0,
+            None,
         );
 
         let (_ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);

@@ -17,7 +17,9 @@ use wallhack_wire::{
 
 use crate::NodeRole;
 
-use super::{metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable};
+use super::{
+    log_buffer::LogBuffer, metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable,
+};
 
 /// Mutable runtime state that can change after construction.
 ///
@@ -113,6 +115,7 @@ pub struct Handler {
     /// Sender for hint changes. The mode task watches the receiver and
     /// re-evaluates when a new hint arrives. `None` means no hint is active.
     hint_tx: watch::Sender<Option<RoleHint>>,
+    log_buffer: LogBuffer,
     metrics: SharedMetrics,
     peers: SharedRegistry,
     routes: SharedRouteTable,
@@ -123,6 +126,10 @@ pub struct Handler {
 
 impl Handler {
     /// Creates a new control handler.
+    ///
+    /// `log_buffer`, when provided, is the shared ring buffer that the tracing
+    /// subscriber also writes into — enabling the `logs` API to return recent
+    /// daemon output.
     #[must_use]
     pub fn new(
         config: HandlerConfig,
@@ -130,12 +137,14 @@ impl Handler {
         peers: SharedRegistry,
         routes: SharedRouteTable,
         route_updates: tokio::sync::broadcast::Sender<super::routes::RouteUpdate>,
+        log_buffer: Option<LogBuffer>,
     ) -> Self {
         let state = SharedNodeState::new(config.node_role);
         let (hint_tx, _) = watch::channel(None);
         Self {
             config,
             hint_tx,
+            log_buffer: log_buffer.unwrap_or_default(),
             metrics,
             peers,
             routes,
@@ -507,6 +516,10 @@ impl crate::node_api::NodeApi for Handler {
         self.hint_tx.send_replace(None);
         Ok(())
     }
+
+    fn logs(&self, count: u32) -> Vec<String> {
+        self.log_buffer.tail(count)
+    }
 }
 
 #[cfg(test)]
@@ -530,6 +543,7 @@ mod tests {
             peers,
             routes,
             tokio::sync::broadcast::channel(16).0,
+            None,
         )
     }
 
@@ -570,6 +584,7 @@ mod tests {
             peers,
             routes,
             tokio::sync::broadcast::channel(16).0,
+            None,
         );
         let request = ControlRequest {
             request: Some(control_request::Request::Stats(
@@ -733,6 +748,7 @@ mod tests {
             peers,
             routes,
             tokio::sync::broadcast::channel(16).0,
+            None,
         );
 
         let request = ControlRequest {
@@ -769,6 +785,7 @@ mod tests {
             peers,
             routes,
             tokio::sync::broadcast::channel(16).0,
+            None,
         );
 
         let status = crate::node_api::NodeApi::info(&handler);
@@ -823,6 +840,7 @@ mod tests {
             Arc::new(Registry::new()),
             RouteTable::shared(),
             tokio::sync::broadcast::channel(16).0,
+            None,
         );
 
         // Initially indeterminate with no capabilities.

@@ -28,8 +28,8 @@ where
     D: smoltcp::phy::Device + Send + 'static,
 {
     // In AnyIP mode, smoltcp accepts connections destined for any IP.
-    // local_endpoint = the destination the client wanted (e.g., 10.200.2.10:9999)
-    // remote_endpoint = the client's source address (e.g., 10.200.1.10:54016)
+    // local_endpoint = the destination the source wanted (e.g., 10.200.2.10:9999)
+    // remote_endpoint = the source's address (e.g., 10.200.1.10:54016)
     let target = local
         .local_endpoint()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "missing local"))?;
@@ -47,7 +47,7 @@ where
     remote.write_proto(&header).await?;
 
     // Wait for exit node to confirm the connection succeeded before copying data.
-    // Without this, smoltcp has already SYN-ACKed the client but we don't know
+    // Without this, smoltcp has already SYN-ACKed the source but we don't know
     // if the real target is reachable. On failure, dropping `local` sends RST.
     let status: TcpStreamStatus = remote
         .read_proto(crate::transport::protocol::TCP_STREAM_HEADER_MTU)

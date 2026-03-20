@@ -15,7 +15,7 @@
 //!
 //! The dispatch heuristic: if the first argument starts with `-` it is a flag
 //! destined for the daemon CLI (auto-negotiation or global options). Control
-//! client subcommands are always bare words (`route`, `peers`, `ping`, etc.).
+//! client subcommands are always bare words (`route`, `peers`, `info`, etc.).
 
 use wallhack_cli::{
     cli::{CtlCommand, RouteAction},
@@ -23,7 +23,7 @@ use wallhack_cli::{
 };
 use wallhack_wire::management::{
     ConnectRequest, DisconnectRequest, HintLevel, HintSetAutoRequest, HintSetRequest, InfoRequest,
-    ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest, RouteAddRequest,
+    ListenRequest, LogsRequest, NodeRole, PeerDisconnectRequest, PeersRequest, RouteAddRequest,
     RouteDelRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
 };
 
@@ -122,8 +122,10 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
     }
 
     // Headless path: no REPL, just run the daemon engine.
-    tracing::subscriber::set_global_default(wallhack_cli::subscriber::SimpleSubscriber::from(&cli))
-        .expect("setting default subscriber");
+    let log_buffer = wallhack_core::control::log_buffer::LogBuffer::new();
+    let mut subscriber = wallhack_cli::subscriber::SimpleSubscriber::from(&cli);
+    subscriber.set_log_buffer(log_buffer.clone());
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -132,7 +134,7 @@ fn run_daemon(args: Vec<String>, bin_name: &str) -> ! {
 
     let socket_override = cli.host.as_deref().map(wallhack_cli::ipc::resolve_host);
     let exit_code = rt.block_on(async {
-        match wallhackd::run_daemon_engine(config, socket_override).await {
+        match wallhackd::run_daemon_engine(config, socket_override, Some(log_buffer)).await {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -150,7 +152,8 @@ fn run_daemon_repl(
     cli: &wallhack_cli::daemon_cli::WallhackCli,
     config: &wallhackd::daemon_config::DaemonConfig,
 ) -> ! {
-    let subscriber = if cli.trace || cli.trace_filter.is_some() {
+    let log_buffer = wallhack_core::control::log_buffer::LogBuffer::new();
+    let mut subscriber = if cli.trace || cli.trace_filter.is_some() {
         wallhack_cli::subscriber::SimpleSubscriber::new(
             tracing::level_filters::LevelFilter::TRACE,
             cli.trace_filter.as_deref().unwrap_or(""),
@@ -171,6 +174,7 @@ fn run_daemon_repl(
             "",
         )
     };
+    subscriber.set_log_buffer(log_buffer.clone());
     let writer = subscriber.writer();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 
@@ -186,7 +190,7 @@ fn run_daemon_repl(
         .expect("failed to build tokio runtime");
 
     let exit_code = rt.block_on(async {
-        let handle = match wallhackd::start_node(config) {
+        let handle = match wallhackd::start_node(config, Some(log_buffer)) {
             Ok(h) => h,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -312,11 +316,11 @@ async fn run_ctl_async(cli: wallhack_cli::cli::Cli) -> Result<(), output::CtlErr
         std::process::exit(1);
     };
     let request = match command {
-        CtlCommand::Ping(cmd) => management_request::Request::Ping(PingRequest {
-            peer: cmd.peer.unwrap_or_default(),
-        }),
         CtlCommand::Info(_) => management_request::Request::Info(InfoRequest {}),
         CtlCommand::Stats(_) => management_request::Request::Stats(StatsRequest {}),
+        CtlCommand::Logs(ref cmd) => {
+            management_request::Request::Logs(LogsRequest { lines: cmd.lines })
+        }
         #[cfg(feature = "json")]
         CtlCommand::Peers(ref cmd) if cmd.json => {
             // JSON output: make the request and short-circuit the standard response path.
@@ -412,7 +416,9 @@ fn parse_ctl_role(s: &str) -> NodeRole {
 fn run_repl() -> ! {
     use tracing::level_filters::LevelFilter;
 
-    let subscriber = wallhack_cli::subscriber::SimpleSubscriber::new(LevelFilter::WARN, "");
+    let log_buffer = wallhack_core::control::log_buffer::LogBuffer::new();
+    let mut subscriber = wallhack_cli::subscriber::SimpleSubscriber::new(LevelFilter::WARN, "");
+    subscriber.set_log_buffer(log_buffer.clone());
     let writer = subscriber.writer();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber");
 
@@ -433,7 +439,7 @@ fn run_repl() -> ! {
         .expect("failed to build tokio runtime");
 
     let exit_code = rt.block_on(async {
-        let handle = match wallhackd::start_node(&config) {
+        let handle = match wallhackd::start_node(&config, Some(log_buffer)) {
             Ok(h) => h,
             Err(e) => {
                 eprintln!("error: {e}");

@@ -271,6 +271,17 @@
 					}
 				}
 			},
+			"LogsResponse": {
+				"type": "object",
+				"required": ["lines"],
+				"properties": {
+					"lines": {
+						"type": "array",
+						"items": { "type": "string" },
+						"description": "Recent daemon log lines, oldest first."
+					}
+				}
+			},
 			"HintSetRequest": {
 				"type": "object",
 				"required": ["level", "role"],
@@ -318,6 +329,34 @@
 						"content": {
 							"application/json": {
 								"schema": { "$ref": "#/components/schemas/InfoResponse" }
+							}
+						}
+					},
+					"401": { "description": "Unauthorized." }
+				}
+			}
+		},
+		"/logs": {
+			"get": {
+				"summary": "Recent daemon logs",
+				"description": "Retrieves recent log lines from the daemon's in-memory ring buffer (last 200 lines max).",
+				"operationId": "logs",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "lines",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "integer", "default": 0 },
+						"description": "Number of recent lines to return. 0 or omit for all buffered lines."
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Log lines retrieved.",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/LogsResponse" }
 							}
 						}
 					},

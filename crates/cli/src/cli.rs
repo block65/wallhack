@@ -21,9 +21,9 @@ pub struct Cli {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand)]
 pub enum CtlCommand {
-    Ping(PingCmd),
     Info(InfoCmd),
     Stats(StatsCmd),
+    Logs(LogsCmd),
     Peers(PeersCmd),
     Route(RouteCmd),
     Connect(ConnectCmd),
@@ -32,15 +32,6 @@ pub enum CtlCommand {
     Role(RoleCmd),
     Hint(HintCmd),
     Shutdown(ShutdownCmd),
-}
-
-/// Ping a peer.
-#[derive(FromArgs, Debug)]
-#[argh(subcommand, name = "ping")]
-pub struct PingCmd {
-    /// peer name prefix to ping (auto-selects sole peer if omitted)
-    #[argh(positional)]
-    pub peer: Option<String>,
 }
 
 /// Show daemon info.
@@ -52,6 +43,15 @@ pub struct InfoCmd {}
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "stats")]
 pub struct StatsCmd {}
+
+/// Show recent daemon log lines.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "logs")]
+pub struct LogsCmd {
+    /// number of recent lines to show (default: all buffered)
+    #[argh(option, short = 'n', default = "0")]
+    pub lines: u32,
+}
 
 /// List connected peers.
 #[derive(FromArgs, Debug)]

@@ -242,7 +242,7 @@ where
         let metrics = Arc::clone(&metrics);
         let peer_registry = Arc::clone(&peers);
         tokio::spawn(async move {
-            let handler = Handler::new(handler_config, metrics, peers, routes, route_updates);
+            let handler = Handler::new(handler_config, metrics, peers, routes, route_updates, None);
             let mut channels = protocol::ControlChannels {
                 outgoing_rx: control_rx,
                 handshake_tx: None,

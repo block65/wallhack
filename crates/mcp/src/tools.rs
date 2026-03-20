@@ -3,17 +3,11 @@
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool};
 use wallhack_wire::management::{
     ConnectRequest, DisconnectRequest, HintLevel, HintSetAutoRequest, HintSetRequest, InfoRequest,
-    ListenRequest, NodeRole, PeerDisconnectRequest, PeersRequest, PingRequest, RouteAddRequest,
+    ListenRequest, LogsRequest, NodeRole, PeerDisconnectRequest, PeersRequest, RouteAddRequest,
     RouteDelRequest, RoutesRequest, ShutdownRequest, StatsRequest, management_request,
 };
 
 use crate::convert;
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct PingParams {
-    /// Reserved — peer-specific ping is not yet supported. Leave empty.
-    pub peer: Option<String>,
-}
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddRouteParams {
@@ -39,6 +33,13 @@ pub struct DisconnectParams {
 pub struct AddrParams {
     /// Address, e.g. "1.2.3.4:4433" or "0.0.0.0:4433"
     pub addr: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct LogsParams {
+    /// Number of recent log lines to retrieve (0 or omit for all buffered)
+    #[serde(default)]
+    pub lines: u32,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -76,23 +77,23 @@ impl WallhackServer {
     }
 
     #[tool(
-        description = "Ping the daemon to check liveness. Returns role, version, and uptime. (Peer-specific ping is not yet supported.)"
-    )]
-    async fn ping(
-        &self,
-        Parameters(params): Parameters<PingParams>,
-    ) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::Ping(PingRequest {
-            peer: params.peer.unwrap_or_default(),
-        }))
-        .await
-    }
-
-    #[tool(
         description = "Get traffic statistics: bytes/packets in/out, active connections and flows"
     )]
     async fn stats(&self) -> Result<String, rmcp::ErrorData> {
         ipc_call(management_request::Request::Stats(StatsRequest {})).await
+    }
+
+    #[tool(
+        description = "Retrieve recent daemon log lines for diagnostics (ring buffer, last 200 lines max)"
+    )]
+    async fn logs(
+        &self,
+        Parameters(params): Parameters<LogsParams>,
+    ) -> Result<String, rmcp::ErrorData> {
+        ipc_call(management_request::Request::Logs(LogsRequest {
+            lines: params.lines,
+        }))
+        .await
     }
 
     #[tool(
