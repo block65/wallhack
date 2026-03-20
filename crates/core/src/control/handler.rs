@@ -363,6 +363,7 @@ impl Handler {
     fn do_disconnect(&self, id: &str) {
         self.peers.send_disconnect(id, "disconnected by API");
         let _ = self.peers.unregister(id);
+        tracing::info!("Peer disconnected: {id} (via API)");
     }
 }
 

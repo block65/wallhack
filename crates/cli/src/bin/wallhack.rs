@@ -7,8 +7,7 @@
 //! Invoked as `wallhack` (no args, slim build): starts daemon engine directly.
 //! Invoked as `wallhack --connect HOST [...]`: daemon in auto-negotiated mode.
 //! Invoked as `wallhack --listen ADDR [...]`: daemon in auto-negotiated mode.
-//! Invoked as `wallhack --role ROLE [...]`: daemon with fixed role hint.
-//! Invoked as `wallhack entry/exit/relay [...]`: daemon with explicit role override.
+//! Invoked as `wallhack --role ROLE [...]`: daemon with fixed role override.
 //! Invoked as `wallhackd` (or `wallhack daemon`): daemon engine directly.
 //! Invoked as `wallhackctl`: IPC control client only; fails if daemon not running.
 //! Invoked as `wallhack <control-subcommand>`: IPC control client.

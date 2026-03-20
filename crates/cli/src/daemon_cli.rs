@@ -24,8 +24,8 @@ use wallhackd::{
 
 /// Network pivoting and tunneling tool.
 ///
-/// Auto-negotiates role from `--connect` / `--listen` flags. Use a subcommand
-/// (`entry`, `exit`, `relay`) to override with an explicit role.
+/// Auto-negotiates role from `--connect` / `--listen` flags. Use `--role` to
+/// override with an explicit role.
 #[allow(clippy::struct_excessive_bools)] // Independent CLI flags, not related state
 #[derive(FromArgs, Debug, Clone)]
 pub struct WallhackCli {
