@@ -144,10 +144,10 @@ pub(crate) fn add_os_route(cidr: &str, dev: &str) -> Result<(), String> {
 
 /// Receive and check the Netlink ACK/error response.
 ///
-/// `NLMSG_ERROR` (type 2) carries a 4-byte `i32` error code at the start of its
-/// payload. Error 0 = success (pure ACK), negative = errno.
-/// `-3` (ESRCH) after route delete and `-17` (EEXIST) after route add are
-/// treated as success (idempotent operations).
+/// neli 0.7 parses `NLMSG_ERROR` into `NlPayload::Ack` (error=0) or
+/// `NlPayload::Err` (error<0). We check the error code and treat
+/// `-3` (ESRCH, already gone) and `-17` (EEXIST, already present) as
+/// success for idempotent route operations.
 fn recv_netlink_ack(socket: &mut NlSocketHandle, op: &str) -> Result<(), String> {
     let (mut iter, _groups) = socket
         .recv::<u16, neli::types::Buffer>()
@@ -158,28 +158,20 @@ fn recv_netlink_ack(socket: &mut NlSocketHandle, op: &str) -> Result<(), String>
     };
     let msg = msg_result.map_err(|e| format!("Netlink recv error: {e}"))?;
 
-    // NLMSG_ERROR = 2
-    if *msg.nl_type() == 2 {
-        if let NlPayload::Payload(buf) = msg.nl_payload() {
-            let bytes: &[u8] = buf.as_ref();
-            if bytes.len() >= 4 {
-                let error = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                // 0 = success, -3 = ESRCH (already gone), -17 = EEXIST (already present)
-                if error == 0 || error == -3 || error == -17 {
-                    Ok(())
-                } else {
-                    let err_msg = format!("Netlink error: {error}");
-                    tracing::warn!("Failed to {op}: {err_msg}");
-                    Err(err_msg)
-                }
+    match msg.nl_payload() {
+        NlPayload::Ack(_) | NlPayload::Empty => Ok(()),
+        NlPayload::Err(err) => {
+            let code = *err.error();
+            // -3 = ESRCH (route already gone), -17 = EEXIST (route already present)
+            if code == -3 || code == -17 {
+                Ok(())
             } else {
-                Err("Netlink ACK payload too short".into())
+                let err_msg = format!("Netlink error: {code}");
+                tracing::warn!("Failed to {op}: {err_msg}");
+                Err(err_msg)
             }
-        } else {
-            Err("Unexpected payload in ACK".into())
         }
-    } else {
-        Err(format!("Unexpected message type: {}", msg.nl_type()))
+        _ => Err(format!("Unexpected Netlink response for {op}")),
     }
 }
 

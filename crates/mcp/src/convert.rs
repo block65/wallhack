@@ -67,7 +67,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             let mut out = String::new();
             for route in &r.routes {
                 let tag = if route.auto_managed { " (auto)" } else { "" };
-                let _ = writeln!(out, "{} → {}{tag}", route.cidr, route.peer);
+                let _ = writeln!(out, "{} via {}{tag}", route.cidr, route.peer);
             }
             Ok(out)
         }

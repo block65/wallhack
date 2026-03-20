@@ -64,7 +64,7 @@ async fn ipc_call(request: management_request::Request) -> Result<String, rmcp::
         .await
         .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
 
-    convert::format_response(&resp).map_err(|msg| rmcp::ErrorData::internal_error(msg, None))
+    convert::format_response(&resp).map_err(|msg| rmcp::ErrorData::invalid_params(msg, None))
 }
 
 #[rmcp::tool_router(vis = "pub")]
