@@ -437,6 +437,3 @@
 ## CLI
 - [x] ~~`wallhack peers --json`~~ — done: `--json` output matching REST API
       shape with `tun_name` field.
-
-## Website
-- [ ] `website.just` file is in the wrong place?
