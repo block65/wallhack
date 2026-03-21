@@ -1,0 +1,3 @@
+configs:
+  - ftp/backup/id_ed25519
+  - ftp/backup/README.txt

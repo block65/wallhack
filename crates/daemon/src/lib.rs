@@ -137,7 +137,13 @@ pub fn start_node(
         ModeConfig::Entry(_) => NodeRole::Entry,
         ModeConfig::Exit(_) => NodeRole::Exit,
         ModeConfig::Relay(_) => NodeRole::Relay,
-        ModeConfig::Auto(_) => NodeRole::Indeterminate,
+        ModeConfig::Auto(cfg) => match &cfg.hint {
+            Some(hint) if hint.level == wallhack_wire::data::HintLevel::Fixed as i32 => {
+                wallhack_wire::data::NodeRole::try_from(hint.target)
+                    .map_or(NodeRole::Indeterminate, NodeRole::from)
+            }
+            _ => NodeRole::Indeterminate,
+        },
     };
 
     let metrics = Arc::new(Metrics::default());

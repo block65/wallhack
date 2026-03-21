@@ -11,7 +11,12 @@ def users():
 
 @app.route("/api/status")
 def status():
-    return jsonify({"status": "ok", "version": "1.0"})
+    return jsonify({
+        "status": "ok",
+        "version": "1.0",
+        "task_runner": "gateway-datacenter (10.99.3.10) /opt/tasks — drops executable files here for batch processing",
+        "monitoring_ssh": "see /etc/monitoring/ssh.conf",
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

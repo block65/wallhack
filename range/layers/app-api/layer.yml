@@ -3,5 +3,6 @@ packages:
   - py3-flask
 configs:
   - app/app.py
+  - etc/monitoring/ssh.conf
 start: |
   python3 /app/app.py &

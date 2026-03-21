@@ -43,11 +43,16 @@ pub struct LogsParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct HintSetParams {
-    /// How strongly to apply the hint: "prefer" (soft), "exclude" (avoid), or "fixed" (force)
-    pub level: String,
-    /// Target role: "entry", "exit", or "relay"
+pub struct RoleParams {
+    /// "auto" to clear, or a role: "entry", "exit", "relay"
     pub role: String,
+    /// How to apply (ignored when role is "auto"): "fixed" (default), "prefer", or "exclude"
+    #[serde(default = "default_role_level")]
+    pub level: String,
+}
+
+fn default_role_level() -> String {
+    "fixed".to_string()
 }
 
 /// Wallhack MCP server — exposes daemon management as MCP tools.
@@ -182,19 +187,25 @@ impl WallhackServer {
     }
 
     #[tool(
-        description = "Set a role hint to influence auto-negotiation: \"prefer\" makes the role more likely, \"exclude\" prevents it, \"fixed\" forces it"
+        description = "Set or clear this node's role. Examples: role entry (force entry), role prefer exit (soft preference), role exclude relay (avoid relay), role auto (clear all, return to negotiation)"
     )]
-    async fn hint_set(
+    async fn role(
         &self,
-        Parameters(params): Parameters<HintSetParams>,
+        Parameters(params): Parameters<RoleParams>,
     ) -> Result<String, rmcp::ErrorData> {
+        if params.role == "auto" {
+            return ipc_call(management_request::Request::HintSetAuto(
+                HintSetAutoRequest {},
+            ))
+            .await;
+        }
         let level = match params.level.as_str() {
             "prefer" => HintLevel::Prefer,
             "exclude" => HintLevel::Exclude,
             "fixed" => HintLevel::Fixed,
             other => {
                 return Err(rmcp::ErrorData::invalid_params(
-                    format!("invalid hint level '{other}' (expected: prefer, exclude, fixed)"),
+                    format!("invalid level '{other}' (expected: prefer, exclude, fixed)"),
                     None,
                 ));
             }
@@ -205,7 +216,7 @@ impl WallhackServer {
             "relay" => NodeRole::Relay,
             other => {
                 return Err(rmcp::ErrorData::invalid_params(
-                    format!("invalid role '{other}' (expected: entry, exit, relay)"),
+                    format!("invalid role '{other}' (expected: auto, entry, exit, relay)"),
                     None,
                 ));
             }
@@ -214,16 +225,6 @@ impl WallhackServer {
             level: level.into(),
             role: role.into(),
         }))
-        .await
-    }
-
-    #[tool(
-        description = "Remove all role hints and return to automatic role negotiation based on peer capabilities. Use to undo a previous hint_set."
-    )]
-    async fn hint_set_auto(&self) -> Result<String, rmcp::ErrorData> {
-        ipc_call(management_request::Request::HintSetAuto(
-            HintSetAutoRequest {},
-        ))
         .await
     }
 }

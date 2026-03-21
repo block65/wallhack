@@ -282,19 +282,20 @@
 					}
 				}
 			},
-			"HintSetRequest": {
+			"RoleSetRequest": {
 				"type": "object",
-				"required": ["level", "role"],
+				"required": ["role"],
 				"properties": {
+					"role": {
+						"type": "string",
+						"enum": ["auto", "entry", "exit", "relay"],
+						"description": "Target role, or \"auto\" to clear all preferences."
+					},
 					"level": {
 						"type": "string",
 						"enum": ["prefer", "exclude", "fixed"],
-						"description": "Hint strength: prefer (soft), exclude (medium), fixed (hard)."
-					},
-					"role": {
-						"type": "string",
-						"enum": ["entry", "exit", "relay"],
-						"description": "Role to apply the hint to."
+						"default": "fixed",
+						"description": "How to apply: fixed (default, force), prefer (soft), exclude (avoid)."
 					}
 				}
 			}
@@ -623,47 +624,30 @@
 				}
 			}
 		},
-		"/hints": {
+		"/role": {
 			"put": {
-				"summary": "Set role hint",
-				"description": "Configures a negotiation hint to influence auto-role resolution.",
-				"operationId": "hintSet",
+				"summary": "Set role",
+				"description": "Set or clear this node's role. Use role=auto to clear all preferences and return to negotiation.",
+				"operationId": "roleSet",
 				"security": [{ "basicAuth": [] }],
 				"requestBody": {
 					"required": true,
 					"content": {
 						"application/json": {
-							"schema": { "$ref": "#/components/schemas/HintSetRequest" }
+							"schema": { "$ref": "#/components/schemas/RoleSetRequest" }
 						}
 					}
 				},
 				"responses": {
 					"200": {
-						"description": "Hint applied.",
+						"description": "Role applied.",
 						"content": {
 							"application/json": {
 								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
 							}
 						}
 					},
-					"400": { "description": "Invalid hint level or role." },
-					"401": { "description": "Unauthorized." }
-				}
-			},
-			"delete": {
-				"summary": "Auto-negotiate",
-				"description": "Returns to pure capability-based negotiation by removing all role hints.",
-				"operationId": "hintSetAuto",
-				"security": [{ "basicAuth": [] }],
-				"responses": {
-					"200": {
-						"description": "Hints cleared.",
-						"content": {
-							"application/json": {
-								"schema": { "$ref": "#/components/schemas/SuccessResponse" }
-							}
-						}
-					},
+					"400": { "description": "Invalid level or role." },
 					"401": { "description": "Unauthorized." }
 				}
 			}

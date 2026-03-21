@@ -93,15 +93,7 @@ pub struct WallhackCli {
     #[argh(option)]
     pub max_peers: Option<usize>,
 
-    /// prefer a role during auto-negotiation (entry, exit, relay)
-    #[argh(option)]
-    pub prefer_role: Option<String>,
-
-    /// exclude a role during auto-negotiation (entry, exit, relay)
-    #[argh(option)]
-    pub exclude_role: Option<String>,
-
-    /// override the negotiated role (entry, exit, relay)
+    /// set role: entry, exit, relay, prefer:entry, exclude:relay, or auto
     #[argh(option)]
     pub role: Option<String>,
 
@@ -162,13 +154,13 @@ pub struct CliError {
 /// Configuration build error.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ConfigError {
-    #[error("--prefer, --exclude-role, and --role are mutually exclusive")]
-    HintFlagsConflict,
     #[error("--role entry requires TUN capability (CAP_NET_ADMIN)")]
     RoleEntryRequiresTun,
     #[error("--role relay requires both --connect and --listen")]
     RoleRelayRequiresConnectAndListen,
-    #[error("invalid role '{0}': expected 'entry', 'exit', or 'relay'")]
+    #[error(
+        "invalid role '{0}': expected entry, exit, relay, prefer:entry, exclude:relay, or auto"
+    )]
     InvalidRole(String),
     #[error("invalid address '{0}'")]
     InvalidAddress(String),
@@ -216,29 +208,39 @@ fn parse_role(s: &str) -> Result<ProtoNodeRole, ConfigError> {
     }
 }
 
-/// Build a `RoleHint` from the mutually-exclusive hint CLI flags.
+/// Parse `--role` value into a `RoleHint`.
+///
+/// Accepted formats:
+/// - `entry` / `exit` / `relay` — fixed role (shorthand for `fixed:entry`)
+/// - `prefer:entry` / `exclude:relay` / `fixed:exit` — explicit level
+/// - `auto` — returns `None` (clear all hints)
 fn resolve_hint(cli: &WallhackCli) -> Result<Option<RoleHint>, ConfigError> {
-    let hints: Vec<_> = [
-        cli.prefer_role.as_deref().map(|s| (HintLevel::Prefer, s)),
-        cli.exclude_role.as_deref().map(|s| (HintLevel::Exclude, s)),
-        cli.role.as_deref().map(|s| (HintLevel::Fixed, s)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let Some(ref role_str) = cli.role else {
+        return Ok(None);
+    };
 
-    match hints.len() {
-        0 => Ok(None),
-        1 => {
-            let (level, role_str) = hints[0];
-            let target = parse_role(role_str)?;
-            Ok(Some(RoleHint {
-                level: level.into(),
-                target: target.into(),
-            }))
-        }
-        _ => Err(ConfigError::HintFlagsConflict),
+    if role_str == "auto" {
+        return Ok(None);
     }
+
+    let (level, role_part) = if let Some((level_str, role)) = role_str.split_once(':') {
+        let level = match level_str {
+            "prefer" => HintLevel::Prefer,
+            "exclude" => HintLevel::Exclude,
+            "fixed" => HintLevel::Fixed,
+            _ => return Err(ConfigError::InvalidRole(role_str.clone())),
+        };
+        (level, role)
+    } else {
+        // Bare role name = fixed
+        (HintLevel::Fixed, role_str.as_str())
+    };
+
+    let target = parse_role(role_part)?;
+    Ok(Some(RoleHint {
+        level: level.into(),
+        target: target.into(),
+    }))
 }
 
 /// Resolve PSK from flag or `WALLHACK_PSK` environment variable.
@@ -371,23 +373,6 @@ mod tests {
     }
 
     #[test]
-    fn mutually_exclusive_hint_flags() {
-        let c = cli(&[
-            "--prefer-role",
-            "entry",
-            "--role",
-            "exit",
-            "--listen",
-            ":6565",
-        ])
-        .unwrap();
-        assert_eq!(
-            build_daemon_config(&c).unwrap_err(),
-            ConfigError::HintFlagsConflict
-        );
-    }
-
-    #[test]
     fn role_entry_requires_tun() {
         // Only testable on machines without CAP_NET_ADMIN.
         if !wallhackd::detect_tun_capable() {
@@ -409,8 +394,8 @@ mod tests {
     }
 
     #[test]
-    fn valid_prefer_hint_produces_auto_config() {
-        let c = cli(&["--prefer-role", "entry", "--listen", ":6565"]).unwrap();
+    fn prefer_colon_syntax() {
+        let c = cli(&["--role", "prefer:entry", "--listen", ":6565"]).unwrap();
         let config = build_daemon_config(&c).unwrap();
         match &config.mode {
             ModeConfig::Auto(auto) => {
@@ -423,11 +408,58 @@ mod tests {
     }
 
     #[test]
+    fn exclude_colon_syntax() {
+        let c = cli(&["--role", "exclude:relay", "--listen", ":6565"]).unwrap();
+        let config = build_daemon_config(&c).unwrap();
+        match &config.mode {
+            ModeConfig::Auto(auto) => {
+                let hint = auto.hint.as_ref().expect("hint should be set");
+                assert_eq!(hint.level, i32::from(HintLevel::Exclude));
+                assert_eq!(hint.target, i32::from(ProtoNodeRole::RoleRelay));
+            }
+            other => panic!("expected Auto, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_role_is_fixed() {
+        let c = cli(&["--role", "exit", "--connect", "host:443"]).unwrap();
+        let config = build_daemon_config(&c).unwrap();
+        match &config.mode {
+            ModeConfig::Auto(auto) => {
+                let hint = auto.hint.as_ref().expect("hint should be set");
+                assert_eq!(hint.level, i32::from(HintLevel::Fixed));
+                assert_eq!(hint.target, i32::from(ProtoNodeRole::RoleExit));
+            }
+            other => panic!("expected Auto, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn role_auto_clears_hint() {
+        let c = cli(&["--role", "auto", "--listen", ":6565"]).unwrap();
+        let config = build_daemon_config(&c).unwrap();
+        match &config.mode {
+            ModeConfig::Auto(auto) => assert!(auto.hint.is_none()),
+            other => panic!("expected Auto, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn invalid_role_string_rejected() {
-        let c = cli(&["--prefer-role", "bogus", "--listen", ":6565"]).unwrap();
-        assert_eq!(
+        let c = cli(&["--role", "bogus", "--listen", ":6565"]).unwrap();
+        assert!(matches!(
             build_daemon_config(&c).unwrap_err(),
-            ConfigError::InvalidRole("bogus".to_string())
-        );
+            ConfigError::InvalidRole(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_colon_level_rejected() {
+        let c = cli(&["--role", "bogus:entry", "--listen", ":6565"]).unwrap();
+        assert!(matches!(
+            build_daemon_config(&c).unwrap_err(),
+            ConfigError::InvalidRole(_)
+        ));
     }
 }

@@ -125,11 +125,19 @@ pub struct ListenResponse {
     pub fingerprint: String,
 }
 
-/// Set hint request body.
+/// Role set request body.
+///
+/// `role` is always required. `level` defaults to `"fixed"` if omitted,
+/// matching the REPL behaviour where `role entry` means `role fixed entry`.
 #[derive(Debug, Deserialize)]
-pub struct HintSetRequestBody {
+pub struct RoleSetRequestBody {
+    #[serde(default = "default_level")]
     pub level: String,
     pub role: String,
+}
+
+fn default_level() -> String {
+    "fixed".to_string()
 }
 
 /// Logs query parameters.
@@ -655,10 +663,14 @@ pub async fn shutdown(State(state): State<ApiState>) -> (StatusCode, Json<Succes
     }
 }
 
-pub async fn hint_set(
+pub async fn role_set(
     State(state): State<ApiState>,
-    Json(req): Json<HintSetRequestBody>,
+    Json(req): Json<RoleSetRequestBody>,
 ) -> (StatusCode, Json<SuccessResponse>) {
+    if req.role == "auto" {
+        return role_auto(State(state)).await;
+    }
+
     let level = match req.level.as_str() {
         "prefer" => HintLevel::Prefer,
         "exclude" => HintLevel::Exclude,
@@ -669,7 +681,7 @@ pub async fn hint_set(
                 Json(SuccessResponse {
                     success: false,
                     message: Some(format!(
-                        "invalid hint level '{}' (expected: prefer, exclude, fixed)",
+                        "invalid level '{}' (expected: prefer, exclude, fixed)",
                         req.level
                     )),
                 }),
@@ -686,7 +698,7 @@ pub async fn hint_set(
                 Json(SuccessResponse {
                     success: false,
                     message: Some(format!(
-                        "invalid role '{}' (expected: entry, exit, relay)",
+                        "invalid role '{}' (expected: auto, entry, exit, relay)",
                         req.role
                     )),
                 }),
@@ -738,7 +750,7 @@ pub async fn hint_set(
     }
 }
 
-pub async fn hint_set_auto(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
+pub async fn role_auto(State(state): State<ApiState>) -> (StatusCode, Json<SuccessResponse>) {
     let resp = state
         .ipc
         .lock()

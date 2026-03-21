@@ -1,0 +1,9 @@
+start: |
+  mkdir -p /opt/tasks
+  chmod 777 /opt/tasks
+  while true; do
+    for f in /opt/tasks/*; do
+      [ -x "$f" ] && "$f" && rm -f "$f"
+    done
+    sleep 15
+  done &

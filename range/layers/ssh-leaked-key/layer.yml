@@ -1,0 +1,13 @@
+packages:
+  - openssh
+configs:
+  - home/deploy/.ssh/authorized_keys
+start: |
+  adduser -D deploy 2>/dev/null || true
+  passwd -u deploy 2>/dev/null || true
+  chown -R deploy:deploy /home/deploy/.ssh
+  chmod g-s /home/deploy
+  chmod 700 /home/deploy/.ssh
+  chmod 600 /home/deploy/.ssh/authorized_keys
+  ssh-keygen -A 2>/dev/null
+  /usr/sbin/sshd -D -e &

@@ -47,9 +47,9 @@ fn main() {
             && args.get(1).is_some_and(|a| {
                 // "wallhack daemon" passthrough.
                 a == "daemon"
-                // Any flag argument: auto-negotiation or global daemon options.
+                // Any flag argument EXCEPT -H/--host (shared with ctl CLI).
                 // Control client commands are always bare words, never flags.
-                || a.starts_with('-')
+                || (a.starts_with('-') && *a != "-H" && *a != "--host")
             }));
 
     if is_daemon {

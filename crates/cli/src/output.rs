@@ -115,10 +115,7 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
             if !s.listen_addr.is_empty() {
                 println!("{:<18} {}", "listen addr:", s.listen_addr);
             }
-            println!(
-                "{:<18} tun={} listen={} connect={}",
-                "capabilities:", s.tun_capable, s.listening, s.connecting
-            );
+            println!("{:<18} {}", "tun:", s.tun_capable);
             println!("{:<18} {}", "version:", s.version);
             println!("{:<18} {}", "uptime:", uptime);
         }

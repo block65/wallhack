@@ -1,0 +1,6 @@
+packages:
+  - python3
+configs:
+  - app/server.py
+start: |
+  python3 /app/server.py &
