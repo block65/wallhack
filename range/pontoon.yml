@@ -7,6 +7,15 @@ build:
 defaults:
   kernel: ./vm/build/vmlinuz
   alpine: "3.21"
+  hide_tools:
+    - topology_get
+    - range_status
+  allow_tools:
+    - vm_exec
+    - vm_exec_bg
+    - vm_tail
+  allow_binaries:
+    - wallhack
 
 networks:
   perimeter:
@@ -35,6 +44,8 @@ services:
   attacker:
     memory: 512m
     cpus: 2
+    allow_tools: ["*"]
+    allow_binaries: ["*"]
     layers:
       - base
       - attacker
@@ -55,6 +66,7 @@ services:
       - base
       - wallhack
       - perimeter-gw
+      - ssh-leaked-key
     networks:
       perimeter:
         ipv4_address: 10.99.1.10
@@ -62,10 +74,7 @@ services:
         ipv4_address: 10.99.2.2
         masquerade: true
     kernel_args:
-      svc.start: wallhack
-      svc.wallhack.role: exit
-      svc.wallhack.name: gateway-perimeter
-      svc.wallhack.connect: "10.99.1.100:443"
+      svc.start: ssh-leaked-key
 
   web-external:
     memory: 128m
@@ -90,11 +99,6 @@ services:
     networks:
       perimeter:
         ipv4_address: 10.99.1.60
-    kernel_args:
-      svc.start: wallhack
-      svc.wallhack.role: exit
-      svc.wallhack.name: web-filter
-      svc.wallhack.connect: "10.99.1.100:443"
 
   ftp-server:
     memory: 64m
@@ -102,6 +106,7 @@ services:
     layers:
       - base
       - vsftpd
+      - ftp-loot
     networks:
       perimeter:
         ipv4_address: 10.99.1.21
@@ -172,12 +177,16 @@ services:
     cpus: 2
     layers:
       - base
+      - wallhack
+      - vuln-upload
     networks:
       office:
         ipv4_address: 10.99.2.10
       datacenter:
         ipv4_address: 10.99.3.2
         masquerade: true
+    kernel_args:
+      svc.start: vuln-upload
 
   fileserver:
     memory: 256m
@@ -245,12 +254,16 @@ services:
     cpus: 2
     layers:
       - base
+      - wallhack
+      - vuln-cron
     networks:
       datacenter:
         ipv4_address: 10.99.3.10
       management:
         ipv4_address: 10.99.4.2
         masquerade: true
+    kernel_args:
+      svc.start: vuln-cron
 
   db-postgres:
     memory: 256m
@@ -345,6 +358,7 @@ services:
     cpus: 2
     layers:
       - base
+      - wallhack
       - ssh-hardened
     networks:
       management:
