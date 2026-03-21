@@ -43,7 +43,7 @@
       Implementation: `ConnectivitySpec::Listen(Vec<AddressSpec>)`, spawn one
       tokio listener task per spec, `StatusResponse.listen_addr` → `repeated
       string listen_addrs` in proto. CLI: argh `Vec<String>` for repeated
-      `--listen`. No known tunnel tool (e.g. ligolo) supports this.
+      `--listen`. No known tunnel tool supports this.
 - [ ] HTTP/2 multiplexing
 - [ ] Domain fronting support
 - [ ] Deterministic TUN addresses based on peer identity
