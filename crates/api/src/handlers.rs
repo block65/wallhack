@@ -27,6 +27,12 @@ pub struct StatsResponse {
     pub packets_out: u64,
     pub active_connections: u64,
     pub active_flows: u64,
+    /// Total packets dropped since daemon start.
+    pub packets_dropped: u64,
+    /// Total connections opened since daemon start (monotonically increasing).
+    pub total_connections: u64,
+    /// Total flows opened since daemon start (monotonically increasing).
+    pub total_flows: u64,
 }
 
 /// Node info response.
@@ -251,6 +257,9 @@ pub async fn stats(State(state): State<ApiState>) -> Result<Json<StatsResponse>,
             packets_out: s.packets_out,
             active_connections: s.active_connections,
             active_flows: s.active_flows,
+            packets_dropped: s.packets_dropped,
+            total_connections: s.total_connections,
+            total_flows: s.total_flows,
         })),
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }

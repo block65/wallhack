@@ -78,6 +78,10 @@ pub struct Metrics {
     pub active_connections: u64,
     pub active_flows: u64,
     pub packets_dropped: u64,
+    /// Total connections opened since daemon start (monotonically increasing).
+    pub total_connections: u64,
+    /// Total flows opened since daemon start (monotonically increasing).
+    pub total_flows: u64,
 }
 
 /// Overall node info.

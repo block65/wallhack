@@ -25,7 +25,7 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
         }
         Some(management_response::Response::Stats(s)) => Ok(format!(
             "bytes in: {}\nbytes out: {}\npackets in: {}\npackets out: {}\n\
-             connections: {}\nflows: {}\ndropped: {}",
+             connections: {}\nflows: {}\ndropped: {}\ntotal connections: {}\ntotal flows: {}",
             s.bytes_in,
             s.bytes_out,
             s.packets_in,
@@ -33,6 +33,8 @@ pub fn format_response(resp: &ManagementResponse) -> Result<String, String> {
             s.active_connections,
             s.active_flows,
             s.packets_dropped,
+            s.total_connections,
+            s.total_flows,
         )),
         Some(management_response::Response::Peers(p)) => {
             if p.peers.is_empty() {

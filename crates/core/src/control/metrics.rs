@@ -14,6 +14,10 @@ pub struct Metrics {
     active_connections: AtomicU64,
     active_flows: AtomicU64,
     packets_dropped: AtomicU64,
+    /// Monotonically increasing count of all connections ever opened.
+    total_connections: AtomicU64,
+    /// Monotonically increasing count of all flows ever opened.
+    total_flows: AtomicU64,
 }
 
 impl Metrics {
@@ -31,6 +35,8 @@ impl Metrics {
             active_connections: self.active_connections.load(Ordering::Relaxed),
             active_flows: self.active_flows.load(Ordering::Relaxed),
             packets_dropped: self.packets_dropped.load(Ordering::Relaxed),
+            total_connections: self.total_connections.load(Ordering::Relaxed),
+            total_flows: self.total_flows.load(Ordering::Relaxed),
         }
     }
 
@@ -52,6 +58,7 @@ impl Metrics {
 
     pub fn inc_active_connections(&self) {
         self.active_connections.fetch_add(1, Ordering::Relaxed);
+        self.total_connections.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn dec_active_connections(&self) {
@@ -64,6 +71,7 @@ impl Metrics {
 
     pub fn inc_active_flows(&self) {
         self.active_flows.fetch_add(1, Ordering::Relaxed);
+        self.total_flows.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn dec_active_flows(&self) {
@@ -72,3 +80,59 @@ impl Metrics {
 }
 
 pub type SharedMetrics = Arc<Metrics>;
+
+#[cfg(test)]
+mod tests {
+    use super::Metrics;
+
+    #[test]
+    fn total_connections_increments_and_does_not_decrement() {
+        let metrics = Metrics::new();
+
+        metrics.inc_active_connections();
+        assert_eq!(metrics.snapshot().total_connections, 1);
+        assert_eq!(metrics.snapshot().active_connections, 1);
+
+        metrics.dec_active_connections();
+        // active_connections decrements, total_connections must not
+        assert_eq!(metrics.snapshot().total_connections, 1);
+        assert_eq!(metrics.snapshot().active_connections, 0);
+    }
+
+    #[test]
+    fn total_flows_increments_and_does_not_decrement() {
+        let metrics = Metrics::new();
+
+        metrics.inc_active_flows();
+        assert_eq!(metrics.snapshot().total_flows, 1);
+        assert_eq!(metrics.snapshot().active_flows, 1);
+
+        metrics.dec_active_flows();
+        // active_flows decrements, total_flows must not
+        assert_eq!(metrics.snapshot().total_flows, 1);
+        assert_eq!(metrics.snapshot().active_flows, 0);
+    }
+
+    #[test]
+    fn cumulative_counters_survive_connection_churn() {
+        let metrics = Metrics::new();
+
+        // Simulate 5 connection open/close cycles
+        for _ in 0..5 {
+            metrics.inc_active_connections();
+            metrics.dec_active_connections();
+        }
+
+        assert_eq!(metrics.snapshot().total_connections, 5);
+        assert_eq!(metrics.snapshot().active_connections, 0);
+
+        // Simulate 3 flow open/close cycles
+        for _ in 0..3 {
+            metrics.inc_active_flows();
+            metrics.dec_active_flows();
+        }
+
+        assert_eq!(metrics.snapshot().total_flows, 3);
+        assert_eq!(metrics.snapshot().active_flows, 0);
+    }
+}

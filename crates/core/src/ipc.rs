@@ -313,6 +313,8 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
                 active_connections: m.active_connections,
                 active_flows: m.active_flows,
                 packets_dropped: m.packets_dropped,
+                total_connections: m.total_connections,
+                total_flows: m.total_flows,
             })
         }
 
