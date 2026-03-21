@@ -19,7 +19,7 @@ use wallhack_core::{
         handler::SharedNodeState,
         metrics::Metrics,
         peers::{ConnectionSide, Registry},
-        routes::SharedRouteTable,
+        routes::{RouteUpdate, SharedRouteTable},
     },
     entry::manager::ConnectionManager,
     exit::{net::SyscallExitAdapter, orchestrator::Orchestrator},
@@ -40,12 +40,40 @@ use crate::{
 /// Reconnect delay for auto-connector sessions.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 
+/// Shared context for all auto-mode internal functions.
+///
+/// Bundles the state that would otherwise be passed as individual arguments
+/// to every function in the auto-mode call tree.
+struct AutoContext {
+    global: GlobalConfig,
+    cfg: AutoConfig,
+    metrics: Arc<Metrics>,
+    peers: Arc<Registry>,
+    routes: SharedRouteTable,
+    route_updates_tx: tokio::sync::broadcast::Sender<RouteUpdate>,
+    node_state: SharedNodeState,
+    tun_capable: bool,
+}
+
+impl AutoContext {
+    fn route_updates(&self) -> tokio::sync::broadcast::Receiver<RouteUpdate> {
+        self.route_updates_tx.subscribe()
+    }
+
+    fn security(&self) -> SecurityParams {
+        SecurityParams {
+            psk: self.global.psk.clone(),
+            accept_fingerprint: self.cfg.accept_fingerprint.clone(),
+        }
+    }
+}
+
 /// Run in auto-negotiation mode.
 ///
 /// # Errors
 ///
 /// Returns error if the connection setup fails non-retryably.
-// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, directive_sink, node_state through mode dispatch
+// REASON: threading metrics, peers, routes, route_updates_tx, directive_sink, node_state through mode dispatch
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     global: &GlobalConfig,
@@ -53,8 +81,7 @@ pub(crate) async fn run(
     metrics: Arc<Metrics>,
     peers: Arc<Registry>,
     routes: SharedRouteTable,
-    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
+    route_updates_tx: tokio::sync::broadcast::Sender<RouteUpdate>,
     directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
@@ -95,60 +122,35 @@ pub(crate) async fn run(
         interactive,
     });
 
-    match (&cfg.connect, &cfg.listen) {
+    let ctx = Arc::new(AutoContext {
+        global: global.clone(),
+        cfg: cfg.clone(),
+        metrics,
+        peers,
+        routes,
+        route_updates_tx,
+        node_state,
+        tun_capable,
+    });
+
+    match (&ctx.cfg.connect, &ctx.cfg.listen) {
         (Some(connect), Some(listen)) => {
             // Both connect and listen → start as exit, promote to relay when
             // the listener has a second peer connected.
             tracing::info!(
                 "Both connect and listen addresses provided: starting as exit, promoting to relay on listener peer"
             );
-            run_connect_listen_relay_promotable(
-                global,
-                cfg,
-                connect,
-                listen,
-                tun_capable,
-                metrics,
-                peers,
-                node_state,
-            )
-            .await
+            run_connect_listen_relay_promotable(Arc::clone(&ctx), connect, listen).await
         }
         (Some(connect), None) => {
             // Connector-only path: run the connector as a task and poll
             // directive_sink for dynamic listen/disconnect commands.
-            run_auto_connector_with_commands(
-                global,
-                cfg,
-                connect,
-                tun_capable,
-                metrics,
-                peers,
-                routes,
-                route_updates,
-                route_updates_tx,
-                directive_sink,
-                node_state,
-            )
-            .await
+            run_auto_connector_with_commands(Arc::clone(&ctx), connect, directive_sink).await
         }
         (None, Some(listen)) => {
             // Listener-only path: run the listener as a task and poll
             // directive_sink for dynamic connect/disconnect commands.
-            run_auto_listener_with_commands(
-                global,
-                cfg,
-                listen,
-                tun_capable,
-                metrics,
-                peers,
-                routes,
-                route_updates,
-                route_updates_tx,
-                directive_sink,
-                node_state,
-            )
-            .await
+            run_auto_listener_with_commands(Arc::clone(&ctx), listen, directive_sink).await
         }
         (None, None) => Err(NodeError::Config(
             "auto mode requires a connect or listen address".into(),
@@ -161,51 +163,21 @@ pub(crate) async fn run(
 /// Spawns the connector as a task, then polls `directive_sink` for dynamic
 /// commands. `Listen` commands start a listener task alongside the
 /// connector. `Disconnect` commands abort the active connector.
-// REASON: threading global, cfg, connect, tun_capable, metrics, peers, routes, route_updates,
-//         route_updates_tx, directive_sink, node_state through command-integrated connector dispatch
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+// REASON: too_many_lines: symmetric listen/connect/disconnect command arms with distinct spawn logic
+#[allow(clippy::too_many_lines)]
 async fn run_auto_connector_with_commands(
-    global: &GlobalConfig,
-    cfg: &AutoConfig,
+    ctx: Arc<AutoContext>,
     connect: &AddressSpec,
-    tun_capable: bool,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     mut directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
-    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     use wallhack_core::{control::handler::NodeCommand, node_api::NodeApiError};
 
-    let global = global.clone();
-    let cfg = cfg.clone();
     let connect = connect.clone();
 
     let connector_task: tokio::task::JoinHandle<Result<(), NodeError>> = {
-        let global = global.clone();
-        let cfg = cfg.clone();
+        let ctx = Arc::clone(&ctx);
         let connect = connect.clone();
-        let metrics = Arc::clone(&metrics);
-        let peers = Arc::clone(&peers);
-        let routes = Arc::clone(&routes);
-        let route_updates = route_updates.resubscribe();
-        let node_state = node_state.clone();
-        tokio::spawn(async move {
-            run_auto_connector(
-                &global,
-                &cfg,
-                &connect,
-                tun_capable,
-                metrics,
-                peers,
-                routes,
-                route_updates,
-                node_state,
-            )
-            .await
-        })
+        tokio::spawn(async move { run_auto_connector(Arc::clone(&ctx), &connect).await })
     };
 
     // Listener task spawned on demand by a `Listen` command.
@@ -244,32 +216,13 @@ async fn run_auto_connector_with_commands(
                             let _ = reply.send(Err(NodeApiError::AlreadyListening));
                             continue;
                         }
-                        let global = global.clone();
-                        let cfg = cfg.clone();
-                        let metrics = Arc::clone(&metrics);
-                        let peers = Arc::clone(&peers);
-                        let routes = Arc::clone(&routes);
-                        let route_updates = route_updates.resubscribe();
-                        let route_updates_tx = route_updates_tx.clone();
-                        let node_state = node_state.clone();
+                        let ctx = Arc::clone(&ctx);
                         let listen_spec = AddressSpec {
                             addr: addr.to_string(),
                             protocol: connect.protocol,
                         };
                         let handle = tokio::spawn(async move {
-                            run_auto_listener(
-                                &global,
-                                &cfg,
-                                &listen_spec,
-                                tun_capable,
-                                metrics,
-                                peers,
-                                routes,
-                                route_updates,
-                                route_updates_tx,
-                                node_state,
-                            )
-                            .await
+                            run_auto_listener(Arc::clone(&ctx), &listen_spec).await
                         });
                         let listen_info = wallhack_core::node_api::ListenInfo {
                             listen_addr: addr,
@@ -298,53 +251,21 @@ async fn run_auto_connector_with_commands(
 /// Spawns the listener as a task, then polls `directive_sink` for dynamic
 /// commands. `Connect` commands spawn a connector task alongside the
 /// listener. `Disconnect` commands abort the active connector.
-// REASON: threading global, cfg, listen, tun_capable, metrics, peers, routes, route_updates,
-//         route_updates_tx, directive_sink, node_state through command-integrated listener dispatch
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+// REASON: too_many_lines: symmetric connect/listen/disconnect command arms with distinct spawn logic
+#[allow(clippy::too_many_lines)]
 async fn run_auto_listener_with_commands(
-    global: &GlobalConfig,
-    cfg: &AutoConfig,
+    ctx: Arc<AutoContext>,
     listen: &AddressSpec,
-    tun_capable: bool,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     mut directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
-    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     use wallhack_core::{control::handler::NodeCommand, node_api::NodeApiError};
 
-    let global = global.clone();
-    let cfg = cfg.clone();
     let listen = listen.clone();
 
     let listener_task: tokio::task::JoinHandle<Result<(), NodeError>> = {
-        let global = global.clone();
-        let cfg = cfg.clone();
+        let ctx = Arc::clone(&ctx);
         let listen = listen.clone();
-        let metrics = Arc::clone(&metrics);
-        let peers = Arc::clone(&peers);
-        let routes = Arc::clone(&routes);
-        let route_updates = route_updates.resubscribe();
-        let route_updates_tx = route_updates_tx.clone();
-        let node_state = node_state.clone();
-        tokio::spawn(async move {
-            run_auto_listener(
-                &global,
-                &cfg,
-                &listen,
-                tun_capable,
-                metrics,
-                peers,
-                routes,
-                route_updates,
-                route_updates_tx,
-                node_state,
-            )
-            .await
-        })
+        tokio::spawn(async move { run_auto_listener(Arc::clone(&ctx), &listen).await })
     };
 
     // Connector task spawned on demand by a `Connect` command.
@@ -383,30 +304,13 @@ async fn run_auto_listener_with_commands(
                             let _ = reply.send(Err(NodeApiError::AlreadyConnected));
                             continue;
                         }
-                        let global = global.clone();
-                        let cfg = cfg.clone();
-                        let metrics = Arc::clone(&metrics);
-                        let peers = Arc::clone(&peers);
-                        let routes = Arc::clone(&routes);
-                        let route_updates = route_updates.resubscribe();
-                        let node_state = node_state.clone();
+                        let ctx = Arc::clone(&ctx);
                         let connect_spec = AddressSpec {
                             addr: addr.clone(),
                             protocol: listen.protocol,
                         };
                         let handle = tokio::spawn(async move {
-                            run_auto_connector(
-                                &global,
-                                &cfg,
-                                &connect_spec,
-                                tun_capable,
-                                metrics,
-                                peers,
-                                routes,
-                                route_updates,
-                                node_state,
-                            )
-                            .await
+                            run_auto_connector(Arc::clone(&ctx), &connect_spec).await
                         });
                         let connect_info = wallhack_core::node_api::ConnectInfo {
                             peer_addr: addr,
@@ -496,24 +400,14 @@ fn install_advertised_routes(
 // ============================================================================
 
 /// Auto connector: connect to a peer, negotiate role, run the session.
-// REASON: threading transport, metrics, peers, routes, route_updates through protocol-specific quic/ws arms
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-async fn run_auto_connector(
-    global: &GlobalConfig,
-    cfg: &AutoConfig,
-    spec: &AddressSpec,
-    tun_capable: bool,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    node_state: SharedNodeState,
-) -> Result<(), NodeError> {
+// REASON: too_many_lines: symmetric quic/ws dispatch arms, each with factory and session closures
+#[allow(clippy::too_many_lines)]
+async fn run_auto_connector(ctx: Arc<AutoContext>, spec: &AddressSpec) -> Result<(), NodeError> {
     let local_hs = build_local_handshake(
-        cfg,
-        &global.version,
+        &ctx.cfg,
+        &ctx.global.version,
         Capabilities {
-            tun_capable,
+            tun_capable: ctx.tun_capable,
             listening: false,
             connecting: true,
             interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
@@ -522,30 +416,25 @@ async fn run_auto_connector(
 
     tracing::info!("Auto connector: connecting to {}...", spec.addr);
     let endpoint =
-        crate::transport::resolve_endpoint(&spec.addr, global.dns_server.as_deref()).await?;
+        crate::transport::resolve_endpoint(&spec.addr, ctx.global.dns_server.as_deref()).await?;
     let peer_addr = endpoint.to_string();
 
-    let security = SecurityParams {
-        psk: global.psk.clone(),
-        accept_fingerprint: cfg.accept_fingerprint.clone(),
-    };
-
-    // route_updates is a Receiver. We need to pass fresh receivers to the loop.
+    let security = ctx.security();
 
     match spec.protocol {
         Protocol::Udp => {
             #[cfg(feature = "quic")]
             {
                 let client_config = crate::config::build_quic_client_config(
-                    global,
+                    &ctx.global,
                     endpoint,
-                    Some(cfg.name.clone()),
+                    Some(ctx.cfg.name.clone()),
                     &security,
                     Some(local_hs.clone()),
                 );
-                let route_updates = route_updates.resubscribe();
                 // Clone peers for the factory closure; the session closure moves the original.
-                let peers_for_factory = Arc::clone(&peers);
+                let peers_for_factory = Arc::clone(&ctx.peers);
+                let ctx_session = Arc::clone(&ctx);
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
@@ -561,23 +450,15 @@ async fn run_auto_connector(
                     move |connect_result| {
                         // erase() is sync — runs before async move captures anything generic
                         let connect_result = connect_result.erase();
-                        let metrics = Arc::clone(&metrics);
-                        let peers = Arc::clone(&peers);
+                        let ctx = Arc::clone(&ctx_session);
                         let peer_addr = peer_addr.clone();
                         let local_hs = local_hs.clone();
-                        let node_state = node_state.clone();
-                        let routes = Arc::clone(&routes);
-                        let route_updates = route_updates.resubscribe();
                         async move {
                             run_auto_connect_session_dispatch(
                                 connect_result,
                                 &local_hs,
                                 &peer_addr,
-                                metrics,
-                                peers,
-                                node_state,
-                                Some(routes),
-                                Some(route_updates),
+                                Arc::clone(&ctx),
                             )
                             .await
                         }
@@ -593,15 +474,15 @@ async fn run_auto_connector(
             #[cfg(feature = "websocket")]
             {
                 let client_config = crate::config::build_ws_client_config(
-                    global,
+                    &ctx.global,
                     endpoint,
-                    Some(cfg.name.clone()),
+                    Some(ctx.cfg.name.clone()),
                     &security,
                     Some(local_hs.clone()),
                 );
-                let route_updates = route_updates.resubscribe();
                 // Clone peers for the factory closure; the session closure moves the original.
-                let peers_for_factory = Arc::clone(&peers);
+                let peers_for_factory = Arc::clone(&ctx.peers);
+                let ctx_session = Arc::clone(&ctx);
                 crate::transport::connect_loop(
                     || {
                         let client_config = client_config.clone();
@@ -616,23 +497,15 @@ async fn run_auto_connector(
                     move |connect_result| {
                         // erase() is sync — runs before async move captures anything generic
                         let connect_result = connect_result.erase();
-                        let metrics = Arc::clone(&metrics);
-                        let peers = Arc::clone(&peers);
+                        let ctx = Arc::clone(&ctx_session);
                         let peer_addr = peer_addr.clone();
                         let local_hs = local_hs.clone();
-                        let node_state = node_state.clone();
-                        let routes = Arc::clone(&routes);
-                        let route_updates = route_updates.resubscribe();
                         async move {
                             run_auto_connect_session_dispatch(
                                 connect_result,
                                 &local_hs,
                                 &peer_addr,
-                                metrics,
-                                peers,
-                                node_state,
-                                Some(routes),
-                                Some(route_updates),
+                                Arc::clone(&ctx),
                             )
                             .await
                         }
@@ -648,19 +521,13 @@ async fn run_auto_connector(
 }
 
 /// Non-generic auto-connector dispatch: negotiates role and runs the session.
-// REASON: symmetric entry/exit/relay/indeterminate negotiation arms, each with distinct session logic
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+// REASON: too_many_lines: symmetric entry/exit/relay/indeterminate negotiation arms, each with distinct session logic
+#[allow(clippy::too_many_lines)]
 async fn run_auto_connect_session_dispatch(
     connect_result: wallhack_core::client::client::ErasedConnectResult,
     local_hs: &Handshake,
     peer_addr: &str,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    node_state: SharedNodeState,
-    routes: Option<SharedRouteTable>,
-    route_updates: Option<
-        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    >,
+    ctx: Arc<AutoContext>,
 ) -> Result<(), NodeError> {
     let wallhack_core::client::client::ErasedConnectResult {
         peer_handshake_rx,
@@ -701,7 +568,7 @@ async fn run_auto_connect_session_dispatch(
         NegotiationResult::Resolved { role, .. } => *role,
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
-    node_state.update_role(negotiated_role);
+    ctx.node_state.update_role(negotiated_role);
     let peer_role = super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default());
     tracing::info!(
         "Role resolved: peer={} addr={peer_addr} local_role={negotiated_role} peer_role={peer_role}",
@@ -717,16 +584,14 @@ async fn run_auto_connect_session_dispatch(
             // applies routes from the table when it creates the TUN, so they
             // must be in the table before we call it.
             let peer_name = peer_hs.name.as_str();
-            let routes = routes.as_ref().map(Arc::clone);
+            let routes = Some(Arc::clone(&ctx.routes));
             let tun_name = if peer_name.is_empty() {
                 None
             } else {
                 Some(super::entry::peer_name_to_iface(peer_name))
             };
-            if let Some(ref r) = routes
-                && !peer_name.is_empty()
-            {
-                install_advertised_routes(r, peer_name, &peer_hs.routes);
+            if !peer_name.is_empty() {
+                install_advertised_routes(&ctx.routes, peer_name, &peer_hs.routes);
             }
 
             drop(tasks);
@@ -736,12 +601,12 @@ async fn run_auto_connect_session_dispatch(
                 instructions_rx,
                 responses_rx,
                 control_tx,
-                &metrics,
+                &ctx.metrics,
                 peer_addr,
                 Some(peer_name),
-                Some(Arc::clone(&peers)),
+                Some(Arc::clone(&ctx.peers)),
                 routes.clone(),
-                route_updates,
+                Some(ctx.route_updates()),
             )
             .await;
 
@@ -791,7 +656,7 @@ async fn run_auto_connect_session_dispatch(
             }
             drop(tasks);
             let heartbeat =
-                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&ctx.peers));
             run_auto_exit_session_inner(
                 transport,
                 instructions_rx,
@@ -801,8 +666,7 @@ async fn run_auto_connect_session_dispatch(
                 peer_caps,
                 &peer_name,
                 peer_addr,
-                &metrics,
-                &peers,
+                &ctx,
             )
             .await
         }
@@ -827,16 +691,17 @@ async fn run_auto_connect_session_dispatch(
                 peer_hs.name.clone()
             };
             let peer_caps = peer_hs.capabilities.unwrap_or_default();
-            peers.register(
+            ctx.peers.register(
                 name.clone(),
                 peer_addr.to_string(),
                 NodeRole::Indeterminate,
                 peer_caps,
                 wallhack_core::control::peers::ConnectionSide::Connect,
             );
-            let _heartbeat = super::spawn_heartbeat(control_tx, name.clone(), Arc::clone(&peers));
+            let _heartbeat =
+                super::spawn_heartbeat(control_tx, name.clone(), Arc::clone(&ctx.peers));
             hold_until_disconnect(tasks).await;
-            peers.unregister(&name);
+            ctx.peers.unregister(&name);
             tracing::info!("Peer disconnected: {name}");
             Ok(())
         }
@@ -856,7 +721,7 @@ async fn hold_until_disconnect(mut tasks: wallhack_core::client::client::Connect
 }
 
 /// Non-generic exit session handler for the auto-connector path.
-// REASON: threading transport, instructions, responses, heartbeat, role, caps, peer info, metrics, peers
+// REASON: threading transport, instructions, responses, heartbeat, peer role/caps/name/addr, ctx
 #[allow(clippy::too_many_arguments)]
 async fn run_auto_exit_session_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -867,10 +732,9 @@ async fn run_auto_exit_session_inner(
     peer_caps: Capabilities,
     peer_name: &str,
     peer_addr: &str,
-    metrics: &Arc<Metrics>,
-    peers: &Arc<Registry>,
+    ctx: &Arc<AutoContext>,
 ) -> Result<(), NodeError> {
-    peers.register(
+    ctx.peers.register(
         peer_name.to_string(),
         peer_addr.to_string(),
         peer_role,
@@ -883,7 +747,7 @@ async fn run_auto_exit_session_inner(
         std::time::Duration::from_mins(1),
         std::time::Duration::from_mins(5),
     );
-    let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(metrics));
+    let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
 
     let stream_fut = super::exit::run_stream_listener(transport);
     let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
@@ -900,7 +764,7 @@ async fn run_auto_exit_session_inner(
         }
     }
 
-    peers.unregister(peer_name);
+    ctx.peers.unregister(peer_name);
     tracing::info!("Peer disconnected: {peer_name}");
     Ok(())
 }
@@ -910,25 +774,12 @@ async fn run_auto_exit_session_inner(
 // ============================================================================
 
 /// Auto listener: accept connections, negotiate role, dispatch.
-// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, node_state through listener
-#[allow(clippy::too_many_arguments)]
-async fn run_auto_listener(
-    global: &GlobalConfig,
-    cfg: &AutoConfig,
-    spec: &AddressSpec,
-    tun_capable: bool,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
-    node_state: SharedNodeState,
-) -> Result<(), NodeError> {
+async fn run_auto_listener(ctx: Arc<AutoContext>, spec: &AddressSpec) -> Result<(), NodeError> {
     let local_hs = build_local_handshake(
-        cfg,
-        &global.version,
+        &ctx.cfg,
+        &ctx.global.version,
         Capabilities {
-            tun_capable,
+            tun_capable: ctx.tun_capable,
             listening: true,
             connecting: false,
             interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
@@ -940,18 +791,16 @@ async fn run_auto_listener(
         handler_config: wallhack_core::control::handler::HandlerConfig::new(
             NodeRole::Indeterminate,
             "wallhack".to_string(),
-            global.version.clone(),
+            ctx.global.version.clone(),
         ),
-        metrics: Some(Arc::clone(&metrics)),
-        peers: Some(Arc::clone(&peers)),
-        routes: Some(Arc::clone(&routes)),
-        route_updates: Some(route_updates_tx),
+        metrics: Some(Arc::clone(&ctx.metrics)),
+        peers: Some(Arc::clone(&ctx.peers)),
+        routes: Some(Arc::clone(&ctx.routes)),
+        route_updates: Some(ctx.route_updates_tx.clone()),
         local_handshake: Some(local_hs.clone()),
     };
     let server_config =
-        crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
-
-    // route_updates is a Receiver.
+        crate::config::build_server_config(&ctx.global.tls, addr, ctx.global.psk.clone(), None);
 
     match spec.protocol {
         Protocol::Udp => {
@@ -961,20 +810,9 @@ async fn run_auto_listener(
                     wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
                 let bound = server.local_addr()?;
-                node_state.set_listen_addr(bound);
-                let route_updates = route_updates.resubscribe();
-                let routes = Arc::clone(&routes);
-                run_auto_accept_loop(
-                    server,
-                    local_hs,
-                    global.psk.clone(),
-                    metrics,
-                    peers,
-                    routes,
-                    route_updates,
-                    node_state,
-                )
-                .await
+                ctx.node_state.set_listen_addr(bound);
+                run_auto_accept_loop(server, local_hs, ctx.global.psk.clone(), Arc::clone(&ctx))
+                    .await
             }
             #[cfg(not(feature = "quic"))]
             Err(NodeError::TransportUnavailable("quic"))
@@ -987,20 +825,9 @@ async fn run_auto_listener(
                     server_options,
                 )?;
                 let bound = server.local_addr()?;
-                node_state.set_listen_addr(bound);
-                let route_updates = route_updates.resubscribe();
-                let routes = Arc::clone(&routes);
-                run_auto_accept_loop(
-                    server,
-                    local_hs,
-                    global.psk.clone(),
-                    metrics,
-                    peers,
-                    routes,
-                    route_updates,
-                    node_state,
-                )
-                .await
+                ctx.node_state.set_listen_addr(bound);
+                run_auto_accept_loop(server, local_hs, ctx.global.psk.clone(), Arc::clone(&ctx))
+                    .await
             }
             #[cfg(not(feature = "websocket"))]
             Err(NodeError::TransportUnavailable("websocket"))
@@ -1009,17 +836,11 @@ async fn run_auto_listener(
 }
 
 /// Accept loop for auto-negotiation listener.
-// REASON: threading local_hs, psk, metrics, peers, routes, route_updates, node_state through generic accept loop
-#[allow(clippy::too_many_arguments)]
 async fn run_auto_accept_loop<S: Server>(
     mut server: S,
     local_hs: Handshake,
     server_psk: Option<zeroize::Zeroizing<String>>,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: SharedRouteTable,
-    route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    node_state: SharedNodeState,
+    ctx: Arc<AutoContext>,
 ) -> Result<(), NodeError>
 where
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -1076,11 +897,7 @@ where
                 ) = accept_result.into_channels();
 
                 let local_hs = local_hs.clone();
-                let metrics = Arc::clone(&metrics);
-                let peers = Arc::clone(&peers);
-                let routes = Arc::clone(&routes);
-                let route_updates = route_updates.resubscribe();
-                let node_state = node_state.clone();
+                let ctx = Arc::clone(&ctx);
 
                 tokio::spawn(async move {
                     if let Err(e) = run_auto_accept_session_inner(
@@ -1092,12 +909,8 @@ where
                         control_tx,
                         peer_hs,
                         local_hs,
-                        metrics,
-                        peers,
-                        Some(routes),
-                        Some(route_updates),
+                        ctx,
                         peer_addr,
-                        node_state,
                     )
                     .await
                     {
@@ -1154,17 +967,10 @@ struct RelayBridge {
 /// # Errors
 ///
 /// Returns error if a non-retryable connection error occurs.
-// REASON: threading global, cfg, connect, listen, tun_capable, metrics, peers, node_state
-#[allow(clippy::too_many_arguments)]
 async fn run_connect_listen_relay_promotable(
-    global: &GlobalConfig,
-    cfg: &AutoConfig,
+    ctx: Arc<AutoContext>,
     connect_spec: &AddressSpec,
     listen_spec: &AddressSpec,
-    tun_capable: bool,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     // Watch channel: None = no active connector session, Some = connector is
     // running as relay and the bridge is ready for the listener to use.
@@ -1181,7 +987,7 @@ async fn run_connect_listen_relay_promotable(
             handler_config: HandlerConfig::new(
                 NodeRole::Relay,
                 "wallhack".to_string(),
-                global.version.clone(),
+                ctx.global.version.clone(),
             ),
             metrics: None,
             peers: None,
@@ -1194,8 +1000,8 @@ async fn run_connect_listen_relay_promotable(
                     connecting: true,
                     interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
                 }),
-                name: cfg.name.clone(),
-                version: global.version.clone(),
+                name: ctx.cfg.name.clone(),
+                version: ctx.global.version.clone(),
                 psk_proof: Vec::new(),
                 routes: Vec::new(),
                 hint: Some(wallhack_wire::data::RoleHint {
@@ -1207,15 +1013,12 @@ async fn run_connect_listen_relay_promotable(
     };
 
     let server_config =
-        crate::config::build_server_config(&global.tls, addr, global.psk.clone(), None);
+        crate::config::build_server_config(&ctx.global.tls, addr, ctx.global.psk.clone(), None);
 
-    let security = SecurityParams {
-        psk: global.psk.clone(),
-        accept_fingerprint: cfg.accept_fingerprint.clone(),
-    };
+    let security = ctx.security();
 
     let connect_endpoint =
-        crate::transport::resolve_endpoint(&connect_spec.addr, global.dns_server.as_deref())
+        crate::transport::resolve_endpoint(&connect_spec.addr, ctx.global.dns_server.as_deref())
             .await?;
 
     // Shared flag: set to `true` by the listener task once it has successfully
@@ -1226,8 +1029,7 @@ async fn run_connect_listen_relay_promotable(
     // Spawn the listener task. It runs independently and bridges accepted
     // peers to the connector session when a bridge is available.
     let listener_task: tokio::task::JoinHandle<Result<(), NodeError>> = {
-        let peers = Arc::clone(&peers);
-        let node_state = node_state.clone();
+        let ctx = Arc::clone(&ctx);
         let bridge_rx = bridge_rx.clone();
         let server_options = server_options.clone();
         let listen_spec_owned = listen_spec.clone();
@@ -1238,8 +1040,7 @@ async fn run_connect_listen_relay_promotable(
                 listen_spec_owned,
                 server_config,
                 server_options,
-                peers,
-                node_state,
+                ctx,
                 bridge_rx,
                 listener_ready_flag,
             )
@@ -1251,14 +1052,9 @@ async fn run_connect_listen_relay_promotable(
     // Capabilities start with `listening: false`; once the listener is up
     // (signaled by `listener_ready`) we advertise `listening: true`.
     let connector_result = run_relay_promotable_connector(
-        global,
-        cfg,
+        Arc::clone(&ctx),
         connect_spec,
         connect_endpoint,
-        tun_capable,
-        metrics,
-        peers,
-        node_state,
         security,
         bridge_tx,
         listener_ready,
@@ -1275,17 +1071,12 @@ async fn run_connect_listen_relay_promotable(
 /// Connects with `listening: false` initially. After the listener is running
 /// (first relay-capable connect), advertises `listening: true` so the peer
 /// negotiates us as relay on subsequent reconnects.
-// REASON: threading connect spec, tun_capable, metrics, peers, node_state, security, bridge_tx
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+// REASON: too_many_lines: symmetric quic/ws dispatch arms, each with factory+session closures and TOCTOU-safe hs sharing
+#[allow(clippy::too_many_lines)]
 async fn run_relay_promotable_connector(
-    global: &GlobalConfig,
-    cfg: &AutoConfig,
+    ctx: Arc<AutoContext>,
     connect_spec: &AddressSpec,
     endpoint: std::net::SocketAddr,
-    tun_capable: bool,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    node_state: SharedNodeState,
     security: SecurityParams,
     bridge_tx: tokio::sync::watch::Sender<Option<Arc<RelayBridge>>>,
     listener_ready: Arc<std::sync::atomic::AtomicBool>,
@@ -1310,30 +1101,29 @@ async fn run_relay_promotable_connector(
                 let last_local_hs_session = Arc::clone(&last_local_hs);
                 let listener_ready_factory = Arc::clone(&listener_ready);
                 let bridge_tx_arc = Arc::clone(&bridge_tx);
-                let peers_factory = Arc::clone(&peers);
-                let metrics_connect = Arc::clone(&metrics);
-                let peers_connect = Arc::clone(&peers);
-                let node_state_connect = node_state.clone();
+                let peers_factory = Arc::clone(&ctx.peers);
+                let ctx_session = Arc::clone(&ctx);
 
                 crate::transport::connect_loop(
                     || {
                         let is_listening =
                             listener_ready_factory.load(std::sync::atomic::Ordering::Acquire);
                         let current_caps = Capabilities {
-                            tun_capable,
+                            tun_capable: ctx.tun_capable,
                             listening: is_listening,
                             connecting: true,
                             interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
                         };
-                        let local_hs = build_local_handshake(cfg, &global.version, current_caps);
+                        let local_hs =
+                            build_local_handshake(&ctx.cfg, &ctx.global.version, current_caps);
                         // Store for session closure — same value, no second read.
                         *last_local_hs_factory
                             .lock()
                             .expect("last_local_hs poisoned") = Some(local_hs.clone());
                         let client_config = crate::config::build_quic_client_config(
-                            global,
+                            &ctx.global,
                             endpoint,
-                            Some(cfg.name.clone()),
+                            Some(ctx.cfg.name.clone()),
                             &security,
                             Some(local_hs),
                         );
@@ -1348,9 +1138,7 @@ async fn run_relay_promotable_connector(
                     },
                     move |connect_result| {
                         let connect_result = connect_result.erase();
-                        let metrics = Arc::clone(&metrics_connect);
-                        let peers = Arc::clone(&peers_connect);
-                        let node_state = node_state_connect.clone();
+                        let ctx = Arc::clone(&ctx_session);
                         let bridge_tx = Arc::clone(&bridge_tx_arc);
                         // Use the handshake the factory already built — no second
                         // read of listener_ready, so there is no TOCTOU window.
@@ -1363,9 +1151,7 @@ async fn run_relay_promotable_connector(
                             run_relay_promotable_connector_session(
                                 connect_result,
                                 &local_hs,
-                                metrics,
-                                peers,
-                                node_state,
+                                ctx,
                                 bridge_tx,
                             )
                             .await
@@ -1377,7 +1163,7 @@ async fn run_relay_promotable_connector(
             }
             #[cfg(not(feature = "quic"))]
             {
-                let _ = (bridge_tx, metrics, peers, node_state);
+                let _ = (bridge_tx, ctx);
                 Err(NodeError::TransportUnavailable("quic"))
             }
         }
@@ -1391,30 +1177,29 @@ async fn run_relay_promotable_connector(
                 let last_local_hs_session = Arc::clone(&last_local_hs);
                 let listener_ready_factory = Arc::clone(&listener_ready);
                 let bridge_tx_arc = Arc::clone(&bridge_tx);
-                let peers_factory = Arc::clone(&peers);
-                let metrics_connect = Arc::clone(&metrics);
-                let peers_connect = Arc::clone(&peers);
-                let node_state_connect = node_state.clone();
+                let peers_factory = Arc::clone(&ctx.peers);
+                let ctx_session = Arc::clone(&ctx);
 
                 crate::transport::connect_loop(
                     || {
                         let is_listening =
                             listener_ready_factory.load(std::sync::atomic::Ordering::Acquire);
                         let current_caps = Capabilities {
-                            tun_capable,
+                            tun_capable: ctx.tun_capable,
                             listening: is_listening,
                             connecting: true,
                             interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
                         };
-                        let local_hs = build_local_handshake(cfg, &global.version, current_caps);
+                        let local_hs =
+                            build_local_handshake(&ctx.cfg, &ctx.global.version, current_caps);
                         // Store for session closure — same value, no second read.
                         *last_local_hs_factory
                             .lock()
                             .expect("last_local_hs poisoned") = Some(local_hs.clone());
                         let client_config = crate::config::build_ws_client_config(
-                            global,
+                            &ctx.global,
                             endpoint,
-                            Some(cfg.name.clone()),
+                            Some(ctx.cfg.name.clone()),
                             &security,
                             Some(local_hs),
                         );
@@ -1428,9 +1213,7 @@ async fn run_relay_promotable_connector(
                     },
                     move |connect_result| {
                         let connect_result = connect_result.erase();
-                        let metrics = Arc::clone(&metrics_connect);
-                        let peers = Arc::clone(&peers_connect);
-                        let node_state = node_state_connect.clone();
+                        let ctx = Arc::clone(&ctx_session);
                         let bridge_tx = Arc::clone(&bridge_tx_arc);
                         // Use the handshake the factory already built — no second
                         // read of listener_ready, so there is no TOCTOU window.
@@ -1443,9 +1226,7 @@ async fn run_relay_promotable_connector(
                             run_relay_promotable_connector_session(
                                 connect_result,
                                 &local_hs,
-                                metrics,
-                                peers,
-                                node_state,
+                                ctx,
                                 bridge_tx,
                             )
                             .await
@@ -1457,7 +1238,7 @@ async fn run_relay_promotable_connector(
             }
             #[cfg(not(feature = "websocket"))]
             {
-                let _ = (bridge_tx, metrics, peers, node_state);
+                let _ = (bridge_tx, ctx);
                 Err(NodeError::TransportUnavailable("websocket"))
             }
         }
@@ -1470,14 +1251,12 @@ async fn run_relay_promotable_connector(
 /// creates the relay bridge, publishes it to the bridge watch channel, and
 /// runs the relay session. On exit (disconnect), publishes `None` to the
 /// watch channel.
-// REASON: threading connect_result, local_hs, metrics, peers, node_state, bridge_tx
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+// REASON: too_many_lines: exit and relay arms each have distinct session setup
+#[allow(clippy::too_many_lines)]
 async fn run_relay_promotable_connector_session(
     connect_result: wallhack_core::client::client::ErasedConnectResult,
     local_hs: &Handshake,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    node_state: SharedNodeState,
+    ctx: Arc<AutoContext>,
     bridge_tx: Arc<tokio::sync::watch::Sender<Option<Arc<RelayBridge>>>>,
 ) -> Result<(), NodeError> {
     use wallhack_core::transport::protocol::run_send_responses;
@@ -1519,7 +1298,7 @@ async fn run_relay_promotable_connector_session(
         NegotiationResult::Resolved { role, .. } => *role,
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
-    node_state.update_role(negotiated_role);
+    ctx.node_state.update_role(negotiated_role);
 
     let peer_name = if peer_hs.name.is_empty() {
         "unknown".to_string()
@@ -1561,7 +1340,7 @@ async fn run_relay_promotable_connector_session(
 
             drop(tasks);
             let heartbeat =
-                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&ctx.peers));
 
             run_auto_exit_session_inner(
                 transport,
@@ -1572,8 +1351,7 @@ async fn run_relay_promotable_connector_session(
                 peer_caps,
                 &peer_name,
                 &peer_addr,
-                &metrics,
-                &peers,
+                &ctx,
             )
             .await
         }
@@ -1582,7 +1360,7 @@ async fn run_relay_promotable_connector_session(
             // listener accept loop can start bridging peers.
             tracing::info!("Relay-promotable connector: promoting to relay");
 
-            peers.register(
+            ctx.peers.register(
                 peer_name.clone(),
                 peer_addr.clone(),
                 peer_role,
@@ -1618,103 +1396,18 @@ async fn run_relay_promotable_connector_session(
             >(None);
 
             // Source→peer bidi bridge.
-            {
-                let transport = Arc::clone(&transport);
-                let mut shutdown_bidi = shutdown_rx.clone();
-                tokio::spawn(async move {
-                    loop {
-                        tokio::select! {
-                            result = transport.accept_bi_erased() => {
-                                match result {
-                                    Ok(Some(source_stream)) => {
-                                        let current_peer = peer_transport_rx.borrow().clone();
-                                        let Some(peer) = current_peer else {
-                                            tracing::debug!("bidi bridge: no peer connected, dropping stream");
-                                            continue;
-                                        };
-                                        tokio::spawn(async move {
-                                            match peer.open_bi_erased().await {
-                                                Ok(peer_stream) => {
-                                                    if let Err(e) = wallhack_core::transport::splice_bi(
-                                                        source_stream,
-                                                        peer_stream,
-                                                    ).await {
-                                                        tracing::debug!("bidi bridge (source→peer) ended: {e}");
-                                                    }
-                                                }
-                                                Err(e) => tracing::debug!("bidi bridge: failed to open peer stream: {e}"),
-                                            }
-                                        });
-                                    }
-                                    Ok(None) => break,
-                                    Err(e) => {
-                                        tracing::debug!("bidi bridge: source accept_bi error: {e}");
-                                    }
-                                }
-                            }
-                            _ = shutdown_bidi.changed() => break,
-                        }
-                    }
-                });
-            }
+            super::relay::spawn_source_to_peer_bidi_bridge(
+                Arc::clone(&transport),
+                peer_transport_rx,
+                shutdown_rx.clone(),
+            );
 
             // Forward accepted peer events to the source peer as PeerAnnouncements.
-            {
-                let mut peer_events = peers.subscribe();
-                let peer_name_owned = peer_name.clone();
-                let source_control_tx = control_tx.clone();
-                tokio::spawn(async move {
-                    use wallhack_core::control::peers::PeerEvent;
-                    use wallhack_wire::control::{
-                        ControlMessage, PeerAnnouncement, control_message, peer_announcement,
-                    };
-                    loop {
-                        match peer_events.recv().await {
-                            Ok(PeerEvent::Connected { name, addr, role })
-                                if name != peer_name_owned =>
-                            {
-                                let announcement = PeerAnnouncement {
-                                    event: peer_announcement::Event::Connected.into(),
-                                    name,
-                                    addr,
-                                    role: wallhack_wire::data::NodeRole::from(role).into(),
-                                    routes: Vec::new(),
-                                };
-                                let msg = ControlMessage {
-                                    message: Some(control_message::Message::PeerAnnouncement(
-                                        announcement,
-                                    )),
-                                };
-                                if source_control_tx.send(msg).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Ok(PeerEvent::Disconnected { name }) if name != peer_name_owned => {
-                                let announcement = PeerAnnouncement {
-                                    event: peer_announcement::Event::Disconnected.into(),
-                                    name,
-                                    addr: String::new(),
-                                    role: 0,
-                                    routes: Vec::new(),
-                                };
-                                let msg = ControlMessage {
-                                    message: Some(control_message::Message::PeerAnnouncement(
-                                        announcement,
-                                    )),
-                                };
-                                if source_control_tx.send(msg).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Ok(_) => {}
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                tracing::debug!("Peer announcement forwarder lagged {n} events");
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        }
-                    }
-                });
-            }
+            super::relay::spawn_peer_announcement_forwarder(
+                &ctx.peers,
+                control_tx.clone(),
+                peer_name.clone(),
+            );
 
             let bridge = Arc::new(RelayBridge {
                 source_resp_tx: responses_tx,
@@ -1727,7 +1420,7 @@ async fn run_relay_promotable_connector_session(
             let _ = bridge_tx.send(Some(Arc::clone(&bridge)));
 
             let _heartbeat =
-                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&ctx.peers));
 
             let mut task_set = tasks;
             task_set.wait_for_disconnect().await;
@@ -1736,7 +1429,7 @@ async fn run_relay_promotable_connector_session(
             // Clear bridge so listener knows the connector is gone.
             let _ = bridge_tx.send(None);
             drop(shutdown_tx);
-            peers.unregister(&peer_name);
+            ctx.peers.unregister(&peer_name);
 
             Ok(())
         }
@@ -1756,14 +1449,13 @@ async fn run_relay_promotable_connector_session(
 /// Runs independently, accepting peers and bridging them through the current
 /// relay bridge (if one is available). If no bridge is available when a peer
 /// connects, the peer is rejected with a short hold.
-// REASON: threading listen_spec, server_config, server_options, peers, node_state, bridge_rx, listener_ready
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+// REASON: too_many_lines: quic and websocket branches each with server setup, bind, and accept loop
+#[allow(clippy::too_many_lines)]
 async fn run_relay_promotable_listener(
     listen_spec: AddressSpec,
     server_config: wallhack_core::server::config::ServerConfig,
     server_options: ServerOptions,
-    peers: Arc<Registry>,
-    node_state: SharedNodeState,
+    ctx: Arc<AutoContext>,
     bridge_rx: tokio::sync::watch::Receiver<Option<Arc<RelayBridge>>>,
     listener_ready: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), NodeError> {
@@ -1775,17 +1467,17 @@ async fn run_relay_promotable_listener(
                     wallhack_core::server::quic::QuicServer::try_new(server_config, server_options)
                         .map_err(|e| NodeError::Transport(Box::new(e)))?;
                 let bound = server.local_addr()?;
-                node_state.set_listen_addr(bound);
+                ctx.node_state.set_listen_addr(bound);
                 // Signal the connector that the listener is up. The connector
                 // will advertise `listening: true` on its next reconnect and
                 // negotiate as relay.
                 listener_ready.store(true, std::sync::atomic::Ordering::Release);
                 tracing::info!("Relay-promotable listener: listening on {bound} (QUIC)");
-                run_relay_promotable_accept_loop(server, peers, bridge_rx).await
+                run_relay_promotable_accept_loop(server, Arc::clone(&ctx.peers), bridge_rx).await
             }
             #[cfg(not(feature = "quic"))]
             {
-                let _ = (peers, bridge_rx, node_state, listener_ready);
+                let _ = (ctx, bridge_rx, listener_ready);
                 Err(NodeError::TransportUnavailable("quic"))
             }
         }
@@ -1797,14 +1489,14 @@ async fn run_relay_promotable_listener(
                     server_options,
                 )?;
                 let bound = server.local_addr()?;
-                node_state.set_listen_addr(bound);
+                ctx.node_state.set_listen_addr(bound);
                 listener_ready.store(true, std::sync::atomic::Ordering::Release);
                 tracing::info!("Relay-promotable listener: listening on {bound} (WebSocket)");
-                run_relay_promotable_accept_loop(server, peers, bridge_rx).await
+                run_relay_promotable_accept_loop(server, Arc::clone(&ctx.peers), bridge_rx).await
             }
             #[cfg(not(feature = "websocket"))]
             {
-                let _ = (peers, bridge_rx, node_state, listener_ready);
+                let _ = (ctx, bridge_rx, listener_ready);
                 Err(NodeError::TransportUnavailable("websocket"))
             }
         }
@@ -1866,7 +1558,7 @@ where
 ///
 /// All generic extraction (transport, channels, handshake) happens in the
 /// caller before spawning, so this function is monomorphized only once.
-// REASON: symmetric entry/exit/relay/indeterminate negotiation arms, each with distinct session setup
+// REASON: threading transport, channels, control, peer_hs, local_hs, peer_addr through negotiation arms
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_accept_session_inner(
     transport: Arc<dyn ErasedTransport>,
@@ -1877,14 +1569,8 @@ async fn run_auto_accept_session_inner(
     control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
     peer_hs: Option<Handshake>,
     local_hs: Handshake,
-    metrics: Arc<Metrics>,
-    peers: Arc<Registry>,
-    routes: Option<SharedRouteTable>,
-    route_updates: Option<
-        tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
-    >,
+    ctx: Arc<AutoContext>,
     peer_addr: String,
-    node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     let Some(peer_hs) = peer_hs else {
         tracing::warn!("No peer handshake from {peer_addr}; cannot negotiate");
@@ -1897,7 +1583,7 @@ async fn run_auto_accept_session_inner(
         NegotiationResult::Resolved { role, .. } => *role,
         NegotiationResult::Indeterminate { .. } => NodeRole::Indeterminate,
     };
-    node_state.update_role(negotiated_role);
+    ctx.node_state.update_role(negotiated_role);
     let peer_role = super::peer_role_from_capabilities(peer_hs.capabilities.unwrap_or_default());
     tracing::info!(
         "Role resolved: peer={} addr={peer_addr} local_role={negotiated_role} peer_role={peer_role}",
@@ -1931,28 +1617,24 @@ async fn run_auto_accept_session_inner(
 
             // Install routes advertised by the exit peer before applying them
             // to the TUN so the apply block below picks them up in one pass.
-            if let Some(ref r) = routes
-                && !peer_hs.name.is_empty()
-            {
-                install_advertised_routes(r, &peer_hs.name, &peer_hs.routes);
+            if !peer_hs.name.is_empty() {
+                install_advertised_routes(&ctx.routes, &peer_hs.name, &peer_hs.routes);
             }
 
             // Apply all routes (user-configured and newly-advertised) to the TUN.
-            // REASON: outer guard is an option, inner guard is a separate semantic check on peer identity
+            // REASON: outer guard is a non-empty name check; inner guard is a separate route match
             #[allow(clippy::collapsible_if)]
-            if let Some(r) = &routes {
-                if !peer_hs.name.is_empty() {
-                    for entry in r.list() {
-                        if entry.peer == peer_hs.name {
-                            let _ =
-                                crate::netlink::add_os_route(&entry.cidr.to_string(), &tun_name);
-                        }
+            if !peer_hs.name.is_empty() {
+                for entry in ctx.routes.list() {
+                    if entry.peer == peer_hs.name {
+                        let _ = crate::netlink::add_os_route(&entry.cidr.to_string(), &tun_name);
                     }
                 }
             }
 
             // Spawn route update listener
-            if let Some(mut updates) = route_updates {
+            {
+                let mut updates = ctx.route_updates();
                 let tun_name = tun_name.clone();
                 let peer = if peer_hs.name.is_empty() {
                     None
@@ -1967,7 +1649,7 @@ async fn run_auto_accept_session_inner(
                     );
                     loop {
                         match updates.recv().await {
-                            Ok(wallhack_core::control::routes::RouteUpdate::Add(entry)) => {
+                            Ok(RouteUpdate::Add(entry)) => {
                                 // REASON: peer match is a route filter; OS call error is a separate concern
                                 #[allow(clippy::collapsible_if)]
                                 if Some(entry.peer.as_str()) == peer.as_deref() {
@@ -1979,7 +1661,7 @@ async fn run_auto_accept_session_inner(
                                     }
                                 }
                             }
-                            Ok(wallhack_core::control::routes::RouteUpdate::Remove(entry)) => {
+                            Ok(RouteUpdate::Remove(entry)) => {
                                 // REASON: peer match is a route filter; OS call error is a separate concern
                                 #[allow(clippy::collapsible_if)]
                                 if Some(entry.peer.as_str()) == peer.as_deref() {
@@ -2009,7 +1691,7 @@ async fn run_auto_accept_session_inner(
             let (manager, _) = ConnectionManager::new(
                 actor,
                 Arc::clone(&transport),
-                Arc::clone(&metrics),
+                Arc::clone(&ctx.metrics),
                 instructions_tx,
                 responses_rx,
             );
@@ -2026,7 +1708,7 @@ async fn run_auto_accept_session_inner(
             } else {
                 NodeRole::Exit
             };
-            peers.register(
+            ctx.peers.register(
                 peer_name.clone(),
                 peer_addr.clone(),
                 peer_role,
@@ -2035,7 +1717,7 @@ async fn run_auto_accept_session_inner(
             );
 
             let _heartbeat =
-                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&ctx.peers));
 
             let handle = tokio::spawn(async move { manager.run().await });
             match handle.await {
@@ -2043,23 +1725,21 @@ async fn run_auto_accept_session_inner(
                 Ok(Err(e)) => tracing::warn!("Auto entry session error {peer_name}: {e}"),
                 Err(e) => tracing::warn!("Auto entry session task failed {peer_name}: {e}"),
             }
-            peers.unregister(&peer_name);
+            ctx.peers.unregister(&peer_name);
 
             // Best-effort TUN cleanup after disconnect.
             crate::netlink::delete_tun(&tun_name);
 
             // Remove auto-managed routes and their OS entries now that the
             // session has ended.
-            if let Some(ref r) = routes {
-                let removed = r.remove_auto_by_peer(&peer_name);
-                if !removed.is_empty() {
-                    tracing::info!(
-                        "Removing {} auto route(s) for disconnected exit {peer_name}",
-                        removed.len()
-                    );
-                    for entry in &removed {
-                        let _ = crate::netlink::remove_os_route(&entry.cidr.to_string(), &tun_name);
-                    }
+            let removed = ctx.routes.remove_auto_by_peer(&peer_name);
+            if !removed.is_empty() {
+                tracing::info!(
+                    "Removing {} auto route(s) for disconnected exit {peer_name}",
+                    removed.len()
+                );
+                for entry in &removed {
+                    let _ = crate::netlink::remove_os_route(&entry.cidr.to_string(), &tun_name);
                 }
             }
         }
@@ -2110,7 +1790,7 @@ async fn run_auto_accept_session_inner(
             };
             let peer_caps = peer_hs.capabilities.unwrap_or_default();
             let peer_role = super::peer_role_from_capabilities(peer_caps);
-            peers.register(
+            ctx.peers.register(
                 peer_name.clone(),
                 peer_addr.clone(),
                 peer_role,
@@ -2119,14 +1799,14 @@ async fn run_auto_accept_session_inner(
             );
 
             let _heartbeat =
-                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&peers));
+                super::spawn_heartbeat(control_tx, peer_name.clone(), Arc::clone(&ctx.peers));
 
             let adapter = SyscallExitAdapter::new();
             let _reaper = adapter.start_reaper(
                 std::time::Duration::from_mins(1),
                 std::time::Duration::from_mins(5),
             );
-            let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&metrics));
+            let orchestrator = Orchestrator::new(Arc::new(adapter), Arc::clone(&ctx.metrics));
             let stream_fut = super::exit::run_stream_listener(Arc::clone(&transport));
             let drive_fut = orchestrator.drive(responses_tx, instructions_rx);
 
@@ -2142,7 +1822,7 @@ async fn run_auto_accept_session_inner(
                 }
             }
 
-            peers.unregister(&peer_name);
+            ctx.peers.unregister(&peer_name);
             tracing::info!("Peer disconnected: {peer_name}");
         }
         NegotiationResult::Resolved {
@@ -2164,20 +1844,21 @@ async fn run_auto_accept_session_inner(
                 peer_hs.name.clone()
             };
             let peer_caps = peer_hs.capabilities.unwrap_or_default();
-            peers.register(
+            ctx.peers.register(
                 name.clone(),
                 peer_addr.clone(),
                 NodeRole::Indeterminate,
                 peer_caps,
                 wallhack_core::control::peers::ConnectionSide::Accept,
             );
-            let _heartbeat = super::spawn_heartbeat(control_tx, name.clone(), Arc::clone(&peers));
+            let _heartbeat =
+                super::spawn_heartbeat(control_tx, name.clone(), Arc::clone(&ctx.peers));
             // Hold transport alive; wait for the peer to disconnect
             // by draining the instructions channel (closes when transport dies).
             let _keep_transport = transport;
             let mut rx = instructions_rx;
             while rx.recv().await.is_some() {}
-            peers.unregister(&name);
+            ctx.peers.unregister(&name);
             tracing::info!("Peer disconnected: {name}");
         }
     }

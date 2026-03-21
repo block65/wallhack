@@ -162,7 +162,6 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.metrics,
                 resources.peers,
                 resources.routes,
-                resources.route_updates,
                 resources.route_updates_tx,
                 resources.directive_sink,
                 resources.node_state,
