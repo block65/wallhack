@@ -304,7 +304,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         }
 
         Some(management_request::Request::Stats(_)) => {
-            management_response::Response::Stats(StatsResponse::from(api.metrics()))
+            management_response::Response::Stats(api.metrics().into())
         }
 
         Some(management_request::Request::Peers(_)) => {

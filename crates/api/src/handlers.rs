@@ -266,7 +266,10 @@ pub async fn stats(State(state): State<ApiState>) -> Result<Json<StatsResponse>,
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Stats(s)) => Ok(Json(StatsResponse::from(s))),
+        Some(management_response::Response::Stats(s)) => {
+            let response: StatsResponse = s.into();
+            Ok(Json(response))
+        }
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }

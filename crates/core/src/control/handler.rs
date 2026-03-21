@@ -5,10 +5,8 @@
 
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
-use std::collections::VecDeque;
-
 use arc_swap::ArcSwap;
-use tokio::sync::watch;
+use tokio::sync::mpsc;
 use wallhack_wire::{
     control::{
         ControlRequest, ControlResponse, ErrorResponse, PeerInfo, PingResponse, RouteInfo,
@@ -38,9 +36,15 @@ fn reply_channel<T>() -> (
     std::sync::mpsc::sync_channel(1)
 }
 
-/// A command sent from the handler/API layer to the mode task.
+/// A command sent from the handler/API layer to the mode task via the
+/// control watch channel.
 #[derive(Debug)]
 pub enum NodeCommand {
+    /// Set or clear the role hint.
+    Role {
+        /// `Some` to set a hint, `None` to clear (auto).
+        hint: Option<RoleHint>,
+    },
     /// Connect to a remote peer at the given address.
     Connect {
         /// Target address (host, host:port, etc.).
@@ -73,53 +77,31 @@ struct NodeState {
     peer_addr: Option<String>,
 }
 
-/// Inner state backing [`SharedNodeState`].
-struct SharedNodeStateInner {
-    state: ArcSwap<NodeState>,
-    commands: std::sync::Mutex<VecDeque<NodeCommand>>,
-    command_notify: tokio::sync::Notify,
-}
-
 /// Shared node state handle, cloneable and cheaply updatable.
 ///
 /// Consumers call [`SharedNodeState::update_role`], [`SharedNodeState::update_capabilities`],
 /// etc. after negotiation or listening starts so that `wallhack info`
 /// reflects the real state of the daemon.
-///
-/// Also hosts the command queue for dynamic connect/listen/disconnect
-/// operations, avoiding a dedicated channel between handler and mode task.
-#[derive(Clone)]
-pub struct SharedNodeState(Arc<SharedNodeStateInner>);
-
-impl std::fmt::Debug for SharedNodeState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SharedNodeState")
-            .field("state", &*self.0.state.load())
-            .finish()
-    }
-}
+#[derive(Clone, Debug)]
+pub struct SharedNodeState(Arc<ArcSwap<NodeState>>);
 
 impl SharedNodeState {
     fn new(role: NodeRole) -> Self {
-        Self(Arc::new(SharedNodeStateInner {
-            state: ArcSwap::from_pointee(NodeState {
-                role,
-                capabilities: Capabilities::default(),
-                listen_addr: None,
-                peer_addr: None,
-            }),
-            commands: std::sync::Mutex::new(VecDeque::new()),
-            command_notify: tokio::sync::Notify::new(),
-        }))
+        Self(Arc::new(ArcSwap::from_pointee(NodeState {
+            role,
+            capabilities: Capabilities::default(),
+            listen_addr: None,
+            peer_addr: None,
+        })))
     }
 
     fn load(&self) -> arc_swap::Guard<Arc<NodeState>> {
-        self.0.state.load()
+        self.0.load()
     }
 
     /// Update the node role (e.g. after auto-negotiation resolves).
     pub fn update_role(&self, role: NodeRole) {
-        self.0.state.rcu(|old| {
+        self.0.rcu(|old| {
             let mut new = (**old).clone();
             new.role = role;
             new
@@ -128,7 +110,7 @@ impl SharedNodeState {
 
     /// Update the node's own capabilities.
     pub fn update_capabilities(&self, capabilities: Capabilities) {
-        self.0.state.rcu(|old| {
+        self.0.rcu(|old| {
             let mut new = (**old).clone();
             new.capabilities = capabilities;
             new
@@ -137,46 +119,12 @@ impl SharedNodeState {
 
     /// Record that the node is now listening on `addr`.
     pub fn set_listen_addr(&self, addr: SocketAddr) {
-        self.0.state.rcu(|old| {
+        self.0.rcu(|old| {
             let mut new = (**old).clone();
             new.listen_addr = Some(addr);
             new.capabilities.listening = true;
             new
         });
-    }
-
-    /// Enqueue a command for the mode task and wake it.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the command queue mutex is poisoned.
-    pub fn push_command(&self, cmd: NodeCommand) {
-        self.0
-            .commands
-            .lock()
-            .expect("command queue mutex poisoned")
-            .push_back(cmd);
-        self.0.command_notify.notify_one();
-    }
-
-    /// Drain all pending commands from the queue.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the command queue mutex is poisoned.
-    #[must_use]
-    pub fn drain_commands(&self) -> Vec<NodeCommand> {
-        self.0
-            .commands
-            .lock()
-            .expect("command queue mutex poisoned")
-            .drain(..)
-            .collect()
-    }
-
-    /// Wait until at least one command is enqueued.
-    pub async fn notified(&self) {
-        self.0.command_notify.notified().await;
     }
 }
 
@@ -209,9 +157,12 @@ impl HandlerConfig {
 /// on the current state of metrics and configuration.
 pub struct Handler {
     config: HandlerConfig,
-    /// Sender for hint changes. The mode task watches the receiver and
-    /// re-evaluates when a new hint arrives. `None` means no hint is active.
-    hint_tx: watch::Sender<Option<RoleHint>>,
+    /// Command channel to the mode task. Carries role changes, connect,
+    /// listen, and disconnect commands.
+    directive_source: mpsc::Sender<NodeCommand>,
+    /// Receiver side of the command channel. Extracted once by the daemon
+    /// before wrapping Handler in `Arc<dyn NodeApi>`.
+    directive_sink: std::sync::Mutex<Option<mpsc::Receiver<NodeCommand>>>,
     log_buffer: LogBuffer,
     metrics: SharedMetrics,
     peers: SharedRegistry,
@@ -237,10 +188,11 @@ impl Handler {
         log_buffer: Option<LogBuffer>,
     ) -> Self {
         let state = SharedNodeState::new(config.node_role);
-        let (hint_tx, _) = watch::channel(None);
+        let (directive_source, directive_sink) = mpsc::channel(8);
         Self {
             config,
-            hint_tx,
+            directive_source,
+            directive_sink: std::sync::Mutex::new(Some(directive_sink)),
             log_buffer: log_buffer.unwrap_or_default(),
             metrics,
             peers,
@@ -261,10 +213,19 @@ impl Handler {
         self.state.clone()
     }
 
-    /// Returns a receiver that fires when the runtime hint changes.
+    /// Extracts the command receiver. Called once by the daemon before
+    /// wrapping Handler in `Arc<dyn NodeApi>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mutex is poisoned or if called more than once.
     #[must_use]
-    pub fn hint_rx(&self) -> watch::Receiver<Option<RoleHint>> {
-        self.hint_tx.subscribe()
+    pub fn directive_sink(&self) -> mpsc::Receiver<NodeCommand> {
+        self.directive_sink
+            .lock()
+            .expect("directive_sink mutex poisoned")
+            .take()
+            .expect("directive_sink already taken")
     }
 
     /// Handles a control request and returns a response.
@@ -518,10 +479,16 @@ impl crate::node_api::NodeApi for Handler {
 
     fn connect(&self, addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
         let (reply_sender, reply_receiver) = reply_channel();
-        self.state.push_command(NodeCommand::Connect {
-            addr: addr.to_string(),
-            reply: reply_sender,
-        });
+        self.directive_source
+            .try_send(NodeCommand::Connect {
+                addr: addr.to_string(),
+                reply: reply_sender,
+            })
+            .map_err(|_| {
+                crate::node_api::NodeApiError::NotSupported(
+                    "dynamic connect not supported in this mode".into(),
+                )
+            })?;
         tokio::task::block_in_place(|| reply_receiver.recv()).map_err(|_| {
             crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
         })?
@@ -532,10 +499,16 @@ impl crate::node_api::NodeApi for Handler {
         addr: std::net::SocketAddr,
     ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
         let (reply_sender, reply_receiver) = reply_channel();
-        self.state.push_command(NodeCommand::Listen {
-            addr,
-            reply: reply_sender,
-        });
+        self.directive_source
+            .try_send(NodeCommand::Listen {
+                addr,
+                reply: reply_sender,
+            })
+            .map_err(|_| {
+                crate::node_api::NodeApiError::NotSupported(
+                    "dynamic listen not supported in this mode".into(),
+                )
+            })?;
         tokio::task::block_in_place(|| reply_receiver.recv()).map_err(|_| {
             crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
         })?
@@ -543,9 +516,15 @@ impl crate::node_api::NodeApi for Handler {
 
     fn disconnect(&self) -> crate::node_api::Result<()> {
         let (reply_sender, reply_receiver) = reply_channel();
-        self.state.push_command(NodeCommand::Disconnect {
-            reply: reply_sender,
-        });
+        self.directive_source
+            .try_send(NodeCommand::Disconnect {
+                reply: reply_sender,
+            })
+            .map_err(|_| {
+                crate::node_api::NodeApiError::NotSupported(
+                    "dynamic disconnect not supported in this mode".into(),
+                )
+            })?;
         tokio::task::block_in_place(|| reply_receiver.recv()).map_err(|_| {
             crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
         })?
@@ -620,12 +599,16 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn hint_set(&self, hint: RoleHint) -> crate::node_api::Result<()> {
-        self.hint_tx.send_replace(Some(hint));
+        let _ = self
+            .directive_source
+            .try_send(NodeCommand::Role { hint: Some(hint) });
         Ok(())
     }
 
     fn hint_set_auto(&self) -> crate::node_api::Result<()> {
-        self.hint_tx.send_replace(None);
+        let _ = self
+            .directive_source
+            .try_send(NodeCommand::Role { hint: None });
         Ok(())
     }
 
