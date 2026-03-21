@@ -7,15 +7,17 @@ build:
 defaults:
   kernel: ./vm/build/vmlinuz
   alpine: "3.21"
-  hide_tools:
-    - topology_get
-    - range_status
-  allow_tools:
-    - vm_exec
-    - vm_exec_bg
-    - vm_tail
-  allow_binaries:
-    - wallhack
+  mcp:
+    hide_tools:
+      - topology_get
+      - range_status
+    allow_tools:
+      - vm_exec
+      - vm_exec_bg
+      - vm_tail
+    allow_binaries:
+      - wallhack
+    deny_root: true
 
 networks:
   perimeter:
@@ -44,8 +46,10 @@ services:
   attacker:
     memory: 512m
     cpus: 2
-    allow_tools: ["*"]
-    allow_binaries: ["*"]
+    mcp:
+      allow_tools: ["*"]
+      allow_binaries: ["*"]
+      deny_root: false
     layers:
       - base
       - attacker
@@ -91,7 +95,6 @@ services:
   web-filter:
     memory: 64m
     cpus: 1
-    deny_cp: true
     layers:
       - base-slim
       - egress-web-only
@@ -119,6 +122,7 @@ services:
     layers:
       - base
       - squid
+      - wallhack
     networks:
       perimeter:
         ipv4_address: 10.99.1.50
@@ -146,7 +150,7 @@ services:
   ssh-bastion:
     memory: 64m
     cpus: 1
-    deny_cp: true
+
     layers:
       - base-slim
       - proxy-env
@@ -160,8 +164,6 @@ services:
   loot:
     memory: 128m
     cpus: 1
-    deny_cp: true
-    deny_root: true
     layers:
       - base
       - app-loot
@@ -219,7 +221,6 @@ services:
   ssh-server:
     memory: 128m
     cpus: 1
-    deny_root: true
     layers:
       - base
       - proxy-env
@@ -320,7 +321,7 @@ services:
   udp-only:
     memory: 64m
     cpus: 1
-    deny_cp: true
+
     layers:
       - base-slim
       - egress-udp53-only
@@ -389,7 +390,7 @@ services:
   reverse-target:
     memory: 64m
     cpus: 1
-    deny_cp: true
+
     layers:
       - base-slim
       - egress-none
@@ -438,8 +439,6 @@ services:
   platinum:
     memory: 128m
     cpus: 1
-    deny_root: true
-    deny_cp: true
     layers:
       - base
       - app-platinum

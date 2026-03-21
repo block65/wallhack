@@ -3,4 +3,4 @@ packages:
 configs:
   - app/server.py
 start: |
-  python3 /etc/initrd/app/server.py &
+  python3 /app/server.py &

@@ -2,3 +2,6 @@ packages:
   - curl
   - nmap
   - nmap-scripts
+  - openssh-client
+run:
+  - mkdir -p /home/pontoon/.ssh && chown pontoon:pontoon /home/pontoon/.ssh && chmod 700 /home/pontoon/.ssh
