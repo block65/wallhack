@@ -1,6 +1,16 @@
 
 # Changelog
 
+## [0.14.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.1...wallhack-cli-v0.14.2) (2026-03-21)
+
+### Bug Fixes
+
+* disambiguate "Role resolved" log line and route display ([f0b3a90](https://github.com/block65/wallhack/commit/f0b3a90b63cf09c74e35df5da6a7b1a151f64e67))
+* show fixed role immediately in info, fix -H flag dispatch ([b91a1c5](https://github.com/block65/wallhack/commit/b91a1c5dcf4ea0acafd761e5c38f95c6a7ba76a5))
+
+5 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.1...wallhack-cli-v0.14.2)
+
+
 ## [0.14.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.0...wallhack-cli-v0.14.1) (2026-03-20)
 
 ### Bug Fixes
