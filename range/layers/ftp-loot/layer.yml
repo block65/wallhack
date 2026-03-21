@@ -1,3 +1,3 @@
 configs:
-  - srv/ftp/backup/id_ed25519
-  - srv/ftp/backup/README.txt
+  - ftp/backup/id_ed25519
+  - ftp/backup/README.txt
