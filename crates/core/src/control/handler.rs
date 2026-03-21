@@ -6,7 +6,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use wallhack_wire::{
     control::{
         ControlRequest, ControlResponse, ErrorResponse, PeerInfo, PingResponse, RouteInfo,
@@ -18,7 +18,11 @@ use wallhack_wire::{
 use crate::NodeRole;
 
 use super::{
-    log_buffer::LogBuffer, metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable,
+    log_buffer::LogBuffer,
+    metrics::SharedMetrics,
+    node_command::{NodeCommand, reply_channel},
+    peers::SharedRegistry,
+    routes::SharedRouteTable,
 };
 
 /// Mutable runtime state that can change after construction.
@@ -122,6 +126,14 @@ pub struct Handler {
     route_updates: tokio::sync::broadcast::Sender<super::routes::RouteUpdate>,
     state: SharedNodeState,
     start_time: Instant,
+    /// Sender used by `connect/listen/disconnect` to dispatch commands to the
+    /// active mode task. `None` if the channel has been dropped (mode does not
+    /// support dynamic operations).
+    cmd_tx: mpsc::Sender<NodeCommand>,
+    /// Receiver extracted once by the mode task before it starts running.
+    /// Wrapped in `Mutex<Option<…>>` so it can be moved out without requiring
+    /// `&mut self`.
+    cmd_rx: std::sync::Mutex<Option<mpsc::Receiver<NodeCommand>>>,
 }
 
 impl Handler {
@@ -141,6 +153,7 @@ impl Handler {
     ) -> Self {
         let state = SharedNodeState::new(config.node_role);
         let (hint_tx, _) = watch::channel(None);
+        let (cmd_tx, cmd_rx) = mpsc::channel(8);
         Self {
             config,
             hint_tx,
@@ -151,6 +164,8 @@ impl Handler {
             route_updates,
             state,
             start_time: Instant::now(),
+            cmd_tx,
+            cmd_rx: std::sync::Mutex::new(Some(cmd_rx)),
         }
     }
 
@@ -168,6 +183,19 @@ impl Handler {
     #[must_use]
     pub fn hint_rx(&self) -> watch::Receiver<Option<RoleHint>> {
         self.hint_tx.subscribe()
+    }
+
+    /// Extracts the [`NodeCommand`] receiver so the mode task can poll it.
+    ///
+    /// May only be called once. Returns `None` if already taken.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (indicates a prior panic in
+    /// another thread while holding the lock, which should never happen in
+    /// normal operation).
+    pub fn take_cmd_rx(&self) -> Option<mpsc::Receiver<NodeCommand>> {
+        self.cmd_rx.lock().expect("cmd_rx mutex poisoned").take()
     }
 
     /// Handles a control request and returns a response.
@@ -419,25 +447,70 @@ impl crate::node_api::NodeApi for Handler {
         }
     }
 
-    fn connect(&self, _addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
-        Err(crate::node_api::NodeApiError::NotSupported(
-            "dynamic connect not yet implemented — specify --connect at startup".into(),
-        ))
+    fn connect(&self, addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
+        let (reply_tx, reply_rx) = reply_channel();
+        self.cmd_tx
+            .try_send(NodeCommand::Connect {
+                addr: addr.to_string(),
+                reply: reply_tx,
+            })
+            .map_err(|err| match err {
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    crate::node_api::NodeApiError::NotSupported(
+                        "dynamic connect not supported in this mode".into(),
+                    )
+                }
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    crate::node_api::NodeApiError::Internal("command queue full, try again".into())
+                }
+            })?;
+        tokio::task::block_in_place(|| reply_rx.recv()).map_err(|_| {
+            crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
+        })?
     }
 
     fn listen(
         &self,
-        _addr: std::net::SocketAddr,
+        addr: std::net::SocketAddr,
     ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
-        Err(crate::node_api::NodeApiError::NotSupported(
-            "dynamic listen not yet implemented — specify --listen at startup".into(),
-        ))
+        let (reply_tx, reply_rx) = reply_channel();
+        self.cmd_tx
+            .try_send(NodeCommand::Listen {
+                addr,
+                reply: reply_tx,
+            })
+            .map_err(|err| match err {
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    crate::node_api::NodeApiError::NotSupported(
+                        "dynamic listen not supported in this mode".into(),
+                    )
+                }
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    crate::node_api::NodeApiError::Internal("command queue full, try again".into())
+                }
+            })?;
+        tokio::task::block_in_place(|| reply_rx.recv()).map_err(|_| {
+            crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
+        })?
     }
 
     fn disconnect(&self) -> crate::node_api::Result<()> {
-        Err(crate::node_api::NodeApiError::NotSupported(
-            "dynamic disconnect not yet implemented".into(),
-        ))
+        let (reply_tx, reply_rx) = reply_channel();
+        self.cmd_tx
+            .try_send(NodeCommand::Disconnect { reply: reply_tx })
+            .map_err(|err| match err {
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    crate::node_api::NodeApiError::NotSupported(
+                        "dynamic disconnect not supported in this mode".into(),
+                    )
+                }
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    crate::node_api::NodeApiError::Internal("command queue full, try again".into())
+                }
+            })?;
+        tokio::task::block_in_place(|| reply_rx.recv()).map_err(|_| {
+            crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
+        })?
     }
 
     fn add_route(

@@ -661,7 +661,7 @@ where
 
 /// Non-generic handler for erased relay connection results.
 #[allow(clippy::too_many_lines)] // REASON: symmetric uni/bidi stream setup and heartbeat per accepted peer
-fn handle_relay_connection(
+pub(crate) fn handle_relay_connection(
     erased: wallhack_core::server::server::ErasedAcceptResult,
     source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: &tokio::sync::mpsc::UnboundedSender<
