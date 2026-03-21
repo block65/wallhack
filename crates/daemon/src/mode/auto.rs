@@ -45,7 +45,7 @@ const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// # Errors
 ///
 /// Returns error if the connection setup fails non-retryably.
-// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, node_state, cmd_rx through mode dispatch
+// REASON: threading metrics, peers, routes, route_updates, route_updates_tx, node_state through mode dispatch
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     global: &GlobalConfig,
@@ -56,7 +56,6 @@ pub(crate) async fn run(
     route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
-    cmd_rx: Option<tokio::sync::mpsc::Receiver<wallhack_core::control::node_command::NodeCommand>>,
 ) -> Result<(), NodeError> {
     let tun_capable = detect_tun_capable();
     let connect_display = cfg
@@ -99,7 +98,6 @@ pub(crate) async fn run(
         (Some(connect), Some(listen)) => {
             // Both connect and listen → start as exit, promote to relay when
             // the listener has a second peer connected.
-            drop(cmd_rx);
             tracing::info!(
                 "Both connect and listen addresses provided: starting as exit, promoting to relay on listener peer"
             );
@@ -116,8 +114,8 @@ pub(crate) async fn run(
             .await
         }
         (Some(connect), None) => {
-            // Connector-only path: run the connector as a task and integrate
-            // cmd_rx so dynamic listen/disconnect commands work.
+            // Connector-only path: run the connector as a task and poll
+            // node_state for dynamic listen/disconnect commands.
             run_auto_connector_with_commands(
                 global,
                 cfg,
@@ -129,13 +127,12 @@ pub(crate) async fn run(
                 route_updates,
                 route_updates_tx,
                 node_state,
-                cmd_rx,
             )
             .await
         }
         (None, Some(listen)) => {
-            // Listener-only path: run the listener as a task and integrate
-            // cmd_rx so dynamic connect/disconnect commands work.
+            // Listener-only path: run the listener as a task and poll
+            // node_state for dynamic connect/disconnect commands.
             run_auto_listener_with_commands(
                 global,
                 cfg,
@@ -147,7 +144,6 @@ pub(crate) async fn run(
                 route_updates,
                 route_updates_tx,
                 node_state,
-                cmd_rx,
             )
             .await
         }
@@ -157,14 +153,13 @@ pub(crate) async fn run(
     }
 }
 
-/// Connector-only path with `cmd_rx` integration.
+/// Connector-only path with command queue integration.
 ///
-/// Spawns the connector as a task, then runs a command loop. `Listen`
-/// commands start a listener task alongside the connector. `Disconnect`
-/// commands abort the active connector. The top-level loop exits when the
-/// connector task completes (or fails non-retryably).
+/// Spawns the connector as a task, then polls `node_state` for dynamic
+/// commands. `Listen` commands start a listener task alongside the
+/// connector. `Disconnect` commands abort the active connector.
 // REASON: threading global, cfg, connect, tun_capable, metrics, peers, routes, route_updates,
-//         route_updates_tx, node_state, cmd_rx through command-integrated connector dispatch
+//         route_updates_tx, node_state through command-integrated connector dispatch
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_connector_with_commands(
     global: &GlobalConfig,
@@ -177,9 +172,8 @@ async fn run_auto_connector_with_commands(
     route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
-    cmd_rx: Option<tokio::sync::mpsc::Receiver<wallhack_core::control::node_command::NodeCommand>>,
 ) -> Result<(), NodeError> {
-    use wallhack_core::{control::node_command::NodeCommand, node_api::NodeApiError};
+    use wallhack_core::{control::handler::NodeCommand, node_api::NodeApiError};
 
     let global = global.clone();
     let cfg = cfg.clone();
@@ -213,11 +207,6 @@ async fn run_auto_connector_with_commands(
     // Listener task spawned on demand by a `Listen` command.
     let mut listener_task: Option<tokio::task::JoinHandle<Result<(), NodeError>>> = None;
 
-    let Some(mut cmd_rx) = cmd_rx else {
-        // No command channel — just await the connector directly.
-        return connector_task.await?;
-    };
-
     tokio::pin!(connector_task);
 
     loop {
@@ -238,62 +227,60 @@ async fn run_auto_connector_with_commands(
                 }
                 return result?;
             }
-            cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else {
-                    // Command channel closed — just let the connector run to completion.
-                    return connector_task.await?;
-                };
-                match cmd {
-                    NodeCommand::Connect { reply, .. } => {
-                        let _ = reply.send(Err(NodeApiError::AlreadyConnected));
-                    }
-                    NodeCommand::Listen { addr, reply } => {
-                        if listener_task.as_ref().is_some_and(|lt| !lt.is_finished()) {
-                            let _ = reply.send(Err(NodeApiError::AlreadyListening));
-                            continue;
+            () = node_state.notified() => {
+                for cmd in node_state.drain_commands() {
+                    match cmd {
+                        NodeCommand::Connect { reply, .. } => {
+                            let _ = reply.send(Err(NodeApiError::AlreadyConnected));
                         }
-                        let global = global.clone();
-                        let cfg = cfg.clone();
-                        let metrics = Arc::clone(&metrics);
-                        let peers = Arc::clone(&peers);
-                        let routes = Arc::clone(&routes);
-                        let route_updates = route_updates.resubscribe();
-                        let route_updates_tx = route_updates_tx.clone();
-                        let node_state = node_state.clone();
-                        let listen_spec = AddressSpec {
-                            addr: addr.to_string(),
-                            protocol: connect.protocol,
-                        };
-                        let handle = tokio::spawn(async move {
-                            run_auto_listener(
-                                &global,
-                                &cfg,
-                                &listen_spec,
-                                tun_capable,
-                                metrics,
-                                peers,
-                                routes,
-                                route_updates,
-                                route_updates_tx,
-                                node_state,
-                            )
-                            .await
-                        });
-                        let listen_info = wallhack_core::node_api::ListenInfo {
-                            listen_addr: addr,
-                            protocol: format!("{:?}", connect.protocol),
-                            fingerprint: String::new(),
-                        };
-                        let _ = reply.send(Ok(listen_info));
-                        listener_task = Some(handle);
-                    }
-                    NodeCommand::Disconnect { reply } => {
-                        connector_task.abort();
-                        let _ = reply.send(Ok(()));
-                        if let Some(lt) = listener_task.take() {
-                            lt.abort();
+                        NodeCommand::Listen { addr, reply } => {
+                            if listener_task.as_ref().is_some_and(|lt| !lt.is_finished()) {
+                                let _ = reply.send(Err(NodeApiError::AlreadyListening));
+                                continue;
+                            }
+                            let global = global.clone();
+                            let cfg = cfg.clone();
+                            let metrics = Arc::clone(&metrics);
+                            let peers = Arc::clone(&peers);
+                            let routes = Arc::clone(&routes);
+                            let route_updates = route_updates.resubscribe();
+                            let route_updates_tx = route_updates_tx.clone();
+                            let node_state = node_state.clone();
+                            let listen_spec = AddressSpec {
+                                addr: addr.to_string(),
+                                protocol: connect.protocol,
+                            };
+                            let handle = tokio::spawn(async move {
+                                run_auto_listener(
+                                    &global,
+                                    &cfg,
+                                    &listen_spec,
+                                    tun_capable,
+                                    metrics,
+                                    peers,
+                                    routes,
+                                    route_updates,
+                                    route_updates_tx,
+                                    node_state,
+                                )
+                                .await
+                            });
+                            let listen_info = wallhack_core::node_api::ListenInfo {
+                                listen_addr: addr,
+                                protocol: format!("{:?}", connect.protocol),
+                                fingerprint: String::new(),
+                            };
+                            let _ = reply.send(Ok(listen_info));
+                            listener_task = Some(handle);
                         }
-                        return Ok(());
+                        NodeCommand::Disconnect { reply } => {
+                            connector_task.abort();
+                            let _ = reply.send(Ok(()));
+                            if let Some(lt) = listener_task.take() {
+                                lt.abort();
+                            }
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -301,14 +288,13 @@ async fn run_auto_connector_with_commands(
     }
 }
 
-/// Listener-only path with `cmd_rx` integration.
+/// Listener-only path with command queue integration.
 ///
-/// Spawns the listener as a task, then runs a command loop. `Connect`
-/// commands spawn a connector task alongside the listener. `Disconnect`
-/// commands abort the active connector. The top-level loop exits when the
-/// listener task completes.
+/// Spawns the listener as a task, then polls `node_state` for dynamic
+/// commands. `Connect` commands spawn a connector task alongside the
+/// listener. `Disconnect` commands abort the active connector.
 // REASON: threading global, cfg, listen, tun_capable, metrics, peers, routes, route_updates,
-//         route_updates_tx, node_state, cmd_rx through command-integrated listener dispatch
+//         route_updates_tx, node_state through command-integrated listener dispatch
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_auto_listener_with_commands(
     global: &GlobalConfig,
@@ -321,9 +307,8 @@ async fn run_auto_listener_with_commands(
     route_updates: tokio::sync::broadcast::Receiver<wallhack_core::control::routes::RouteUpdate>,
     route_updates_tx: tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     node_state: SharedNodeState,
-    cmd_rx: Option<tokio::sync::mpsc::Receiver<wallhack_core::control::node_command::NodeCommand>>,
 ) -> Result<(), NodeError> {
-    use wallhack_core::{control::node_command::NodeCommand, node_api::NodeApiError};
+    use wallhack_core::{control::handler::NodeCommand, node_api::NodeApiError};
 
     let global = global.clone();
     let cfg = cfg.clone();
@@ -359,11 +344,6 @@ async fn run_auto_listener_with_commands(
     // Connector task spawned on demand by a `Connect` command.
     let mut connector_task: Option<tokio::task::JoinHandle<Result<(), NodeError>>> = None;
 
-    let Some(mut cmd_rx) = cmd_rx else {
-        // No command channel — just await the listener directly.
-        return listener_task.await?;
-    };
-
     tokio::pin!(listener_task);
 
     loop {
@@ -384,58 +364,56 @@ async fn run_auto_listener_with_commands(
                 }
                 return result?;
             }
-            cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else {
-                    // Command channel closed — let the listener run to completion.
-                    return listener_task.await?;
-                };
-                match cmd {
-                    NodeCommand::Listen { reply, .. } => {
-                        let _ = reply.send(Err(NodeApiError::AlreadyListening));
-                    }
-                    NodeCommand::Connect { addr, reply } => {
-                        if connector_task.as_ref().is_some_and(|ct| !ct.is_finished()) {
-                            let _ = reply.send(Err(NodeApiError::AlreadyConnected));
-                            continue;
+            () = node_state.notified() => {
+                for cmd in node_state.drain_commands() {
+                    match cmd {
+                        NodeCommand::Listen { reply, .. } => {
+                            let _ = reply.send(Err(NodeApiError::AlreadyListening));
                         }
-                        let global = global.clone();
-                        let cfg = cfg.clone();
-                        let metrics = Arc::clone(&metrics);
-                        let peers = Arc::clone(&peers);
-                        let routes = Arc::clone(&routes);
-                        let route_updates = route_updates.resubscribe();
-                        let node_state = node_state.clone();
-                        let connect_spec = AddressSpec {
-                            addr: addr.clone(),
-                            protocol: listen.protocol,
-                        };
-                        let handle = tokio::spawn(async move {
-                            run_auto_connector(
-                                &global,
-                                &cfg,
-                                &connect_spec,
-                                tun_capable,
-                                metrics,
-                                peers,
-                                routes,
-                                route_updates,
-                                node_state,
-                            )
-                            .await
-                        });
-                        let connect_info = wallhack_core::node_api::ConnectInfo {
-                            peer_addr: addr,
-                            protocol: format!("{:?}", listen.protocol),
-                        };
-                        let _ = reply.send(Ok(connect_info));
-                        connector_task = Some(handle);
-                    }
-                    NodeCommand::Disconnect { reply } => {
-                        if let Some(ct) = connector_task.take() {
-                            ct.abort();
-                            let _ = reply.send(Ok(()));
-                        } else {
-                            let _ = reply.send(Err(NodeApiError::NotConnected));
+                        NodeCommand::Connect { addr, reply } => {
+                            if connector_task.as_ref().is_some_and(|ct| !ct.is_finished()) {
+                                let _ = reply.send(Err(NodeApiError::AlreadyConnected));
+                                continue;
+                            }
+                            let global = global.clone();
+                            let cfg = cfg.clone();
+                            let metrics = Arc::clone(&metrics);
+                            let peers = Arc::clone(&peers);
+                            let routes = Arc::clone(&routes);
+                            let route_updates = route_updates.resubscribe();
+                            let node_state = node_state.clone();
+                            let connect_spec = AddressSpec {
+                                addr: addr.clone(),
+                                protocol: listen.protocol,
+                            };
+                            let handle = tokio::spawn(async move {
+                                run_auto_connector(
+                                    &global,
+                                    &cfg,
+                                    &connect_spec,
+                                    tun_capable,
+                                    metrics,
+                                    peers,
+                                    routes,
+                                    route_updates,
+                                    node_state,
+                                )
+                                .await
+                            });
+                            let connect_info = wallhack_core::node_api::ConnectInfo {
+                                peer_addr: addr,
+                                protocol: format!("{:?}", listen.protocol),
+                            };
+                            let _ = reply.send(Ok(connect_info));
+                            connector_task = Some(handle);
+                        }
+                        NodeCommand::Disconnect { reply } => {
+                            if let Some(ct) = connector_task.take() {
+                                ct.abort();
+                                let _ = reply.send(Ok(()));
+                            } else {
+                                let _ = reply.send(Err(NodeApiError::NotConnected));
+                            }
                         }
                     }
                 }

@@ -30,12 +30,6 @@ pub(crate) struct NodeResources {
     pub route_updates_tx:
         tokio::sync::broadcast::Sender<wallhack_core::control::routes::RouteUpdate>,
     pub node_state: SharedNodeState,
-    /// Receiver for dynamic commands (connect, listen, disconnect) sent from
-    /// the control API. Modes that support dynamic operations consume this;
-    /// modes that do not simply drop it, which causes the sender side to
-    /// return `NotSupported`.
-    pub cmd_rx:
-        Option<tokio::sync::mpsc::Receiver<wallhack_core::control::node_command::NodeCommand>>,
 }
 
 /// Derive a peer's role from its advertised capabilities.
@@ -126,9 +120,6 @@ pub(crate) fn spawn_heartbeat(
 pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Result<(), NodeError> {
     match &config.mode {
         ModeConfig::Entry(cfg) => {
-            // Entry mode does not support dynamic commands; drop the receiver
-            // so the sender side returns NotSupported.
-            drop(resources.cmd_rx);
             entry::run(
                 &config.global,
                 cfg,
@@ -142,7 +133,6 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
             .await
         }
         ModeConfig::Exit(cfg) => {
-            drop(resources.cmd_rx);
             exit::run(
                 &config.global,
                 cfg,
@@ -153,7 +143,6 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
             .await
         }
         ModeConfig::Relay(cfg) => {
-            drop(resources.cmd_rx);
             relay::run(
                 &config.global,
                 cfg,
@@ -173,7 +162,6 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.route_updates,
                 resources.route_updates_tx,
                 resources.node_state,
-                resources.cmd_rx,
             )
             .await
         }

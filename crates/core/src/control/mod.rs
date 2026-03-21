@@ -3,7 +3,6 @@ pub mod client;
 pub mod handler;
 pub mod log_buffer;
 pub mod metrics;
-pub mod node_command;
 pub mod peers;
 pub mod routes;
 #[cfg(feature = "quic")]
