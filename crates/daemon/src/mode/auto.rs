@@ -73,7 +73,7 @@ impl AutoContext {
 /// # Errors
 ///
 /// Returns error if the connection setup fails non-retryably.
-// REASON: threading metrics, peers, routes, route_updates_tx, directive_sink, node_state through mode dispatch
+// REASON: threading metrics, peers, routes, route_updates_tx, command_sink, node_state through mode dispatch
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     global: &GlobalConfig,
@@ -82,7 +82,7 @@ pub(crate) async fn run(
     peers: Arc<Registry>,
     routes: SharedRouteTable,
     route_updates_tx: tokio::sync::broadcast::Sender<RouteUpdate>,
-    directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
+    command_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
     node_state: SharedNodeState,
 ) -> Result<(), NodeError> {
     let tun_capable = detect_tun_capable();
@@ -144,13 +144,13 @@ pub(crate) async fn run(
         }
         (Some(connect), None) => {
             // Connector-only path: run the connector as a task and poll
-            // directive_sink for dynamic listen/disconnect commands.
-            run_auto_connector_with_commands(Arc::clone(&ctx), connect, directive_sink).await
+            // command_sink for dynamic listen/disconnect commands.
+            run_auto_connector_with_commands(Arc::clone(&ctx), connect, command_sink).await
         }
         (None, Some(listen)) => {
             // Listener-only path: run the listener as a task and poll
-            // directive_sink for dynamic connect/disconnect commands.
-            run_auto_listener_with_commands(Arc::clone(&ctx), listen, directive_sink).await
+            // command_sink for dynamic connect/disconnect commands.
+            run_auto_listener_with_commands(Arc::clone(&ctx), listen, command_sink).await
         }
         (None, None) => Err(NodeError::Config(
             "auto mode requires a connect or listen address".into(),
@@ -160,7 +160,7 @@ pub(crate) async fn run(
 
 /// Connector-only path with command integration.
 ///
-/// Spawns the connector as a task, then polls `directive_sink` for dynamic
+/// Spawns the connector as a task, then polls `command_sink` for dynamic
 /// commands. `Listen` commands start a listener task alongside the
 /// connector. `Disconnect` commands abort the active connector.
 // REASON: too_many_lines: symmetric listen/connect/disconnect command arms with distinct spawn logic
@@ -168,7 +168,7 @@ pub(crate) async fn run(
 async fn run_auto_connector_with_commands(
     ctx: Arc<AutoContext>,
     connect: &AddressSpec,
-    mut directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
+    mut command_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
 ) -> Result<(), NodeError> {
     use wallhack_core::{control::handler::NodeCommand, node_api::NodeApiError};
 
@@ -203,7 +203,7 @@ async fn run_auto_connector_with_commands(
                 }
                 return result?;
             }
-            Some(cmd) = directive_sink.recv() => {
+            Some(cmd) = command_sink.recv() => {
                 match cmd {
                     NodeCommand::Role { .. } => {
                         // Role changes not yet handled in connector path.
@@ -248,7 +248,7 @@ async fn run_auto_connector_with_commands(
 
 /// Listener-only path with command integration.
 ///
-/// Spawns the listener as a task, then polls `directive_sink` for dynamic
+/// Spawns the listener as a task, then polls `command_sink` for dynamic
 /// commands. `Connect` commands spawn a connector task alongside the
 /// listener. `Disconnect` commands abort the active connector.
 // REASON: too_many_lines: symmetric connect/listen/disconnect command arms with distinct spawn logic
@@ -256,7 +256,7 @@ async fn run_auto_connector_with_commands(
 async fn run_auto_listener_with_commands(
     ctx: Arc<AutoContext>,
     listen: &AddressSpec,
-    mut directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
+    mut command_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
 ) -> Result<(), NodeError> {
     use wallhack_core::{control::handler::NodeCommand, node_api::NodeApiError};
 
@@ -291,7 +291,7 @@ async fn run_auto_listener_with_commands(
                 }
                 return result?;
             }
-            Some(cmd) = directive_sink.recv() => {
+            Some(cmd) = command_sink.recv() => {
                 match cmd {
                     NodeCommand::Role { .. } => {
                         // Role changes not yet handled in listener path.

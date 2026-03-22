@@ -32,7 +32,7 @@ pub(crate) struct NodeResources {
     pub node_state: SharedNodeState,
     /// Receiver for commands (role, connect, listen, disconnect) from the
     /// control API. Only auto mode consumes this.
-    pub directive_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
+    pub command_sink: tokio::sync::mpsc::Receiver<wallhack_core::control::handler::NodeCommand>,
 }
 
 /// Derive a peer's role from its advertised capabilities.
@@ -163,7 +163,7 @@ pub(crate) async fn run(config: &DaemonConfig, resources: NodeResources) -> Resu
                 resources.peers,
                 resources.routes,
                 resources.route_updates_tx,
-                resources.directive_sink,
+                resources.command_sink,
                 resources.node_state,
             )
             .await

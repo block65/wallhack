@@ -159,10 +159,10 @@ pub struct Handler {
     config: HandlerConfig,
     /// Command channel to the mode task. Carries role changes, connect,
     /// listen, and disconnect commands.
-    directive_source: mpsc::Sender<NodeCommand>,
+    command_source: mpsc::Sender<NodeCommand>,
     /// Receiver side of the command channel. Extracted once by the daemon
     /// before wrapping Handler in `Arc<dyn NodeApi>`.
-    directive_sink: std::sync::Mutex<Option<mpsc::Receiver<NodeCommand>>>,
+    command_sink: std::sync::Mutex<Option<mpsc::Receiver<NodeCommand>>>,
     log_buffer: LogBuffer,
     metrics: SharedMetrics,
     peers: SharedRegistry,
@@ -188,11 +188,11 @@ impl Handler {
         log_buffer: Option<LogBuffer>,
     ) -> Self {
         let state = SharedNodeState::new(config.node_role);
-        let (directive_source, directive_sink) = mpsc::channel(8);
+        let (command_source, command_sink) = mpsc::channel(8);
         Self {
             config,
-            directive_source,
-            directive_sink: std::sync::Mutex::new(Some(directive_sink)),
+            command_source,
+            command_sink: std::sync::Mutex::new(Some(command_sink)),
             log_buffer: log_buffer.unwrap_or_default(),
             metrics,
             peers,
@@ -220,12 +220,12 @@ impl Handler {
     ///
     /// Panics if the mutex is poisoned or if called more than once.
     #[must_use]
-    pub fn directive_sink(&self) -> mpsc::Receiver<NodeCommand> {
-        self.directive_sink
+    pub fn command_sink(&self) -> mpsc::Receiver<NodeCommand> {
+        self.command_sink
             .lock()
-            .expect("directive_sink mutex poisoned")
+            .expect("command_sink mutex poisoned")
             .take()
-            .expect("directive_sink already taken")
+            .expect("command_sink already taken")
     }
 
     /// Handles a control request and returns a response.
@@ -479,7 +479,7 @@ impl crate::node_api::NodeApi for Handler {
 
     fn connect(&self, addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
         let (reply_sender, reply_receiver) = reply_channel();
-        self.directive_source
+        self.command_source
             .try_send(NodeCommand::Connect {
                 addr: addr.to_string(),
                 reply: reply_sender,
@@ -499,7 +499,7 @@ impl crate::node_api::NodeApi for Handler {
         addr: std::net::SocketAddr,
     ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
         let (reply_sender, reply_receiver) = reply_channel();
-        self.directive_source
+        self.command_source
             .try_send(NodeCommand::Listen {
                 addr,
                 reply: reply_sender,
@@ -516,7 +516,7 @@ impl crate::node_api::NodeApi for Handler {
 
     fn disconnect(&self) -> crate::node_api::Result<()> {
         let (reply_sender, reply_receiver) = reply_channel();
-        self.directive_source
+        self.command_source
             .try_send(NodeCommand::Disconnect {
                 reply: reply_sender,
             })
@@ -600,14 +600,14 @@ impl crate::node_api::NodeApi for Handler {
 
     fn hint_set(&self, hint: RoleHint) -> crate::node_api::Result<()> {
         let _ = self
-            .directive_source
+            .command_source
             .try_send(NodeCommand::Role { hint: Some(hint) });
         Ok(())
     }
 
     fn hint_set_auto(&self) -> crate::node_api::Result<()> {
         let _ = self
-            .directive_source
+            .command_source
             .try_send(NodeCommand::Role { hint: None });
         Ok(())
     }

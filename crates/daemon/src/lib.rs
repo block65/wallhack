@@ -164,7 +164,7 @@ pub fn start_node(
         log_buffer,
     );
     let node_state = handler.node_state();
-    let directive_sink = handler.directive_sink();
+    let command_sink = handler.command_sink();
     let node_api: Arc<dyn NodeApi> = Arc::new(handler);
 
     let (shutdown_tx, _shutdown_rx) = watch::channel(());
@@ -178,7 +178,7 @@ pub fn start_node(
         route_updates: route_update_rx,
         route_updates_tx: route_update_tx,
         node_state,
-        directive_sink,
+        command_sink,
     };
     let task = tokio::spawn(async move { mode::run(&config, resources).await.map_err(Into::into) });
 
