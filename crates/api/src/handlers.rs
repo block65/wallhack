@@ -27,6 +27,28 @@ pub struct StatsResponse {
     pub packets_out: u64,
     pub active_connections: u64,
     pub active_flows: u64,
+    /// Total packets dropped since daemon start.
+    pub packets_dropped: u64,
+    /// Total connections opened since daemon start (monotonically increasing).
+    pub total_connections: u64,
+    /// Total flows opened since daemon start (monotonically increasing).
+    pub total_flows: u64,
+}
+
+impl From<wallhack_wire::management::StatsResponse> for StatsResponse {
+    fn from(s: wallhack_wire::management::StatsResponse) -> Self {
+        Self {
+            bytes_in: s.bytes_in,
+            bytes_out: s.bytes_out,
+            packets_in: s.packets_in,
+            packets_out: s.packets_out,
+            active_connections: s.active_connections,
+            active_flows: s.active_flows,
+            packets_dropped: s.packets_dropped,
+            total_connections: s.total_connections,
+            total_flows: s.total_flows,
+        }
+    }
 }
 
 /// Node info response.
@@ -244,14 +266,10 @@ pub async fn stats(State(state): State<ApiState>) -> Result<Json<StatsResponse>,
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match resp.response {
-        Some(management_response::Response::Stats(s)) => Ok(Json(StatsResponse {
-            bytes_in: s.bytes_in,
-            bytes_out: s.bytes_out,
-            packets_in: s.packets_in,
-            packets_out: s.packets_out,
-            active_connections: s.active_connections,
-            active_flows: s.active_flows,
-        })),
+        Some(management_response::Response::Stats(s)) => {
+            let response: StatsResponse = s.into();
+            Ok(Json(response))
+        }
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }

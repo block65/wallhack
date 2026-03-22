@@ -6,7 +6,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
-use tokio::sync::watch;
+use tokio::sync::mpsc;
 use wallhack_wire::{
     control::{
         ControlRequest, ControlResponse, ErrorResponse, PeerInfo, PingResponse, RouteInfo,
@@ -20,6 +20,51 @@ use crate::NodeRole;
 use super::{
     log_buffer::LogBuffer, metrics::SharedMetrics, peers::SharedRegistry, routes::SharedRouteTable,
 };
+
+/// Reply channel for a single command.
+///
+/// Uses a standard-library sync channel so the handler side (which may be
+/// called from a synchronous context) can block waiting for the reply without
+/// needing an async runtime handle.
+type ReplySender<T> = std::sync::mpsc::SyncSender<Result<T, crate::node_api::NodeApiError>>;
+
+/// Create a reply channel pair for a node command.
+fn reply_channel<T>() -> (
+    ReplySender<T>,
+    std::sync::mpsc::Receiver<Result<T, crate::node_api::NodeApiError>>,
+) {
+    std::sync::mpsc::sync_channel(1)
+}
+
+/// A command sent from the handler/API layer to the mode task via the
+/// control watch channel.
+#[derive(Debug)]
+pub enum NodeCommand {
+    /// Set or clear the role hint.
+    Role {
+        /// `Some` to set a hint, `None` to clear (auto).
+        hint: Option<RoleHint>,
+    },
+    /// Connect to a remote peer at the given address.
+    Connect {
+        /// Target address (host, host:port, etc.).
+        addr: String,
+        /// Channel for sending the result back to the caller.
+        reply: ReplySender<crate::node_api::ConnectInfo>,
+    },
+    /// Start listening for incoming peer connections.
+    Listen {
+        /// Address to bind.
+        addr: SocketAddr,
+        /// Channel for sending the result back to the caller.
+        reply: ReplySender<crate::node_api::ListenInfo>,
+    },
+    /// Disconnect from the currently connected peer.
+    Disconnect {
+        /// Channel for sending the result back to the caller.
+        reply: ReplySender<()>,
+    },
+}
 
 /// Mutable runtime state that can change after construction.
 ///
@@ -112,9 +157,12 @@ impl HandlerConfig {
 /// on the current state of metrics and configuration.
 pub struct Handler {
     config: HandlerConfig,
-    /// Sender for hint changes. The mode task watches the receiver and
-    /// re-evaluates when a new hint arrives. `None` means no hint is active.
-    hint_tx: watch::Sender<Option<RoleHint>>,
+    /// Command channel to the mode task. Carries role changes, connect,
+    /// listen, and disconnect commands.
+    command_source: mpsc::Sender<NodeCommand>,
+    /// Receiver side of the command channel. Extracted once by the daemon
+    /// before wrapping Handler in `Arc<dyn NodeApi>`.
+    command_sink: std::sync::Mutex<Option<mpsc::Receiver<NodeCommand>>>,
     log_buffer: LogBuffer,
     metrics: SharedMetrics,
     peers: SharedRegistry,
@@ -140,10 +188,11 @@ impl Handler {
         log_buffer: Option<LogBuffer>,
     ) -> Self {
         let state = SharedNodeState::new(config.node_role);
-        let (hint_tx, _) = watch::channel(None);
+        let (command_source, command_sink) = mpsc::channel(8);
         Self {
             config,
-            hint_tx,
+            command_source,
+            command_sink: std::sync::Mutex::new(Some(command_sink)),
             log_buffer: log_buffer.unwrap_or_default(),
             metrics,
             peers,
@@ -164,10 +213,19 @@ impl Handler {
         self.state.clone()
     }
 
-    /// Returns a receiver that fires when the runtime hint changes.
+    /// Extracts the command receiver. Called once by the daemon before
+    /// wrapping Handler in `Arc<dyn NodeApi>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mutex is poisoned or if called more than once.
     #[must_use]
-    pub fn hint_rx(&self) -> watch::Receiver<Option<RoleHint>> {
-        self.hint_tx.subscribe()
+    pub fn command_sink(&self) -> mpsc::Receiver<NodeCommand> {
+        self.command_sink
+            .lock()
+            .expect("command_sink mutex poisoned")
+            .take()
+            .expect("command_sink already taken")
     }
 
     /// Handles a control request and returns a response.
@@ -419,25 +477,57 @@ impl crate::node_api::NodeApi for Handler {
         }
     }
 
-    fn connect(&self, _addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
-        Err(crate::node_api::NodeApiError::NotSupported(
-            "dynamic connect not yet implemented — specify --connect at startup".into(),
-        ))
+    fn connect(&self, addr: &str) -> crate::node_api::Result<crate::node_api::ConnectInfo> {
+        let (reply_sender, reply_receiver) = reply_channel();
+        self.command_source
+            .try_send(NodeCommand::Connect {
+                addr: addr.to_string(),
+                reply: reply_sender,
+            })
+            .map_err(|_| {
+                crate::node_api::NodeApiError::NotSupported(
+                    "dynamic connect not supported in this mode".into(),
+                )
+            })?;
+        tokio::task::block_in_place(|| reply_receiver.recv()).map_err(|_| {
+            crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
+        })?
     }
 
     fn listen(
         &self,
-        _addr: std::net::SocketAddr,
+        addr: std::net::SocketAddr,
     ) -> crate::node_api::Result<crate::node_api::ListenInfo> {
-        Err(crate::node_api::NodeApiError::NotSupported(
-            "dynamic listen not yet implemented — specify --listen at startup".into(),
-        ))
+        let (reply_sender, reply_receiver) = reply_channel();
+        self.command_source
+            .try_send(NodeCommand::Listen {
+                addr,
+                reply: reply_sender,
+            })
+            .map_err(|_| {
+                crate::node_api::NodeApiError::NotSupported(
+                    "dynamic listen not supported in this mode".into(),
+                )
+            })?;
+        tokio::task::block_in_place(|| reply_receiver.recv()).map_err(|_| {
+            crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
+        })?
     }
 
     fn disconnect(&self) -> crate::node_api::Result<()> {
-        Err(crate::node_api::NodeApiError::NotSupported(
-            "dynamic disconnect not yet implemented".into(),
-        ))
+        let (reply_sender, reply_receiver) = reply_channel();
+        self.command_source
+            .try_send(NodeCommand::Disconnect {
+                reply: reply_sender,
+            })
+            .map_err(|_| {
+                crate::node_api::NodeApiError::NotSupported(
+                    "dynamic disconnect not supported in this mode".into(),
+                )
+            })?;
+        tokio::task::block_in_place(|| reply_receiver.recv()).map_err(|_| {
+            crate::node_api::NodeApiError::Internal("mode task dropped reply".into())
+        })?
     }
 
     fn add_route(
@@ -509,12 +599,16 @@ impl crate::node_api::NodeApi for Handler {
     }
 
     fn hint_set(&self, hint: RoleHint) -> crate::node_api::Result<()> {
-        self.hint_tx.send_replace(Some(hint));
+        let _ = self
+            .command_source
+            .try_send(NodeCommand::Role { hint: Some(hint) });
         Ok(())
     }
 
     fn hint_set_auto(&self) -> crate::node_api::Result<()> {
-        self.hint_tx.send_replace(None);
+        let _ = self
+            .command_source
+            .try_send(NodeCommand::Role { hint: None });
         Ok(())
     }
 

@@ -23,6 +23,25 @@ impl fmt::Display for NodeRole {
     }
 }
 
+impl fmt::Display for StatsResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "bytes in: {}\nbytes out: {}\npackets in: {}\npackets out: {}\n\
+             connections: {}\nflows: {}\ndropped: {}\ntotal connections: {}\ntotal flows: {}",
+            self.bytes_in,
+            self.bytes_out,
+            self.packets_in,
+            self.packets_out,
+            self.active_connections,
+            self.active_flows,
+            self.packets_dropped,
+            self.total_connections,
+            self.total_flows,
+        )
+    }
+}
+
 impl fmt::Display for PeerStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

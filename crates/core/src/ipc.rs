@@ -304,16 +304,7 @@ fn dispatch_request(request: &ManagementRequest, api: &dyn NodeApi) -> Managemen
         }
 
         Some(management_request::Request::Stats(_)) => {
-            let m = api.metrics();
-            management_response::Response::Stats(StatsResponse {
-                bytes_in: m.bytes_in,
-                bytes_out: m.bytes_out,
-                packets_in: m.packets_in,
-                packets_out: m.packets_out,
-                active_connections: m.active_connections,
-                active_flows: m.active_flows,
-                packets_dropped: m.packets_dropped,
-            })
+            management_response::Response::Stats(api.metrics().into())
         }
 
         Some(management_request::Request::Peers(_)) => {
@@ -552,6 +543,22 @@ impl From<crate::node_api::PeerInfo> for management::PeerInfo {
             connecting: p.capabilities.connecting,
             role: management::NodeRole::from(p.role).into(),
             tun_name: p.tun_name.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<crate::node_api::Metrics> for StatsResponse {
+    fn from(m: crate::node_api::Metrics) -> Self {
+        Self {
+            bytes_in: m.bytes_in,
+            bytes_out: m.bytes_out,
+            packets_in: m.packets_in,
+            packets_out: m.packets_out,
+            active_connections: m.active_connections,
+            active_flows: m.active_flows,
+            packets_dropped: m.packets_dropped,
+            total_connections: m.total_connections,
+            total_flows: m.total_flows,
         }
     }
 }

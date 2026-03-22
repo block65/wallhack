@@ -341,102 +341,17 @@ async fn run_relay_loop_inner(
         Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
     >(None);
 
-    // Source→peer bidi bridge: single accept loop on the source transport.
-    // When a bidi stream arrives from the source, opens a matching bidi to
-    // the current peer and splices them together.
-    {
-        let transport = Arc::clone(&transport);
-        let mut shutdown_bidi = shutdown_rx.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                        result = transport.accept_bi_erased() => {
-                        match result {
-                            Ok(Some(source_stream)) => {
-                                let current_peer = peer_transport_rx.borrow().clone();
-                                let Some(peer) = current_peer else {
-                                    tracing::debug!("bidi bridge: no peer connected, dropping stream");
-                                    continue;
-                                };
-                                tokio::spawn(async move {
-                                    match peer.open_bi_erased().await {
-                                        Ok(peer_stream) => {
-                                            if let Err(e) = wallhack_core::transport::splice_bi(
-                                                source_stream,
-                                                peer_stream,
-                                            ).await {
-                                                tracing::debug!("bidi bridge (source→peer) ended: {e}");
-                                            }
-                                        }
-                                        Err(e) => tracing::debug!("bidi bridge: failed to open peer stream: {e}"),
-                                    }
-                                });
-                            }
-                            Ok(None) => break,
-                            Err(e) => {
-                                tracing::debug!("bidi bridge: source accept_bi error: {e}");
-                            }
-                        }
-                    }
-                    _ = shutdown_bidi.changed() => break,
-                }
-            }
-        });
-    }
+    // Source→peer bidi bridge: accept bidi streams from the source transport
+    // and splice each one to the current peer transport.
+    spawn_source_to_peer_bidi_bridge(
+        Arc::clone(&transport),
+        peer_transport_rx,
+        shutdown_rx.clone(),
+    );
 
     // Forward accepted peer events to the source peer as PeerAnnouncements.
     // The source (entry) registers these peers for topology visibility.
-    {
-        let mut peer_events = peers.subscribe();
-        let peer_name = peer_name.clone();
-        let source_control_tx = source_control_tx.clone();
-        tokio::spawn(async move {
-            use wallhack_core::control::peers::PeerEvent;
-            use wallhack_wire::control::{
-                ControlMessage, PeerAnnouncement, control_message, peer_announcement,
-            };
-
-            loop {
-                match peer_events.recv().await {
-                    Ok(PeerEvent::Connected { name, addr, role }) if name != peer_name => {
-                        let announcement = PeerAnnouncement {
-                            event: peer_announcement::Event::Connected.into(),
-                            name,
-                            addr,
-                            role: wallhack_wire::data::NodeRole::from(role).into(),
-                            routes: Vec::new(),
-                        };
-                        let msg = ControlMessage {
-                            message: Some(control_message::Message::PeerAnnouncement(announcement)),
-                        };
-                        if source_control_tx.send(msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(PeerEvent::Disconnected { name }) if name != peer_name => {
-                        let announcement = PeerAnnouncement {
-                            event: peer_announcement::Event::Disconnected.into(),
-                            name,
-                            addr: String::new(),
-                            role: 0,
-                            routes: Vec::new(),
-                        };
-                        let msg = ControlMessage {
-                            message: Some(control_message::Message::PeerAnnouncement(announcement)),
-                        };
-                        if source_control_tx.send(msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(_) => {} // skip source peer events
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::debug!("Peer announcement forwarder lagged {n} events");
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
-    }
+    spawn_peer_announcement_forwarder(&peers, source_control_tx.clone(), peer_name.clone());
 
     let listener_fut = run_listener(
         global,
@@ -659,9 +574,116 @@ where
     Ok(())
 }
 
+/// Spawn the source→peer bidi bridge task.
+///
+/// Accepts bidi streams from `source` and splices each one to the current
+/// peer transport (looked up from `peer_transport_rx`). Exits when the source
+/// closes or `shutdown_rx` fires.
+pub(crate) fn spawn_source_to_peer_bidi_bridge(
+    source: Arc<dyn wallhack_core::transport::ErasedTransport>,
+    peer_transport_rx: tokio::sync::watch::Receiver<
+        Option<Arc<dyn wallhack_core::transport::ErasedTransport>>,
+    >,
+    mut shutdown_rx: tokio::sync::watch::Receiver<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = source.accept_bi_erased() => {
+                    match result {
+                        Ok(Some(source_stream)) => {
+                            let current_peer = peer_transport_rx.borrow().clone();
+                            let Some(peer) = current_peer else {
+                                tracing::debug!("bidi bridge: no peer connected, dropping stream");
+                                continue;
+                            };
+                            tokio::spawn(async move {
+                                match peer.open_bi_erased().await {
+                                    Ok(peer_stream) => {
+                                        if let Err(e) = wallhack_core::transport::splice_bi(
+                                            source_stream,
+                                            peer_stream,
+                                        ).await {
+                                            tracing::debug!("bidi bridge (source→peer) ended: {e}");
+                                        }
+                                    }
+                                    Err(e) => tracing::debug!("bidi bridge: failed to open peer stream: {e}"),
+                                }
+                            });
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::debug!("bidi bridge: source accept_bi error: {e}");
+                        }
+                    }
+                }
+                _ = shutdown_rx.changed() => break,
+            }
+        }
+    })
+}
+
+/// Spawn the peer announcement forwarder task.
+///
+/// Subscribes to peer events and forwards `PeerAnnouncement` control messages
+/// to `source_control_tx`, skipping events for `exclude_name`.
+pub(crate) fn spawn_peer_announcement_forwarder(
+    peers: &Arc<wallhack_core::control::peers::Registry>,
+    source_control_tx: tokio::sync::mpsc::Sender<wallhack_wire::control::ControlMessage>,
+    exclude_name: String,
+) -> tokio::task::JoinHandle<()> {
+    let mut peer_events = peers.subscribe();
+    tokio::spawn(async move {
+        use wallhack_core::control::peers::PeerEvent;
+        use wallhack_wire::control::{
+            ControlMessage, PeerAnnouncement, control_message, peer_announcement,
+        };
+
+        loop {
+            match peer_events.recv().await {
+                Ok(PeerEvent::Connected { name, addr, role }) if name != exclude_name => {
+                    let announcement = PeerAnnouncement {
+                        event: peer_announcement::Event::Connected.into(),
+                        name,
+                        addr,
+                        role: wallhack_wire::data::NodeRole::from(role).into(),
+                        routes: Vec::new(),
+                    };
+                    let msg = ControlMessage {
+                        message: Some(control_message::Message::PeerAnnouncement(announcement)),
+                    };
+                    if source_control_tx.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(PeerEvent::Disconnected { name }) if name != exclude_name => {
+                    let announcement = PeerAnnouncement {
+                        event: peer_announcement::Event::Disconnected.into(),
+                        name,
+                        addr: String::new(),
+                        role: 0,
+                        routes: Vec::new(),
+                    };
+                    let msg = ControlMessage {
+                        message: Some(control_message::Message::PeerAnnouncement(announcement)),
+                    };
+                    if source_control_tx.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {} // skip excluded peer events
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::debug!("Peer announcement forwarder lagged {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
 /// Non-generic handler for erased relay connection results.
 #[allow(clippy::too_many_lines)] // REASON: symmetric uni/bidi stream setup and heartbeat per accepted peer
-fn handle_relay_connection(
+pub(crate) fn handle_relay_connection(
     erased: wallhack_core::server::server::ErasedAcceptResult,
     source_resp_tx: tokio::sync::mpsc::Sender<wallhack_wire::data::ExitNodeResponse>,
     fanout_register_tx: &tokio::sync::mpsc::UnboundedSender<

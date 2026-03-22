@@ -107,7 +107,7 @@ build-tc:
 
 cargo-build-musl:
     echo "Building musl binary (slim)..."
-    cross build --release --target "{{ musl_target }}" -p wallhack-cli --no-default-features --features slim
+    cargo build --release --target "{{ musl_target }}" -p wallhack-cli --no-default-features --features slim
 
 clean:
     rm -rf "{{ staging_dir }}"

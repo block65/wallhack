@@ -77,7 +77,10 @@
 					"packets_in",
 					"packets_out",
 					"active_connections",
-					"active_flows"
+					"active_flows",
+					"packets_dropped",
+					"total_connections",
+					"total_flows"
 				],
 				"properties": {
 					"bytes_in": {
@@ -103,6 +106,18 @@
 					"active_flows": {
 						"type": "integer",
 						"description": "Number of active L4 network flows being tracked."
+					},
+					"packets_dropped": {
+						"type": "integer",
+						"description": "Total packets dropped since daemon start."
+					},
+					"total_connections": {
+						"type": "integer",
+						"description": "Total peer connections opened since daemon start (monotonically increasing)."
+					},
+					"total_flows": {
+						"type": "integer",
+						"description": "Total L4 flows opened since daemon start (monotonically increasing)."
 					}
 				}
 			},

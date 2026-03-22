@@ -128,6 +128,8 @@ pub fn print_response(resp: &ManagementResponse) -> Result<(), CtlError> {
             let _ = writeln!(tw, "connections:\t{}", s.active_connections);
             let _ = writeln!(tw, "flows:\t{}", s.active_flows);
             let _ = writeln!(tw, "dropped:\t{}", s.packets_dropped);
+            let _ = writeln!(tw, "total connections:\t{}", s.total_connections);
+            let _ = writeln!(tw, "total flows:\t{}", s.total_flows);
             let _ = tw.flush();
         }
         Some(management_response::Response::Peers(p)) => {
