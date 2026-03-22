@@ -1,6 +1,20 @@
 
 # Changelog
 
+## [0.15.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.2...wallhack-cli-v0.15.0) (2026-03-22)
+
+### Features
+
+* **daemon:** accept runtime commands and promote exit nodes to relay ([ee621a0](https://github.com/block65/wallhack/commit/ee621a045dfe1f5d5541e905041b94db4906b984))
+* **stats:** add cumulative total_connections and total_flows counters ([d61eb3b](https://github.com/block65/wallhack/commit/d61eb3bac2fef09ecde0c08bbb8eac8f7075a202))
+
+### Bug Fixes
+
+* **bench:** restore smoke and resilience tests ([c37b9ac](https://github.com/block65/wallhack/commit/c37b9acaee80c99dd5f25cac981376a5ed8a130d))
+
+5 other changes — [view diff](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.2...wallhack-cli-v0.15.0)
+
+
 ## [0.14.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.1...wallhack-cli-v0.14.2) (2026-03-21)
 
 ### Bug Fixes
