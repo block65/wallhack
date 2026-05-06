@@ -1,6 +1,13 @@
 
 # Changelog
 
+## [0.15.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.15.0...wallhack-cli-v0.15.1) (2026-05-06)
+
+### Bug Fixes
+
+* **deps:** patch security advisories in rustls-webpki, rand, h3 ([fabfe23](https://github.com/block65/wallhack/commit/fabfe23c1f7a34c6d46c32083dead22b3e13801a))
+
+
 ## [0.15.0](https://github.com/block65/wallhack/compare/wallhack-cli-v0.14.2...wallhack-cli-v0.15.0) (2026-03-22)
 
 ### Features
