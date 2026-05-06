@@ -1,6 +1,13 @@
 
 # Changelog
 
+## [0.15.2](https://github.com/block65/wallhack/compare/wallhack-cli-v0.15.1...wallhack-cli-v0.15.2) (2026-05-06)
+
+### Bug Fixes
+
+* **deps:** clear remaining 14 website dependabot advisories ([c5d5a7f](https://github.com/block65/wallhack/commit/c5d5a7f568715dee2476b5c723b9b34da0a7e05e))
+
+
 ## [0.15.1](https://github.com/block65/wallhack/compare/wallhack-cli-v0.15.0...wallhack-cli-v0.15.1) (2026-05-06)
 
 ### Bug Fixes
