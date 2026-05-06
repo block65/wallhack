@@ -3,6 +3,8 @@ packages:
 configs:
   - home/deploy/.ssh/authorized_keys
 start: |
+  # Fictional CTF range key. The matching private key under ftp-loot/
+  # is generated for this challenge and grants no real access.
   adduser -D deploy 2>/dev/null || true
   passwd -u deploy 2>/dev/null || true
   chown -R deploy:deploy /home/deploy/.ssh

@@ -1,6 +1,7 @@
 packages:
   - openssh
 start: |
+  # Fictional CTF range credentials. Not a real password, not a leak.
   echo "pontoon:Tr0mb0n3!2024" | chpasswd
   ssh-keygen -A
   /usr/sbin/sshd -D &
