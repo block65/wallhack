@@ -2,6 +2,7 @@
 name = "wallhack-cli"
 version = "0.15.1"
 edition = "2024"
+license.workspace = true
 
 [[bin]]
 name = "wallhack"

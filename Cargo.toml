@@ -2,6 +2,9 @@
 resolver = "3"
 members = ["crates/*"]
 
+[workspace.package]
+license = "MIT"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

@@ -2,6 +2,7 @@
 name = "wallhack-core"
 version = "0.1.3"
 edition = "2024"
+license.workspace = true
 categories = ["network-programming"]
 
 [features]
