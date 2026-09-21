@@ -2,6 +2,7 @@
 name = "wallhackd"
 version = "0.2.6"
 edition = "2024"
+license.workspace = true
 
 [features]
 default = ["quic", "websocket", "http-api"]
